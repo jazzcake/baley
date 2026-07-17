@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Baley"
+  short_description: "Inspect and change Baley tasks through validated commands"
+  default_prompt: "Use $baley-manage-work to inspect the Baley graph or prepare a validated task, dependency, Gate, or lane command."

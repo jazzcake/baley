@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "1.0.0",
+  "authority": "literal",
+  "capabilities": [
+    "workspace:read",
+    "workspace:operate",
+    "run:operate",
+    "record:operate",
+    "task:approve",
+    "lane:approve",
+    "gate:approve",
+    "workspace:close",
+    "workspace:admin"
+  ],
+  "roles": {
+    "viewer": ["workspace:read"],
+    "operator": ["workspace:read", "workspace:operate", "run:operate", "record:operate"],
+    "approver": ["workspace:read", "task:approve", "lane:approve", "gate:approve"],
+    "owner": [
+      "workspace:read",
+      "workspace:operate",
+      "run:operate",
+      "record:operate",
+      "task:approve",
+      "lane:approve",
+      "gate:approve",
+      "workspace:close",
+      "workspace:admin"
+    ]
+  },
+  "agentToken": {
+    "allowedRole": "operator",
+    "forbiddenCapabilities": ["task:approve", "lane:approve", "gate:approve", "workspace:close", "workspace:admin"]
+  }
+}

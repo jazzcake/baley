@@ -1,7 +1,8 @@
 ---
 type: architecture
-status: active
-last_active: 2026-07-15
+status: validated
+authority: legacy_visual
+last_active: 2026-07-17
 when_to_read: "Phase 0 Visual MVP를 구현하거나 그래프의 데이터 흐름, 화면 경계와 기술 선택을 변경할 때"
 affects:
   - docs/baley-product.md
@@ -11,13 +12,15 @@ affects:
 
 # Baley Visual MVP 아키텍처
 
+> 이 문서는 Phase 0에서 검증한 historical Visual fixture 아키텍처다. `done/running/blocked/ready`, Lane `close-out/discard`, `Phase.order`, Gate `reopened`와 `required/reference/unlocks`는 legacy 표현이며 서버 정본 모델은 `docs/baley-system-spec-v1.md`를 따른다.
+
 ## 1. 목적
 
 이 문서는 Phase 0 Visual MVP를 구현하기 위한 프론트엔드 아키텍처를 정의한다. 현재 단계에서 검증할 대상은 데이터 저장이나 실제 task 실행이 아니라 다음 시각 언어다.
 
 - 여러 lane의 독립적인 task DAG
 - 전체 lane을 관통하는 Phase
-- 현재 Phase와 다음 Phase의 경계인 Gate
+- 현재 Phase에서 다음 Phase로의 전이 조건인 Gate
 - Gate의 `required`, `reference`, `unlocks` 관계
 - Gate 조건과 무관하지만 공통 Phase 안에 존재하는 task 경로
 - Multi-lane, Lane Focus, Gate Focus 사이의 일관된 이동
@@ -66,6 +69,8 @@ fixture
 ### 2.3 도메인과 렌더러 모델 분리
 
 도메인 ID, 관계와 상태는 React Flow의 `Node`와 `Edge`를 직접 정본으로 사용하지 않는다.
+
+아래 TypeScript type은 Phase 0 Visual fixture 전용 legacy shape다. 서버 정본 모델과 Gate 관계는 `docs/baley-system-spec-v1.md`가 우선하며, 이후 구현에서 이 fixture를 migration한다.
 
 ```ts
 type WorkspaceFixture = {
@@ -147,14 +152,15 @@ AppShell
 
 - 세로축은 lane, 가로축은 Phase 진행 방향으로 사용한다.
 - Phase는 모든 lane을 관통하는 배경 구간으로 표현한다.
-- Gate는 두 Phase 사이의 공통 경계에 배치한다.
+- Gate는 `fromPhase`에서 `toPhase`로 향하는 전이 관계이며, 화면에서는 두 Phase 사이의 공통 경계에 배치한다.
 - Gate 조건에 참여하지 않는 task도 자신의 Phase와 lane 안에 남긴다.
 - close-out된 Research lane도 삭제하지 않고 종료 상태로 표시한다.
 
 ### 3.2 Lane Focus View
 
-- 선택한 lane의 task DAG를 주 그래프로 투영한다.
-- 연결된 Gate와 다른 lane의 기여는 요약 node로 축약한다.
+- 전체 task graph와 Phase의 가로 맥락을 유지한다.
+- 선택한 lane의 task를 lane header와 같은 강도로 강조한다.
+- 다른 lane의 task와 관계는 제거하거나 요약 node로 축약하지 않고 흐리게 표시한다.
 - 선택 lane의 Gate 무관 경로는 숨기지 않는다.
 - Phase 경계는 Multi-lane View와 같은 방향과 순서를 유지한다.
 
@@ -199,7 +205,7 @@ type ProjectedGraph = {
 Projection 단계가 담당하는 것:
 
 - 화면에 포함할 실제 node 선택
-- 외부 lane 조건의 summary node 생성
+- Lane Focus의 전체 graph 보존과 비선택 lane dimming 정보 생성
 - edge 의미 타입 보존
 - 선택 node의 upstream/downstream 집합 계산
 - 강조와 흐림 상태 계산
@@ -337,7 +343,7 @@ Pilot Ready Gate → 사용자 테스트
 - 세 view projection의 node/edge 집합
 - upstream/downstream 강조 범위
 - Gate와 무관한 경로 보존
-- Lane Focus의 외부 조건 축약
+- Lane Focus의 전체 graph 보존과 비선택 lane dimming
 - 잘못된 fixture 거부
 - layout 결과의 유한 좌표, 겹침과 안정된 순서
 

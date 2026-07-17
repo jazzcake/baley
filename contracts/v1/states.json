@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1.0.0",
+  "authority": "literal",
+  "task": {
+    "values": ["pending", "in_progress", "implemented", "confirmed", "discarded"],
+    "terminal": ["confirmed", "discarded"],
+    "transitions": [
+      ["pending", "in_progress"],
+      ["in_progress", "implemented"],
+      ["implemented", "confirmed"],
+      ["implemented", "in_progress"],
+      ["pending", "discarded"],
+      ["in_progress", "discarded"],
+      ["implemented", "discarded"]
+    ]
+  },
+  "lane": {
+    "values": ["active", "closed_out", "discarded"],
+    "terminal": ["closed_out", "discarded"]
+  },
+  "phase": {
+    "values": ["planned", "active", "completed"]
+  },
+  "gate": {
+    "values": ["open", "ready", "passed"],
+    "terminal": ["passed"]
+  },
+  "run": {
+    "values": ["running", "succeeded", "failed", "interrupted", "cancelled"],
+    "terminal": ["succeeded", "failed", "interrupted", "cancelled"],
+    "kinds": ["detailed_planning", "implementation", "independent_agent_review", "review_response", "completion_reporting"]
+  },
+  "blocker": {
+    "isLifecycleState": false,
+    "fields": ["blocked_at", "blocker_reason"],
+    "blocksNewRunKinds": ["implementation", "review_response"],
+    "allowsNewRunKinds": ["detailed_planning", "independent_agent_review", "completion_reporting"],
+    "blocksCommands": ["task.report_implemented"],
+    "interruptsExistingRuns": false
+  },
+  "dependency": {
+    "scope": "workspace",
+    "laneBoundary": "allowed",
+    "phaseBoundary": "allowed",
+    "crossWorkspace": "forbidden",
+    "cycle": "forbidden",
+    "laterPhaseToEarlierPhase": "warning",
+    "affectsGateReadinessOnlyWhenTaskExplicitlyAttached": true
+  }
+}

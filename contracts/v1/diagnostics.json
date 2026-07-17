@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0.0",
+  "authority": "literal",
+  "errors": [
+    "not_found",
+    "invalid_state_transition",
+    "self_dependency",
+    "duplicate_dependency",
+    "dependency_cycle",
+    "cross_workspace_dependency",
+    "invalid_dependency_patch",
+    "terminal_path_conflict",
+    "unresolved_dependency",
+    "blocked_task",
+    "phase_inactive",
+    "gate_not_ready",
+    "gate_has_no_tasks",
+    "gate_task_wrong_phase",
+    "gate_not_current",
+    "active_gate_detach_forbidden",
+    "human_approval_required",
+    "human_approval_mismatch",
+    "stale_revision",
+    "idempotency_conflict",
+    "invalid_record_path",
+    "record_hash_conflict"
+  ],
+  "warnings": [
+    "missing_detailed_plan_record",
+    "missing_independent_review_record",
+    "missing_completion_report_record",
+    "dangling_path",
+    "phase_order_inversion",
+    "running_task_dependency_added",
+    "stale_branch_observation",
+    "record_hash_changed"
+  ],
+  "advisories": [
+    "residual_risk_reported",
+    "predecessor_reworked",
+    "commit_remote_unverified",
+    "independent_review_provenance_missing"
+  ]
+}

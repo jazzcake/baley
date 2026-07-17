@@ -13,6 +13,7 @@ export type Lane = {
 };
 export type Task = {
   id: string;
+  publicId: number;
   laneId: string;
   phaseId: string;
   title: string;

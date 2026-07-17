@@ -2,15 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Background, Controls, ReactFlow, type Edge, type Node, type Viewport } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ChevronRight, PanelRightClose, PanelRightOpen, RotateCcw } from "lucide-react";
-import { pilotReadyFixture as fixture } from "./fixtures/pilot-ready";
+import { pilotReadyFixture } from "./fixtures/pilot-ready";
 import { validateFixture } from "./domain/validate-fixture";
 import { connectedTaskIds, laneFocusTaskIds, visibleTaskIds, type ViewSpec } from "./graph/projection";
 import { layoutGraph, type GraphLayout } from "./graph/layout";
 import { TaskNode } from "./components/TaskNode";
 import { GateNode } from "./components/GateNode";
-import type { GateLinkKind, Task } from "./domain/model";
+import type { GateLinkKind, Task, WorkspaceFixture } from "./domain/model";
 
-validateFixture(fixture);
+validateFixture(pilotReadyFixture);
 const nodeTypes = { task: TaskNode, gate: GateNode };
 const laneColors: Record<string, string> = {
   server: "#00a887",
@@ -26,23 +26,24 @@ function viewFromLocation(): ViewSpec {
 }
 
 export default function App() {
+  const fixture = pilotReadyFixture;
   const [view, setView] = useState<ViewSpec>(viewFromLocation);
   const [selectedId, setSelectedId] = useState<string | undefined>(() => new URLSearchParams(location.search).get("task") ?? undefined);
   const [layout, setLayout] = useState<GraphLayout | undefined>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
-  const visible = useMemo(() => visibleTaskIds(fixture, view), [view]);
+  const visible = useMemo(() => visibleTaskIds(fixture, view), [fixture, view]);
   const laneFocus = useMemo(
     () => view.kind === "lane" ? laneFocusTaskIds(fixture, view.id) : undefined,
-    [view],
+    [fixture, view],
   );
-  const connected = useMemo(() => selectedId ? connectedTaskIds(fixture, selectedId) : undefined, [selectedId]);
+  const connected = useMemo(() => selectedId ? connectedTaskIds(fixture, selectedId) : undefined, [fixture, selectedId]);
 
   useEffect(() => { void layoutGraph(fixture, visible).then(setLayout); }, [visible]);
   useEffect(() => {
     const path = view.kind === "multi" ? "/" : view.kind === "lane" ? `/lanes/${view.id}` : `/gates/${view.id}`;
     const query = selectedId ? `?task=${selectedId}` : "";
-    history.replaceState({}, "", path + query);
+    window.history.replaceState({}, "", path + query);
   }, [view, selectedId]);
 
   const nodes = useMemo<Node[]>(() => {
@@ -50,6 +51,7 @@ export default function App() {
       id: task.id, type: "task", position: layout?.taskPositions.get(task.id) ?? { x: 0, y: 0 }, selected: task.id === selectedId,
       data: {
         title: task.title,
+        publicId: task.publicId,
         status: task.status,
         lane: fixture.lanes.find((lane) => lane.id === task.laneId)?.name ?? "",
         laneColor: laneColors[task.laneId] ?? "#579bfc",
@@ -67,7 +69,7 @@ export default function App() {
       return { id: gate.id, type: "gate", position: layout?.gatePositions.get(gate.id) ?? { x: 0, y: 0 }, selected: gate.id === selectedId, data: { title: gate.name, status: gate.status, summary: `${done}/${required.length} required ready`, dimmed: Boolean(selectedId && selectedId !== gate.id && !fixture.gateLinks.some((link) => link.gateId === gate.id && link.taskId === selectedId)) } };
     });
     return [...taskNodes, ...gateNodes];
-  }, [visible, layout, selectedId, connected, laneFocus, view]);
+  }, [fixture, visible, layout, selectedId, connected, laneFocus, view]);
 
   const edges = useMemo<Edge[]>(() => {
     const dependencies: Edge[] = fixture.dependencies.filter((edge) => visible.has(edge.fromTaskId) && visible.has(edge.toTaskId)).map((edge) => ({
@@ -95,7 +97,7 @@ export default function App() {
           : "gate-edge",
     }));
     return [...dependencies, ...gateEdges];
-  }, [visible, connected, laneFocus, selectedId]);
+  }, [fixture, visible, connected, laneFocus, selectedId]);
 
   const selectedTask = fixture.tasks.find((task) => task.id === selectedId);
   const selectedGate = fixture.gates.find((gate) => gate.id === selectedId);
@@ -115,7 +117,7 @@ export default function App() {
 
       <section className={`workspace ${inspectorOpen ? "with-inspector" : ""}`}>
         <div className="graph-wrap">
-          <div className="context-row"><div><span>WORKSPACE</span><h1>{view.kind === "multi" ? "Pilot delivery" : view.kind === "lane" ? `${fixture.lanes.find((lane) => lane.id === view.id)?.name} lane` : "Pilot Ready gate"}</h1></div><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div>
+          <div className="context-row"><div><span>WORKSPACE</span><h1>{view.kind === "multi" ? "Pilot delivery" : view.kind === "lane" ? `${fixture.lanes.find((lane) => lane.id === view.id)?.name} lane` : "Pilot Ready gate"}</h1></div><div className="context-actions"><span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas">
             <div className="graph-overlay" style={{ width: layout?.width, height: layout?.height, transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` }}>
               {layout?.phaseRects.map((rect, index) => {
@@ -137,13 +139,13 @@ export default function App() {
             </ReactFlow>
           </div>
         </div>
-        {inspectorOpen && <Inspector task={selectedTask} gateId={selectedGate?.id} onLane={(id) => navigate({ kind: "lane", id })} onGate={(id) => navigate({ kind: "gate", id })} />}
+        {inspectorOpen && <Inspector fixture={fixture} task={selectedTask} gateId={selectedGate?.id} onLane={(id) => navigate({ kind: "lane", id })} onGate={(id) => navigate({ kind: "gate", id })} />}
       </section>
     </main>
   );
 }
 
-function Inspector({ task, gateId, onLane, onGate }: { task?: Task; gateId?: string; onLane: (id: string) => void; onGate: (id: string) => void }) {
+function Inspector({ fixture, task, gateId, onLane, onGate }: { fixture: WorkspaceFixture; task?: Task; gateId?: string; onLane: (id: string) => void; onGate: (id: string) => void }) {
   if (gateId) {
     const gate = fixture.gates.find((item) => item.id === gateId)!;
     const links = fixture.gateLinks.filter((link) => link.gateId === gateId);
@@ -153,9 +155,9 @@ function Inspector({ task, gateId, onLane, onGate }: { task?: Task; gateId?: str
   const lane = fixture.lanes.find((item) => item.id === task.laneId)!;
   const phase = fixture.phases.find((item) => item.id === task.phaseId)!;
   const gateLinks = fixture.gateLinks.filter((link) => link.taskId === task.id);
-  const upstream = fixture.dependencies.filter((edge) => edge.toTaskId === task.id).map((edge) => fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title);
-  const downstream = fixture.dependencies.filter((edge) => edge.fromTaskId === task.id).map((edge) => fixture.tasks.find((item) => item.id === edge.toTaskId)?.title);
-  return <aside className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span><p>{task.description}</p><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((value) => <div className="relation-row" key={value}><span>from</span><strong>{value}</strong></div>)}{downstream.map((value) => <div className="relation-row" key={value}><span>to</span><strong>{value}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">독립 경로</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>Pilot Ready</strong></button>)}</Section>}</aside>;
+  const upstream = fixture.dependencies.filter((edge) => edge.toTaskId === task.id);
+  const downstream = fixture.dependencies.filter((edge) => edge.fromTaskId === task.id);
+  return <aside className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><div className="inspector-id">TASK #{task.publicId}</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span><p>{task.description}</p><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((edge) => <div className="relation-row" key={edge.id}><span>from</span><strong>#{fixture.tasks.find((item) => item.id === edge.fromTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title}</strong></div>)}{downstream.map((edge) => <div className="relation-row" key={edge.id}><span>to</span><strong>#{fixture.tasks.find((item) => item.id === edge.toTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.toTaskId)?.title}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">독립 경로</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>Pilot Ready</strong></button>)}</Section>}<section className="command-hint"><strong>LLM command only</strong><p><code>task #{task.publicId} 뒤에 API 검증 추가</code>처럼 Baley Skill에 명령하세요.</p></section></aside>;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) { return <section className="inspector-section"><h3>{title}</h3>{children}</section>; }

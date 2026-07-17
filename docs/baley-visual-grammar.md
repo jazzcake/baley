@@ -1,7 +1,8 @@
 ---
 type: design-spec
 status: active
-last_active: 2026-07-16
+authority: legacy_visual
+last_active: 2026-07-17
 when_to_read: "Baley의 그래프 색상, 형태, 선, 상태와 focus 표현을 구현하거나 변경할 때"
 affects:
   - docs/baley-product.md
@@ -9,6 +10,8 @@ affects:
 ---
 
 # Baley 그래프 Visual Grammar
+
+> 이 문서의 Task `done/running/blocked/ready`, Lane `close-out/discard`, `Phase.order`, Gate `reopened`와 `required/reference/unlocks` edge는 Phase 0 Visual MVP를 기록한 legacy 표현이다. 서버 기반 Viewer migration의 정본 상태와 관계는 `docs/baley-system-spec-v1.md`를 따른다.
 
 ## 1. 목적
 
@@ -122,7 +125,7 @@ Gate 상태:
 | `open` | hollow progress ring |
 | `ready` | solid progress ring + 승인 대기 label |
 | `passed` | check seal + 통과 시각 |
-| `reopened` | reopen icon + 이전 통과 시각 |
+| `reopened` | 향후 후보. V1에서는 Gate reopen과 Phase rollback을 지원하지 않음 |
 
 ## 7. 관계선
 

@@ -1,0 +1,109 @@
+{
+  "schemaVersion": "1.0.0",
+  "authority": "literal",
+  "transport": {
+    "preview": {
+      "method": "POST",
+      "path": "/v1/commands/preview",
+      "writes": false
+    },
+    "execute": {
+      "method": "POST",
+      "path": "/v1/commands/execute",
+      "writes": true
+    }
+  },
+  "envelope": {
+    "required": ["idempotencyKey", "executedByActorId"],
+    "optional": [
+      "expectedWorkspaceRevision",
+      "initiatedByActorId",
+      "acknowledgedWarningCodes",
+      "proceedReason",
+      "humanApprovalAttestation"
+    ]
+  },
+  "humanApprovalAttestation": {
+    "required": ["approvedByActorId", "approvedCommandHash"],
+    "optional": [
+      "decisionSnapshotHash",
+      "statementHash",
+      "conversationRef",
+      "approvedAt"
+    ],
+    "serverDerived": [
+      "action",
+      "entityType",
+      "entityId",
+      "workspaceRevision",
+      "executedCommandId",
+      "recordedAt"
+    ],
+    "reusableAcrossCommands": false
+  },
+  "previewResult": [
+    "commandHash",
+    "expectedWorkspaceRevision",
+    "requiredCapability",
+    "projectedDiff",
+    "errors",
+    "warnings",
+    "advisories",
+    "decisionSnapshotHash"
+  ],
+  "queries": [
+    "workspace.get",
+    "workspace.graph",
+    "lane.brief",
+    "task.get",
+    "task.list",
+    "task.context",
+    "gate.status",
+    "run.list",
+    "record.list",
+    "event.list",
+    "decision.list"
+  ],
+  "mutations": {
+    "project.bootstrap": { "capability": "workspace:operate", "humanApproval": "none" },
+    "repository.register": { "capability": "workspace:operate", "humanApproval": "none" },
+    "workspace.create": { "capability": "workspace:operate", "humanApproval": "none" },
+    "workspace.activate": { "capability": "workspace:operate", "humanApproval": "none" },
+    "workspace.close": { "capability": "workspace:close", "humanApproval": "always_owner" },
+    "phase.create": { "capability": "workspace:operate", "humanApproval": "none" },
+    "lane.create": { "capability": "workspace:operate", "humanApproval": "none" },
+    "lane.update": { "capability": "workspace:operate", "humanApproval": "none" },
+    "lane.close_out": { "capability": "lane:approve", "humanApproval": "always" },
+    "lane.discard": { "capability": "lane:approve", "humanApproval": "always" },
+    "gate.create": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.create": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.update": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.set_terminal": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.clear_terminal": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.block": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.unblock": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.report_implemented": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.confirm": { "capability": "task:approve", "humanApproval": "always" },
+    "task.discard": { "capability": "task:approve", "humanApproval": "always" },
+    "task.rework": { "capability": "workspace:operate", "humanApproval": "none" },
+    "dependency.connect": { "capability": "workspace:operate", "humanApproval": "none" },
+    "dependency.disconnect": { "capability": "workspace:operate", "humanApproval": "none" },
+    "dependency.patch": { "capability": "workspace:operate", "humanApproval": "none" },
+    "gate.attach_task": { "capability": "workspace:operate", "humanApproval": "when_from_phase_active", "activeCapability": "gate:approve" },
+    "gate.detach_task": { "capability": "workspace:operate", "humanApproval": "none", "forbiddenWhen": "from_phase_active_or_gate_passed" },
+    "gate.pass_task": { "capability": "gate:approve", "humanApproval": "always" },
+    "gate.revoke_task_pass": { "capability": "gate:approve", "humanApproval": "always" },
+    "gate.pass": { "capability": "gate:approve", "humanApproval": "always" },
+    "run.start": { "capability": "run:operate", "humanApproval": "none" },
+    "run.heartbeat": { "capability": "run:operate", "humanApproval": "none" },
+    "run.succeed": { "capability": "run:operate", "humanApproval": "none" },
+    "run.fail": { "capability": "run:operate", "humanApproval": "none" },
+    "run.cancel": { "capability": "run:operate", "humanApproval": "none" },
+    "run.interrupt": { "capability": "run:operate", "humanApproval": "none" },
+    "run.correct": { "capability": "run:operate", "humanApproval": "none" },
+    "record.register": { "capability": "record:operate", "humanApproval": "none" },
+    "record.attach_commit": { "capability": "record:operate", "humanApproval": "none" },
+    "commit.attach": { "capability": "record:operate", "humanApproval": "none" },
+    "git.observe": { "capability": "record:operate", "humanApproval": "none" }
+  }
+}

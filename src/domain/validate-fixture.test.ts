@@ -8,4 +8,14 @@ describe("validateFixture", () => {
     const fixture = { ...pilotReadyFixture, dependencies: [...pilotReadyFixture.dependencies, { id: "cycle", fromTaskId: "api-build", toTaskId: "api-design" }] };
     expect(() => validateFixture(fixture)).toThrow("cycle");
   });
+  it("allows dependencies across lane and phase boundaries", () => {
+    const fixture = {
+      ...pilotReadyFixture,
+      dependencies: [
+        ...pilotReadyFixture.dependencies,
+        { id: "cross-phase", fromTaskId: "findings", toTaskId: "user-test" },
+      ],
+    };
+    expect(() => validateFixture(fixture)).not.toThrow();
+  });
 });

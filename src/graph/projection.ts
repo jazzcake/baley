@@ -3,25 +3,18 @@ import type { WorkspaceFixture } from "../domain/model";
 export type ViewSpec = { kind: "multi" } | { kind: "lane"; id: string } | { kind: "gate"; id: string };
 
 export function visibleTaskIds(fixture: WorkspaceFixture, view: ViewSpec): Set<string> {
-  if (view.kind === "multi") return new Set(fixture.tasks.map((task) => task.id));
-  if (view.kind === "lane") {
-    return new Set(fixture.tasks.map((task) => task.id));
+  if (view.kind === "gate") {
+    return new Set(fixture.gateLinks.filter((link) => link.gateId === view.id).map((link) => link.taskId));
   }
-  return new Set(fixture.gateLinks.filter((link) => link.gateId === view.id).map((link) => link.taskId));
+  return new Set(fixture.tasks.map((task) => task.id));
 }
 
 export function laneFocusTaskIds(fixture: WorkspaceFixture, laneId: string): Set<string> {
-  const own = fixture.tasks.filter((task) => task.laneId === laneId).map((task) => task.id);
-  const ownSet = new Set(own);
-  const relatedGates = new Set(
-    fixture.gateLinks
-      .filter((link) => ownSet.has(link.taskId))
-      .map((link) => link.gateId),
+  return new Set(
+    fixture.tasks
+      .filter((task) => task.laneId === laneId)
+      .map((task) => task.id),
   );
-  const gateContext = fixture.gateLinks
-    .filter((link) => relatedGates.has(link.gateId))
-    .map((link) => link.taskId);
-  return new Set([...own, ...gateContext]);
 }
 
 export function connectedTaskIds(fixture: WorkspaceFixture, taskId: string): Set<string> {

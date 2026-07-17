@@ -8,6 +8,9 @@ export function validateFixture(fixture: WorkspaceFixture): void {
   const lanes = new Set(fixture.lanes.map((lane) => lane.id));
   const phases = new Set(fixture.phases.map((phase) => phase.id));
   const tasks = new Set(fixture.tasks.map((task) => task.id));
+  const publicTaskIds = fixture.tasks.map((task) => task.publicId);
+  if (publicTaskIds.some((id) => !Number.isInteger(id) || id <= 0)) throw new Error("Task public IDs must be positive integers");
+  if (new Set(publicTaskIds).size !== publicTaskIds.length) throw new Error("Task public IDs must be unique");
   const gates = new Set(fixture.gates.map((gate) => gate.id));
   for (const task of fixture.tasks) {
     if (!lanes.has(task.laneId) || !phases.has(task.phaseId)) throw new Error(`Invalid task reference: ${task.id}`);
