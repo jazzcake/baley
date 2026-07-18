@@ -45,6 +45,14 @@ func TestRunPolicyFuturePhaseAllowsOnlyDetailedPlanning(t *testing.T) {
 	}
 }
 
+func TestRunPolicyAllowsAllKindsInCompletedPhase(t *testing.T) {
+	for _, kind := range RunKinds {
+		if evaluation := EvaluateRunStart(Task{ID: "task"}, kind, PhaseCompleted, nil); evaluation.HasErrors() {
+			t.Errorf("%s rejected in completed Phase: %+v", kind, evaluation)
+		}
+	}
+}
+
 func TestRunPolicyAllowsImplementationAfterUnblock(t *testing.T) {
 	now := time.Now()
 	blocked := Task{ID: "task", Status: TaskInProgress, BlockedAt: &now, BlockerReason: "waiting"}

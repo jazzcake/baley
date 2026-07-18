@@ -27,7 +27,13 @@ Baley의 초기 개발은 기능 수를 늘리는 방식이 아니라 가장 위
 → Day Tripper 파일럿
 ```
 
-현재 위치는 **Phase 2: Persistent Core 착수**다. Phase 0의 시각 언어와 Phase 1의 Operator command 의미·정본 계층·기계 판독 계약을 승인했으며, 이제 이를 Go domain core로 옮긴다.
+현재 위치는 **Phase 2: Persistent Core 진행 중**이다. Go domain core와 Gate 전이 vertical slice를 완료해 Task confirm, Gate readiness·pass, Phase 전환을 PostgreSQL·HTTP·MCP·Viewer까지 연결했다. 다음 작업은 **Run/Record vertical slice**로, Agent 실행 lifecycle과 repository Task Record index를 서버 정본에 연결한다.
+
+환경 독립 선행 구현은 Wave 7(P4-05~06)까지 단위 검증·독립 재리뷰를 완료했다. Phase 2~4의 선행 모듈은 모두 준비됐으며, PostgreSQL·MCP·실제 Git repository·API/브라우저 통합 판정은 데스크탑 검증 큐로 유지한다.
+
+Phase 2~4의 환경 독립 모듈 선행 구현과 데스크탑 통합 검증 순서는 [`baley-phase2-4-prebuild-plan.md`](baley-phase2-4-prebuild-plan.md)를 따른다.
+
+데스크탑 복귀 절차와 실행 프롬프트는 [`baley-phase2-4-desktop-handoff.md`](baley-phase2-4-desktop-handoff.md)에서 시작한다.
 
 ## 2. 단계 운영 원칙
 
@@ -187,6 +193,18 @@ repo-scoped Baley Skill과 command contract를 만든다. UI는 read-only로 유
 - optimistic concurrency 또는 graph revision 충돌 처리
 - migration 및 기본 backup 절차
 
+### 현재 진행 상태
+
+- [x] Workspace DAG, cross-Phase warning과 cycle 거부 domain core
+- [x] Task 상태 머신, blocker와 atomic dependency patch domain core
+- [x] Gate readiness, Task confirm, Gate Task pass/revoke와 Phase 전이
+- [x] Gate 전이의 PostgreSQL·HTTP·MCP·Viewer vertical slice
+- [ ] Run lease·heartbeat와 Task 자동 시작·종료 Event
+- [ ] Task Record 상대 경로·hash·commit index
+- [ ] Run/Record query·command와 Viewer read projection
+- [ ] 나머지 Task·dependency·Lane·Gate command의 API/DB 연결
+- [ ] backup·restore와 독립 fixture를 포함한 Gate V2 인수 검증
+
 ### Gate V2 — 도메인 코어 승인
 
 - [ ] Phase 1의 주요 그래프 동작이 API와 DB에서 동일하게 보장된다.
@@ -324,12 +342,13 @@ baley gate status <gate>
 
 ## 11. 현재 다음 행동
 
-1. Go domain core에서 Workspace DAG, cross-Phase warning과 cycle 거부를 구현한다.
-2. Task 상태 머신, blocker와 atomic dependency patch를 구현한다.
-3. Gate readiness와 Phase 전이, HumanApprovalAttestation 검증을 구현한다.
-4. Run lease와 Task Record path를 포함한 첫 vertical slice를 만든다.
-5. PostgreSQL migration과 HTTP preview/execute endpoint를 연결한다.
-6. 기존 Visual fixture를 서버 정본 모델로 migration한다.
+1. Run command payload와 lease·heartbeat·terminal transition 계약을 구체화한다.
+2. Run persistence와 `run.start`의 pending Task 자동 시작을 하나의 transaction으로 구현한다.
+3. Task Record 상대 경로·hash 등록과 선택적 commit/blob 연결을 구현한다.
+4. Run/Record HTTP query와 MCP command를 연결하고 Viewer Inspector에 읽기 projection을 추가한다.
+5. 실제 PostgreSQL에서 idempotency, lease version CAS, terminal 경쟁과 rollback을 검증한다.
+6. `task.report_implemented`를 completion Record와 연결해 기존 `task.confirm` 승인 흐름으로 이어지게 한다.
+7. 이후 Task·dependency·Lane·Gate의 나머지 command를 API/DB에 연결하고 Gate V2 인수 기준을 완료한다.
 
 ## 12. Close-out
 

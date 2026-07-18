@@ -21,19 +21,22 @@ type Phase struct {
 }
 
 type Gate struct {
-	ID          string
-	WorkspaceID string
-	FromPhaseID string
-	ToPhaseID   string
-	PassedAt    *time.Time
+	ID               string
+	WorkspaceID      string
+	FromPhaseID      string
+	ToPhaseID        string
+	PassedAt         *time.Time
+	CriteriaRevision int64
 }
 
 type GateTaskCondition struct {
-	LinkID     string
-	TaskID     string
-	TaskStatus TaskStatus
-	Passed     bool
-	PassReason string
+	WorkspaceID string
+	GateID      string
+	LinkID      string
+	TaskID      string
+	TaskStatus  TaskStatus
+	Passed      bool
+	PassReason  string
 }
 
 func GateReady(conditions []GateTaskCondition) bool {

@@ -14,6 +14,16 @@ var RunKinds = []RunKind{RunDetailedPlanning, RunImplementation, RunIndependentA
 
 type PhaseState string
 
+type WorkspaceState string
+
+const (
+	WorkspaceDraft  WorkspaceState = "draft"
+	WorkspaceActive WorkspaceState = "active"
+	WorkspaceClosed WorkspaceState = "closed"
+)
+
+var WorkspaceStates = []WorkspaceState{WorkspaceDraft, WorkspaceActive, WorkspaceClosed}
+
 const (
 	PhasePlanned   PhaseState = "planned"
 	PhaseActive    PhaseState = "active"
@@ -27,7 +37,8 @@ func EvaluateRunStart(task Task, kind RunKind, phaseState PhaseState, predecesso
 		evaluation.sort()
 		return evaluation
 	}
-	if phaseState != PhaseActive && !(kind == RunDetailedPlanning && phaseState == PhasePlanned) {
+	phaseAllowsRun := phaseState == PhaseActive || phaseState == PhaseCompleted || (kind == RunDetailedPlanning && phaseState == PhasePlanned)
+	if !phaseAllowsRun {
 		evaluation.Errors = append(evaluation.Errors, Diagnostic{Code: CodePhaseInactive, EntityID: task.ID})
 	}
 	blockedKind := kind == RunImplementation || kind == RunReviewResponse

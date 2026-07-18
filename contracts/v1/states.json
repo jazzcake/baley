@@ -1,6 +1,10 @@
 {
   "schemaVersion": "1.0.0",
   "authority": "literal",
+  "workspace": {
+    "values": ["draft", "active", "closed"],
+    "terminal": ["closed"]
+  },
   "task": {
     "values": ["pending", "in_progress", "implemented", "confirmed", "discarded"],
     "terminal": ["confirmed", "discarded"],
@@ -29,6 +33,14 @@
     "values": ["running", "succeeded", "failed", "interrupted", "cancelled"],
     "terminal": ["succeeded", "failed", "interrupted", "cancelled"],
     "kinds": ["detailed_planning", "implementation", "independent_agent_review", "review_response", "completion_reporting"]
+  },
+  "taskRecord": {
+    "values": ["reported_uncommitted", "committed_unverified", "verified"],
+    "types": ["detailed-plan", "handoff", "independent-agent-review", "review-response", "completion-report"]
+  },
+  "commitReference": {
+    "relations": ["base", "produced", "reviewed", "superseded"],
+    "verificationStates": ["reported", "remote_verified"]
   },
   "blocker": {
     "isLifecycleState": false,

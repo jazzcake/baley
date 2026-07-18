@@ -19,14 +19,33 @@ var TaskStatuses = []TaskStatus{TaskPending, TaskInProgress, TaskImplemented, Ta
 
 type Task struct {
 	ID                    string
+	PublicID              int
 	WorkspaceID           string
 	LaneID                string
+	PhaseID               string
+	ParentTaskID          string
+	Title                 string
+	Description           string
+	CurrentSummary        string
+	NextAction            string
 	PhasePosition         int
 	Status                TaskStatus
 	BlockedAt             *time.Time
 	BlockerReason         string
 	TerminalReason        string
 	ImplementedAssessment string
+}
+
+func (t Task) Update(title, description, currentSummary, nextAction string) (Task, error) {
+	if t.Status == TaskConfirmed || t.Status == TaskDiscarded || strings.TrimSpace(title) == "" {
+		return t, &Violation{Code: CodeInvalidStateTransition}
+	}
+	next := t
+	next.Title = strings.TrimSpace(title)
+	next.Description = strings.TrimSpace(description)
+	next.CurrentSummary = strings.TrimSpace(currentSummary)
+	next.NextAction = strings.TrimSpace(nextAction)
+	return next, nil
 }
 
 func (t Task) Start() (Task, error) {

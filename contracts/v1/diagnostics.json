@@ -21,6 +21,8 @@
     "human_approval_required",
     "human_approval_mismatch",
     "stale_revision",
+    "stale_run_version",
+    "run_lease_mismatch",
     "idempotency_conflict",
     "invalid_record_path",
     "record_hash_conflict"
@@ -32,6 +34,8 @@
     "dangling_path",
     "phase_order_inversion",
     "running_task_dependency_added",
+    "workspace_close_residual_task",
+    "workspace_close_active_lane",
     "stale_branch_observation",
     "record_hash_changed"
   ],

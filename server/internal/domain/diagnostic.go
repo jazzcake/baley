@@ -6,27 +6,40 @@ import (
 )
 
 const (
-	CodeNotFound                 = "not_found"
-	CodeInvalidStateTransition   = "invalid_state_transition"
-	CodeSelfDependency           = "self_dependency"
-	CodeDuplicateDependency      = "duplicate_dependency"
-	CodeDependencyCycle          = "dependency_cycle"
-	CodeCrossWorkspaceDependency = "cross_workspace_dependency"
-	CodeInvalidDependencyPatch   = "invalid_dependency_patch"
-	CodeTerminalPathConflict     = "terminal_path_conflict"
-	CodeUnresolvedDependency     = "unresolved_dependency"
-	CodeBlockedTask              = "blocked_task"
-	CodePhaseInactive            = "phase_inactive"
-	CodeGateNotReady             = "gate_not_ready"
-	CodeGateHasNoTasks           = "gate_has_no_tasks"
-	CodeGateTaskWrongPhase       = "gate_task_wrong_phase"
-	CodeGateNotCurrent           = "gate_not_current"
-	CodeHumanApprovalRequired    = "human_approval_required"
-	CodeHumanApprovalMismatch    = "human_approval_mismatch"
-	CodeStaleRevision            = "stale_revision"
-	CodeIdempotencyConflict      = "idempotency_conflict"
-	CodeDanglingPath             = "dangling_path"
-	CodePhaseOrderInversion      = "phase_order_inversion"
+	CodeNotFound                   = "not_found"
+	CodeInvalidStateTransition     = "invalid_state_transition"
+	CodeSelfDependency             = "self_dependency"
+	CodeDuplicateDependency        = "duplicate_dependency"
+	CodeDependencyCycle            = "dependency_cycle"
+	CodeCrossWorkspaceDependency   = "cross_workspace_dependency"
+	CodeInvalidDependencyPatch     = "invalid_dependency_patch"
+	CodeTerminalPathConflict       = "terminal_path_conflict"
+	CodeUnresolvedDependency       = "unresolved_dependency"
+	CodeBlockedTask                = "blocked_task"
+	CodePhaseInactive              = "phase_inactive"
+	CodeGateNotReady               = "gate_not_ready"
+	CodeGateHasNoTasks             = "gate_has_no_tasks"
+	CodeGateTaskWrongPhase         = "gate_task_wrong_phase"
+	CodeGateNotCurrent             = "gate_not_current"
+	CodeActiveGateDetachForbidden  = "active_gate_detach_forbidden"
+	CodeHumanApprovalRequired      = "human_approval_required"
+	CodeHumanApprovalMismatch      = "human_approval_mismatch"
+	CodeStaleRevision              = "stale_revision"
+	CodeStaleRunVersion            = "stale_run_version"
+	CodeRunLeaseMismatch           = "run_lease_mismatch"
+	CodeIdempotencyConflict        = "idempotency_conflict"
+	CodeInvalidRecordPath          = "invalid_record_path"
+	CodeRecordHashConflict         = "record_hash_conflict"
+	CodeDanglingPath               = "dangling_path"
+	CodePhaseOrderInversion        = "phase_order_inversion"
+	CodeMissingDetailedPlan        = "missing_detailed_plan_record"
+	CodeMissingIndependentReview   = "missing_independent_review_record"
+	CodeMissingCompletionReport    = "missing_completion_report_record"
+	CodeRunningTaskDependencyAdded = "running_task_dependency_added"
+	CodeWorkspaceCloseResidualTask = "workspace_close_residual_task"
+	CodeWorkspaceCloseActiveLane   = "workspace_close_active_lane"
+	CodeRecordHashChanged          = "record_hash_changed"
+	CodeCommitRemoteUnverified     = "commit_remote_unverified"
 )
 
 var UsedDiagnosticCodes = []string{
@@ -45,12 +58,25 @@ var UsedDiagnosticCodes = []string{
 	CodeGateHasNoTasks,
 	CodeGateTaskWrongPhase,
 	CodeGateNotCurrent,
+	CodeActiveGateDetachForbidden,
 	CodeHumanApprovalRequired,
 	CodeHumanApprovalMismatch,
 	CodeStaleRevision,
+	CodeStaleRunVersion,
+	CodeRunLeaseMismatch,
 	CodeIdempotencyConflict,
+	CodeInvalidRecordPath,
+	CodeRecordHashConflict,
 	CodeDanglingPath,
 	CodePhaseOrderInversion,
+	CodeMissingDetailedPlan,
+	CodeMissingIndependentReview,
+	CodeMissingCompletionReport,
+	CodeRunningTaskDependencyAdded,
+	CodeWorkspaceCloseResidualTask,
+	CodeWorkspaceCloseActiveLane,
+	CodeRecordHashChanged,
+	CodeCommitRemoteUnverified,
 }
 
 type Diagnostic struct {
