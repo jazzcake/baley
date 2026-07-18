@@ -17,6 +17,14 @@ const (
 	CodeUnresolvedDependency     = "unresolved_dependency"
 	CodeBlockedTask              = "blocked_task"
 	CodePhaseInactive            = "phase_inactive"
+	CodeGateNotReady             = "gate_not_ready"
+	CodeGateHasNoTasks           = "gate_has_no_tasks"
+	CodeGateTaskWrongPhase       = "gate_task_wrong_phase"
+	CodeGateNotCurrent           = "gate_not_current"
+	CodeHumanApprovalRequired    = "human_approval_required"
+	CodeHumanApprovalMismatch    = "human_approval_mismatch"
+	CodeStaleRevision            = "stale_revision"
+	CodeIdempotencyConflict      = "idempotency_conflict"
 	CodeDanglingPath             = "dangling_path"
 	CodePhaseOrderInversion      = "phase_order_inversion"
 )
@@ -33,6 +41,14 @@ var UsedDiagnosticCodes = []string{
 	CodeUnresolvedDependency,
 	CodeBlockedTask,
 	CodePhaseInactive,
+	CodeGateNotReady,
+	CodeGateHasNoTasks,
+	CodeGateTaskWrongPhase,
+	CodeGateNotCurrent,
+	CodeHumanApprovalRequired,
+	CodeHumanApprovalMismatch,
+	CodeStaleRevision,
+	CodeIdempotencyConflict,
 	CodeDanglingPath,
 	CodePhaseOrderInversion,
 }

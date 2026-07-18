@@ -7,7 +7,7 @@ export function GateNode({ data, selected }: NodeProps) {
     <article className={`gate-node ${selected ? "selected" : ""} ${value.dimmed ? "dimmed" : ""}`}>
       <Handle type="target" position={Position.Left} />
       <div className="gate-icon"><Milestone size={18} /></div>
-      <div><span><Diamond size={9} /> PHASE GATE</span><strong>{value.title}</strong><small>{value.summary}</small></div>
+      <div><span><Diamond size={9} /> PHASE GATE · {value.status}</span><strong>{value.title}</strong><small>{value.status === "ready" ? "통과 승인 대기" : value.summary}</small></div>
       <Handle type="source" position={Position.Right} />
     </article>
   );
