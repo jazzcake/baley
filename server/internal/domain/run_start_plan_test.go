@@ -145,7 +145,7 @@ func validRunStartRequest(kind RunKind) RunStartRequest {
 		Identity: RunStartIdentity{
 			WorkspaceID: "workspace",
 			TaskID:      "task",
-			ClientRunID: "client-run",
+			ClientRunID: testClientRunID,
 			Kind:        kind,
 		},
 		OperatorActorID: "operator",

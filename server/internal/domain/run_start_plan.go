@@ -34,8 +34,8 @@ func PlanRunStart(workspaceState WorkspaceState, task Task, phaseState PhaseStat
 	if workspaceState != WorkspaceActive {
 		evaluation.Errors = append(evaluation.Errors, Diagnostic{Code: CodeInvalidStateTransition, EntityID: request.Identity.WorkspaceID})
 	}
-	if strings.TrimSpace(request.Identity.ClientRunID) == "" {
-		evaluation.Errors = append(evaluation.Errors, Diagnostic{Code: CodeInvalidStateTransition, EntityID: request.Identity.ClientRunID})
+	if err := request.Identity.Validate(); err != nil {
+		evaluation.Errors = append(evaluation.Errors, Diagnostic{Code: violationCode(err), EntityID: request.Identity.ClientRunID})
 	}
 	if request.Identity.WorkspaceID != task.WorkspaceID || request.Identity.TaskID != task.ID {
 		evaluation.Errors = append(evaluation.Errors, Diagnostic{Code: CodeInvalidStateTransition, EntityID: task.ID})

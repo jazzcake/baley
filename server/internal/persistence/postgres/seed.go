@@ -8,6 +8,7 @@ import (
 const DemoWorkspaceID = "00000000-0000-4000-8000-000000000001"
 const DemoHumanActorID = "00000000-0000-4000-8000-000000000002"
 const DemoAgentActorID = "00000000-0000-4000-8000-000000000003"
+const DemoRepositoryID = "00000000-0000-4000-8000-000000000004"
 
 func (r *Repository) SeedDemo(ctx context.Context) error {
 	tx, err := r.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -17,7 +18,8 @@ func (r *Repository) SeedDemo(ctx context.Context) error {
 	defer tx.Rollback(ctx)
 	statements := []string{
 		`INSERT INTO actors(id,display_name,actor_type) VALUES ('` + DemoHumanActorID + `','Demo Owner','human'),('` + DemoAgentActorID + `','Codex Operator','agent') ON CONFLICT DO NOTHING`,
-		`INSERT INTO workspaces(id,name,revision) VALUES ('` + DemoWorkspaceID + `','Baley Pilot',1) ON CONFLICT DO NOTHING`,
+		`INSERT INTO workspaces(id,name,state,revision) VALUES ('` + DemoWorkspaceID + `','Baley Pilot','active',1) ON CONFLICT DO NOTHING`,
+		`INSERT INTO repositories(workspace_id,id,name,remote_url,default_branch,is_record_repository,task_records_root) VALUES ('` + DemoWorkspaceID + `','` + DemoRepositoryID + `','Baley','https://github.com/jazzcake/baley','main',true,'task-records') ON CONFLICT DO NOTHING`,
 		`INSERT INTO phases(workspace_id,id,name,position,state) VALUES ('` + DemoWorkspaceID + `','build','Build',0,'active'),('` + DemoWorkspaceID + `','validate','Validate',1,'planned') ON CONFLICT DO NOTHING`,
 		`INSERT INTO lanes(workspace_id,id,name,state) VALUES ('` + DemoWorkspaceID + `','server','Server','active'),('` + DemoWorkspaceID + `','client','Client','active'),('` + DemoWorkspaceID + `','art','Art','active') ON CONFLICT DO NOTHING`,
 		`INSERT INTO tasks(workspace_id,id,public_id,lane_id,phase_id,title,description,status) VALUES ('` + DemoWorkspaceID + `','api',101,'server','build','API 구현','Pilot API 구현','implemented'),('` + DemoWorkspaceID + `','ui',104,'client','build','Pilot UI','Pilot UI 구현','implemented'),('` + DemoWorkspaceID + `','assets',106,'art','build','Asset 제작','Pilot asset 제작','implemented'),('` + DemoWorkspaceID + `','user-test',110,'client','validate','사용자 테스트','Gate 통과 후 사용자 테스트','pending') ON CONFLICT DO NOTHING`,

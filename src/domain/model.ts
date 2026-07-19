@@ -21,7 +21,13 @@ export type Task = {
   status: TaskStatus;
   blocker?: string;
   parentTaskId?: string;
+  currentSummary?: string;
+  nextAction?: string;
+  terminalReason?: string;
+  implementedAssessment?: string;
 };
+export type Run = { id: string; taskId: string; kind: string; status: string; startedAt: string; endedAt?: string; resultSummary?: string; errorSummary?: string };
+export type TaskRecord = { id: string; taskId: string; runId?: string; recordType: string; repositoryId: string; relativePath: string; state: string; shortSummary: string; commitSha?: string };
 export type Dependency = { id: string; fromTaskId: string; toTaskId: string };
 export type Gate = {
   id: string;
@@ -40,4 +46,6 @@ export type WorkspaceFixture = {
   gates: Gate[];
   gateLinks: GateLink[];
 	decisions: Array<{ action: string; entityType: string; entityId: string | number; expectedWorkspaceRevision: number }>;
+	runs?: Run[];
+	records?: TaskRecord[];
 };

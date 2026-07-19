@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pilotReadyFixture } from "../fixtures/pilot-ready";
-import { layoutGraph, NODE_HEIGHT, NODE_WIDTH, rectanglesOverlap } from "./layout";
+import { laneBandRect, laneLabelTop, layoutGraph, LANE_BAND_INSET_Y, LANE_HEIGHT, LANE_LABEL_HEIGHT, NODE_HEIGHT, NODE_WIDTH, rectanglesOverlap } from "./layout";
 
 describe("phase-aware graph layout", () => {
   it("keeps task nodes inside their phase containers without overlap", async () => {
@@ -33,5 +33,23 @@ describe("phase-aware graph layout", () => {
     const gate = layout.gatePositions.get("pilot-ready")!;
     expect(gate.x).toBeGreaterThanOrEqual(build.x + build.width);
     expect(gate.x + 210).toBeLessThanOrEqual(validate.x);
+  });
+
+  it("projects a focused lane band across the full virtual canvas", async () => {
+    const layout = await layoutGraph(
+      pilotReadyFixture,
+      new Set(pilotReadyFixture.tasks.map((task) => task.id)),
+    );
+    const band = laneBandRect(layout, "client")!;
+    expect(band).toEqual({
+      id: "client",
+      x: 0,
+      y: layout.lanePositions.get("client")! + LANE_BAND_INSET_Y,
+      width: layout.width,
+      height: LANE_HEIGHT - LANE_BAND_INSET_Y * 2,
+    });
+    expect(laneLabelTop(layout, "client")).toBe(
+      layout.lanePositions.get("client")! + (LANE_HEIGHT - LANE_LABEL_HEIGHT) / 2,
+    );
   });
 });

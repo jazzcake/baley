@@ -27,7 +27,7 @@ Baley의 초기 개발은 기능 수를 늘리는 방식이 아니라 가장 위
 → Day Tripper 파일럿
 ```
 
-현재 위치는 **Phase 2: Persistent Core 진행 중**이다. Go domain core와 Gate 전이 vertical slice를 완료해 Task confirm, Gate readiness·pass, Phase 전환을 PostgreSQL·HTTP·MCP·Viewer까지 연결했다. 다음 작업은 **Run/Record vertical slice**로, Agent 실행 lifecycle과 repository Task Record index를 서버 정본에 연결한다.
+현재 위치는 **Gate V2 close-out 완료 및 Phase 3 진입**이다. Persistent Core, Gate 전이, Run/Record, 나머지 graph command, backup·restore, 독립 fixture, Viewer 인수와 명시적 사람 승인 증거가 완료됐다. Task #110은 Workspace revision 11에서 `confirmed`이며, 다음 작업은 실제 Repository/Record bootstrap과 multi-repository Operator integration이다.
 
 환경 독립 선행 구현은 Wave 7(P4-05~06)까지 단위 검증·독립 재리뷰를 완료했다. Phase 2~4의 선행 모듈은 모두 준비됐으며, PostgreSQL·MCP·실제 Git repository·API/브라우저 통합 판정은 데스크탑 검증 큐로 유지한다.
 
@@ -199,19 +199,20 @@ repo-scoped Baley Skill과 command contract를 만든다. UI는 read-only로 유
 - [x] Task 상태 머신, blocker와 atomic dependency patch domain core
 - [x] Gate readiness, Task confirm, Gate Task pass/revoke와 Phase 전이
 - [x] Gate 전이의 PostgreSQL·HTTP·MCP·Viewer vertical slice
-- [ ] Run lease·heartbeat와 Task 자동 시작·종료 Event
-- [ ] Task Record 상대 경로·hash·commit index
-- [ ] Run/Record query·command와 Viewer read projection
-- [ ] 나머지 Task·dependency·Lane·Gate command의 API/DB 연결
-- [ ] backup·restore와 독립 fixture를 포함한 Gate V2 인수 검증
+- [x] Run schema, `run.start`, pending Task 자동 시작과 시작 Event의 PostgreSQL·HTTP·MCP 연결
+- [x] Run heartbeat·terminal version CAS, lease timeout interruption과 종료 Event
+- [x] Task Record 상대 경로·hash·commit index
+- [x] Run/Record query·command와 Viewer read projection
+- [x] 나머지 Task·dependency·Lane·Gate command의 API/DB 연결
+- [x] backup·restore와 독립 fixture를 포함한 Gate V2 인수 검증
 
 ### Gate V2 — 도메인 코어 승인
 
-- [ ] Phase 1의 주요 그래프 동작이 API와 DB에서 동일하게 보장된다.
-- [ ] 서버가 cycle, 권한과 Gate 상태를 신뢰 가능한 방식으로 강제한다.
-- [ ] Gate pass history와 승인 근거를 event에서 재구성할 수 있다.
-- [ ] 재시작 후 데이터와 graph revision이 일관된다.
-- [ ] Day Tripper와 무관한 fixture로도 모델이 성립한다.
+- [x] Phase 1의 주요 그래프 동작이 API와 DB에서 동일하게 보장된다.
+- [x] 서버가 cycle, 권한과 Gate 상태를 신뢰 가능한 방식으로 강제한다.
+- [x] Gate pass history와 승인 근거를 event에서 재구성할 수 있다.
+- [x] 재시작 후 데이터와 graph revision이 일관된다.
+- [x] Day Tripper와 무관한 fixture로도 모델이 성립한다.
 
 ## 6. Phase 3 — Multi-repository Git 및 Operator Integration
 
@@ -342,16 +343,17 @@ baley gate status <gate>
 
 ## 11. 현재 다음 행동
 
-1. Run command payload와 lease·heartbeat·terminal transition 계약을 구체화한다.
-2. Run persistence와 `run.start`의 pending Task 자동 시작을 하나의 transaction으로 구현한다.
-3. Task Record 상대 경로·hash 등록과 선택적 commit/blob 연결을 구현한다.
-4. Run/Record HTTP query와 MCP command를 연결하고 Viewer Inspector에 읽기 projection을 추가한다.
-5. 실제 PostgreSQL에서 idempotency, lease version CAS, terminal 경쟁과 rollback을 검증한다.
-6. `task.report_implemented`를 completion Record와 연결해 기존 `task.confirm` 승인 흐름으로 이어지게 한다.
-7. 이후 Task·dependency·Lane·Gate의 나머지 command를 API/DB에 연결하고 Gate V2 인수 기준을 완료한다.
+1. 기존의 안정적인 lease-token secret으로 기본 Baley API를 현재 소스에서 재시작해 runtime과 source 계약을 일치시킨다.
+2. Baley command로 실제 Repository와 Task Record root를 등록해 Phase 3에 진입한다.
+3. pending 상태인 Gate-transition 계획, handoff, 리뷰, 응답과 완료보고 index를 Record 본문 복제 없이 등록한다.
+4. multi-repository CommitReference와 Record 증거를 위한 CLI/Operator 경로를 완성한다.
+5. Branch/worktree lifecycle은 외부 Git 도구에 두고 Baley에는 commit reference와 비권위적 observation만 기록한다.
 
-## 12. Close-out
+## 12. Gate-transition close-out
 
-- [ ] 종료 의미 (implemented / confirmed / discarded / superseded)
-- [ ] 신규 작업 참조 필요? (yes → 유지, no → history 이동 검토)
-- [ ] 이관 시 이동 경로:
+- [x] 종료 의미: Task #110 `confirmed`, Pilot Ready Gate `passed`, Build `completed`, Validate `active`.
+- [x] 사람 승인과 warning acknowledgement가 분리된 revision-11 Event에 보존됐다.
+- [x] 대체 독립 리뷰와 리뷰 응답이 완료됐고 남은 High/Medium finding이 없다.
+- [x] `task-records/gate-transition-vertical-slice/completion-report-01.md`를 작성했다.
+- [ ] 실제 Repository/Record bootstrap 전이므로 Record index 등록은 대기 중이다.
+- [ ] 권한이 다른 기존 process를 이 세션에서 교체할 수 없어 기본 8080 runtime 재시작은 대기 중이다.

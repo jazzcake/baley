@@ -27,6 +27,14 @@ type taskInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	TaskID      int    `json:"taskId"`
 }
+type taskReportImplementedInput struct {
+	WorkspaceID              string   `json:"workspaceId"`
+	TaskID                   int      `json:"taskId"`
+	Assessment               string   `json:"assessment"`
+	ProceedReason            string   `json:"proceedReason,omitempty"`
+	AcknowledgedWarningCodes []string `json:"acknowledgedWarningCodes,omitempty"`
+	automaticEnvelope
+}
 type gateInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	GateID      string `json:"gateId"`
@@ -37,14 +45,108 @@ type previewEnvelope struct {
 	ExecutedByActorID         string `json:"executedByActorId"`
 }
 type executeEnvelope struct {
+	ExpectedWorkspaceRevision int64    `json:"expectedWorkspaceRevision"`
+	IdempotencyKey            string   `json:"idempotencyKey"`
+	ExecutedByActorID         string   `json:"executedByActorId"`
+	AcknowledgedWarningCodes  []string `json:"acknowledgedWarningCodes,omitempty"`
+	ProceedReason             string   `json:"proceedReason,omitempty"`
+	ApprovedByActorID         string   `json:"approvedByActorId"`
+	ApprovedCommandHash       string   `json:"approvedCommandHash"`
+	DecisionSnapshotHash      string   `json:"decisionSnapshotHash,omitempty"`
+	StatementHash             string   `json:"statementHash,omitempty"`
+	ConversationRef           string   `json:"conversationRef,omitempty"`
+}
+type automaticEnvelope struct {
 	ExpectedWorkspaceRevision int64  `json:"expectedWorkspaceRevision"`
 	IdempotencyKey            string `json:"idempotencyKey"`
 	ExecutedByActorID         string `json:"executedByActorId"`
-	ApprovedByActorID         string `json:"approvedByActorId"`
-	ApprovedCommandHash       string `json:"approvedCommandHash"`
-	DecisionSnapshotHash      string `json:"decisionSnapshotHash,omitempty"`
-	StatementHash             string `json:"statementHash,omitempty"`
-	ConversationRef           string `json:"conversationRef,omitempty"`
+}
+type runStartInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	TaskID      int    `json:"taskId"`
+	ClientRunID string `json:"clientRunId"`
+	Kind        string `json:"kind"`
+	SessionRef  string `json:"sessionRef,omitempty"`
+	ParentRunID string `json:"parentRunId,omitempty"`
+	TargetRunID string `json:"targetRunId,omitempty"`
+	automaticEnvelope
+}
+type runHeartbeatInput struct {
+	WorkspaceID        string `json:"workspaceId"`
+	RunID              string `json:"runId"`
+	LeaseToken         string `json:"leaseToken"`
+	ExpectedRunVersion int64  `json:"expectedRunVersion"`
+	ExtensionSeconds   int64  `json:"extensionSeconds,omitempty"`
+	IdempotencyKey     string `json:"idempotencyKey"`
+	ExecutedByActorID  string `json:"executedByActorId"`
+}
+type runTerminalInput struct {
+	WorkspaceID        string `json:"workspaceId"`
+	RunID              string `json:"runId"`
+	ExpectedRunVersion int64  `json:"expectedRunVersion"`
+	Summary            string `json:"summary"`
+	automaticEnvelope
+}
+type runCorrectInput struct {
+	WorkspaceID        string `json:"workspaceId"`
+	RunID              string `json:"runId"`
+	ExpectedRunVersion int64  `json:"expectedRunVersion"`
+	Status             string `json:"status"`
+	Summary            string `json:"summary"`
+	Reason             string `json:"reason"`
+	automaticEnvelope
+}
+type repositoryRegisterInput struct {
+	WorkspaceID        string `json:"workspaceId"`
+	RepositoryID       string `json:"repositoryId"`
+	Name               string `json:"name"`
+	RemoteURL          string `json:"remoteUrl"`
+	DefaultBranch      string `json:"defaultBranch,omitempty"`
+	IsRecordRepository bool   `json:"isRecordRepository"`
+	TaskRecordsRoot    string `json:"taskRecordsRoot,omitempty"`
+	automaticEnvelope
+}
+type recordRegisterInput struct {
+	WorkspaceID        string `json:"workspaceId"`
+	RecordID           string `json:"recordId"`
+	TaskID             int    `json:"taskId"`
+	RunID              string `json:"runId,omitempty"`
+	RecordType         string `json:"recordType"`
+	RepositoryID       string `json:"repositoryId"`
+	RelativePath       string `json:"relativePath"`
+	WorkingTreeHash    string `json:"workingTreeHash,omitempty"`
+	ShortSummary       string `json:"shortSummary"`
+	SupersedesRecordID string `json:"supersedesRecordId,omitempty"`
+	automaticEnvelope
+}
+type recordAttachCommitInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	RecordID    string `json:"recordId"`
+	CommitSHA   string `json:"commitSha"`
+	BlobSHA     string `json:"blobSha"`
+	automaticEnvelope
+}
+type commitAttachInput struct {
+	WorkspaceID  string `json:"workspaceId"`
+	CommitID     string `json:"commitId"`
+	TaskID       int    `json:"taskId"`
+	RunID        string `json:"runId,omitempty"`
+	RepositoryID string `json:"repositoryId"`
+	CommitSHA    string `json:"commitSha"`
+	Relation     string `json:"relation"`
+	automaticEnvelope
+}
+type gitObserveInput struct {
+	WorkspaceID   string    `json:"workspaceId"`
+	ObservationID string    `json:"observationId"`
+	RunID         string    `json:"runId"`
+	RepositoryID  string    `json:"repositoryId"`
+	ObservedAt    time.Time `json:"observedAt"`
+	HeadCommitSHA string    `json:"headCommitSha,omitempty"`
+	BranchHint    string    `json:"branchHint,omitempty"`
+	WorktreeLabel string    `json:"worktreeLabel,omitempty"`
+	Dirty         *bool     `json:"dirty,omitempty"`
+	automaticEnvelope
 }
 type taskConfirmPreviewInput struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -96,8 +198,23 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_status", Description: "Read Gate status and conditions"}, c.gateStatus)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_decision_list", Description: "List human decisions currently available"}, c.decisionList)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_event_list", Description: "List Workspace Events"}, c.eventList)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_list", Description: "List Workspace Runs"}, c.runList)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_record_list", Description: "List Task Record indexes without loading document bodies"}, c.recordList)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_start", Description: "Start a Run and automatically start a pending Task"}, c.runStart)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_heartbeat", Description: "Extend a running Run lease using token and Run version CAS"}, c.runHeartbeat)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_succeed", Description: "Mark a Run succeeded using Run version CAS"}, c.runSucceed)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_fail", Description: "Mark a Run failed using Run version CAS"}, c.runFail)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_cancel", Description: "Cancel a Run using Run version CAS"}, c.runCancel)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_interrupt", Description: "Interrupt a Run using Run version CAS"}, c.runInterrupt)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_correct", Description: "Correct a terminal Run with an explicit reason"}, c.runCorrect)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_repository_register", Description: "Register a Git repository and optional Task Record root"}, c.repositoryRegister)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_record_register", Description: "Register a repository-relative Task Record index"}, c.recordRegister)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_record_attach_commit", Description: "Attach commit and blob evidence to a Task Record"}, c.recordAttachCommit)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_commit_attach", Description: "Attach a Git commit reference to a Task"}, c.commitAttach)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_git_observe", Description: "Record non-authoritative Run Git metadata"}, c.gitObserve)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_report_implemented", Description: "Report implementation complete with assessment and explicit warning acknowledgement"}, c.taskReportImplemented)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_preview", Description: "Preview Task confirmation without writing"}, c.taskConfirmPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_execute", Description: "Execute an explicitly approved Task confirmation"}, c.taskConfirmExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_execute", Description: "Execute an explicitly approved Task confirmation with exact warning acknowledgement when preview returned warnings"}, c.taskConfirmExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_task_preview", Description: "Preview explicit Gate Task pass without writing"}, c.gatePassTaskPreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_task_execute", Description: "Execute an explicitly approved Gate Task pass"}, c.gatePassTaskExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_revoke_task_pass_preview", Description: "Preview Gate Task pass revocation without writing"}, c.gateRevokePreview)
@@ -154,7 +271,10 @@ func previewEnv(v previewEnvelope) map[string]any {
 	return map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID}
 }
 func executeEnv(v executeEnvelope) map[string]any {
-	return map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID, "humanApprovalAttestation": map[string]any{"approvedByActorId": v.ApprovedByActorID, "approvedCommandHash": v.ApprovedCommandHash, "decisionSnapshotHash": v.DecisionSnapshotHash, "statementHash": v.StatementHash, "conversationRef": v.ConversationRef}}
+	return map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID, "acknowledgedWarningCodes": v.AcknowledgedWarningCodes, "proceedReason": v.ProceedReason, "humanApprovalAttestation": map[string]any{"approvedByActorId": v.ApprovedByActorID, "approvedCommandHash": v.ApprovedCommandHash, "decisionSnapshotHash": v.DecisionSnapshotHash, "statementHash": v.StatementHash, "conversationRef": v.ConversationRef}}
+}
+func automaticEnv(v automaticEnvelope) map[string]any {
+	return map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID}
 }
 
 func (c *client) workspaceGraph(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
@@ -174,6 +294,68 @@ func (c *client) decisionList(ctx context.Context, _ *mcp.CallToolRequest, in wo
 }
 func (c *client) eventList(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/events")
+}
+func (c *client) runList(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/runs")
+}
+func (c *client) recordList(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/records")
+}
+func (c *client) runStart(ctx context.Context, _ *mcp.CallToolRequest, in runStartInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "clientRunId": in.ClientRunID, "kind": in.Kind, "sessionRef": in.SessionRef, "parentRunId": in.ParentRunID, "targetRunId": in.TargetRunID}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("run.start", arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) runHeartbeat(ctx context.Context, _ *mcp.CallToolRequest, in runHeartbeatInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "runId": in.RunID, "leaseToken": in.LeaseToken, "expectedRunVersion": in.ExpectedRunVersion, "extensionSeconds": in.ExtensionSeconds}
+	envelope := map[string]any{"idempotencyKey": in.IdempotencyKey, "executedByActorId": in.ExecutedByActorID}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("run.heartbeat", arguments, envelope))
+}
+func (c *client) runTerminal(ctx context.Context, name string, in runTerminalInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "runId": in.RunID, "expectedRunVersion": in.ExpectedRunVersion, "summary": in.Summary}
+	return c.call(ctx, "POST", "/v1/commands/execute", command(name, arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) runSucceed(ctx context.Context, _ *mcp.CallToolRequest, in runTerminalInput) (*mcp.CallToolResult, any, error) {
+	return c.runTerminal(ctx, "run.succeed", in)
+}
+func (c *client) runFail(ctx context.Context, _ *mcp.CallToolRequest, in runTerminalInput) (*mcp.CallToolResult, any, error) {
+	return c.runTerminal(ctx, "run.fail", in)
+}
+func (c *client) runCancel(ctx context.Context, _ *mcp.CallToolRequest, in runTerminalInput) (*mcp.CallToolResult, any, error) {
+	return c.runTerminal(ctx, "run.cancel", in)
+}
+func (c *client) runInterrupt(ctx context.Context, _ *mcp.CallToolRequest, in runTerminalInput) (*mcp.CallToolResult, any, error) {
+	return c.runTerminal(ctx, "run.interrupt", in)
+}
+func (c *client) runCorrect(ctx context.Context, _ *mcp.CallToolRequest, in runCorrectInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "runId": in.RunID, "expectedRunVersion": in.ExpectedRunVersion, "status": in.Status, "summary": in.Summary, "reason": in.Reason}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("run.correct", arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) repositoryRegister(ctx context.Context, _ *mcp.CallToolRequest, in repositoryRegisterInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "repositoryId": in.RepositoryID, "name": in.Name, "remoteUrl": in.RemoteURL, "defaultBranch": in.DefaultBranch, "isRecordRepository": in.IsRecordRepository, "taskRecordsRoot": in.TaskRecordsRoot}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("repository.register", arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) recordRegister(ctx context.Context, _ *mcp.CallToolRequest, in recordRegisterInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "recordId": in.RecordID, "taskId": in.TaskID, "runId": in.RunID, "recordType": in.RecordType, "repositoryId": in.RepositoryID, "relativePath": in.RelativePath, "workingTreeHash": in.WorkingTreeHash, "shortSummary": in.ShortSummary, "supersedesRecordId": in.SupersedesRecordID}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("record.register", arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) recordAttachCommit(ctx context.Context, _ *mcp.CallToolRequest, in recordAttachCommitInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "recordId": in.RecordID, "commitSha": in.CommitSHA, "blobSha": in.BlobSHA}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("record.attach_commit", arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) commitAttach(ctx context.Context, _ *mcp.CallToolRequest, in commitAttachInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "commitId": in.CommitID, "taskId": in.TaskID, "runId": in.RunID, "repositoryId": in.RepositoryID, "commitSha": in.CommitSHA, "relation": in.Relation}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("commit.attach", arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) gitObserve(ctx context.Context, _ *mcp.CallToolRequest, in gitObserveInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "observationId": in.ObservationID, "runId": in.RunID, "repositoryId": in.RepositoryID, "observedAt": in.ObservedAt, "headCommitSha": in.HeadCommitSHA, "branchHint": in.BranchHint, "worktreeLabel": in.WorktreeLabel, "dirty": in.Dirty}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("git.observe", arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) taskReportImplemented(ctx context.Context, _ *mcp.CallToolRequest, in taskReportImplementedInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "assessment": in.Assessment}
+	envelope := automaticEnv(in.automaticEnvelope)
+	envelope["acknowledgedWarningCodes"] = in.AcknowledgedWarningCodes
+	envelope["proceedReason"] = in.ProceedReason
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.report_implemented", arguments, envelope))
 }
 func (c *client) taskConfirmPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskConfirmPreviewInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/preview", command("task.confirm", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID}, previewEnv(in.previewEnvelope)))

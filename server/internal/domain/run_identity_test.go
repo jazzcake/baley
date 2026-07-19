@@ -5,8 +5,10 @@ import (
 	"time"
 )
 
+const testClientRunID = "00000000-0000-4000-8000-000000000099"
+
 func TestRunStartIdentityComparison(t *testing.T) {
-	base := RunStartIdentity{WorkspaceID: "workspace", TaskID: "task", ClientRunID: "client-run", Kind: RunImplementation, ParentRunID: "parent", TargetRunID: "target"}
+	base := RunStartIdentity{WorkspaceID: "workspace", TaskID: "task", ClientRunID: testClientRunID, Kind: RunImplementation, ParentRunID: "parent", TargetRunID: "target"}
 	if err := CompareRunStartIdentity(base, base); err != nil {
 		t.Fatalf("same identity rejected: %v", err)
 	}
@@ -14,7 +16,7 @@ func TestRunStartIdentityComparison(t *testing.T) {
 		"workspace": func(value *RunStartIdentity) { value.WorkspaceID = "other" },
 		"task":      func(value *RunStartIdentity) { value.TaskID = "other" },
 		"client run": func(value *RunStartIdentity) {
-			value.ClientRunID = "other"
+			value.ClientRunID = "00000000-0000-4000-8000-000000000098"
 		},
 		"kind":   func(value *RunStartIdentity) { value.Kind = RunReviewResponse },
 		"parent": func(value *RunStartIdentity) { value.ParentRunID = "other" },
@@ -30,15 +32,16 @@ func TestRunStartIdentityComparison(t *testing.T) {
 }
 
 func TestRunStartIdentityValidation(t *testing.T) {
-	valid := RunStartIdentity{WorkspaceID: "workspace", TaskID: "task", ClientRunID: "client-run", Kind: RunImplementation}
+	valid := RunStartIdentity{WorkspaceID: "workspace", TaskID: "task", ClientRunID: testClientRunID, Kind: RunImplementation}
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*RunStartIdentity){
-		"workspace": func(value *RunStartIdentity) { value.WorkspaceID = "" },
-		"task":      func(value *RunStartIdentity) { value.TaskID = " " },
-		"client":    func(value *RunStartIdentity) { value.ClientRunID = "" },
-		"kind":      func(value *RunStartIdentity) { value.Kind = RunKind("unknown") },
+		"workspace":     func(value *RunStartIdentity) { value.WorkspaceID = "" },
+		"task":          func(value *RunStartIdentity) { value.TaskID = " " },
+		"client":        func(value *RunStartIdentity) { value.ClientRunID = "" },
+		"client format": func(value *RunStartIdentity) { value.ClientRunID = "client-run" },
+		"kind":          func(value *RunStartIdentity) { value.Kind = RunKind("unknown") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			value := valid

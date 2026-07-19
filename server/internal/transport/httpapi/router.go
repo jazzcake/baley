@@ -11,9 +11,9 @@ import (
 )
 
 type API struct {
-	Service       *application.Service
-	Repo          *postgres.Repository
-	AllowedOrigin string
+	Service        *application.Service
+	Repo           *postgres.Repository
+	AllowedOrigins []string
 }
 
 func (a *API) Handler() http.Handler {
@@ -25,6 +25,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/gates/{gateId}/status", a.gate)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/decisions", a.decisions)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/events", a.events)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/runs", a.runs)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/records", a.records)
 	mux.HandleFunc("POST /v1/commands/preview", a.preview)
 	mux.HandleFunc("POST /v1/commands/execute", a.execute)
 	return a.cors(mux)
@@ -44,7 +46,7 @@ func (a *API) graph(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"workspace": s.Workspace, "phases": s.Phases, "lanes": s.Lanes, "tasks": s.Tasks, "dependencies": s.Dependencies, "gates": s.Gates, "decisions": projectDecisions(s)})
+	writeJSON(w, 200, map[string]any{"workspace": s.Workspace, "phases": s.Phases, "lanes": s.Lanes, "tasks": s.Tasks, "dependencies": s.Dependencies, "gates": s.Gates, "runs": s.Runs, "repositories": s.Repositories, "records": s.Records, "commits": s.Commits, "gitObservations": s.GitObservations, "decisions": projectDecisions(s)})
 }
 func (a *API) task(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("publicId"))
@@ -88,6 +90,22 @@ func (a *API) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, v)
+}
+func (a *API) runs(w http.ResponseWriter, r *http.Request) {
+	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, s.Runs)
+}
+func (a *API) records(w http.ResponseWriter, r *http.Request) {
+	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, s.Records)
 }
 func (a *API) preview(w http.ResponseWriter, r *http.Request) {
 	var req application.CommandRequest
@@ -152,7 +170,7 @@ func writeError(w http.ResponseWriter, err error) {
 	switch ce.Code {
 	case "not_found":
 		status = 404
-	case "stale_revision", "idempotency_conflict", "invalid_state_transition", "gate_not_ready", "gate_not_current":
+	case "stale_revision", "stale_run_version", "run_lease_mismatch", "idempotency_conflict", "invalid_state_transition", "gate_not_ready", "gate_not_current":
 		status = 409
 	case "invalid_request":
 		status = 400
@@ -162,7 +180,7 @@ func writeError(w http.ResponseWriter, err error) {
 func (a *API) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && origin == a.AllowedOrigin {
+		if origin != "" && a.isOriginAllowed(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -174,4 +192,13 @@ func (a *API) cors(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (a *API) isOriginAllowed(origin string) bool {
+	for _, allowed := range a.AllowedOrigins {
+		if origin == allowed {
+			return true
+		}
+	}
+	return false
 }

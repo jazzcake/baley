@@ -1,6 +1,9 @@
 package domain
 
-import "strings"
+import (
+	"encoding/hex"
+	"strings"
+)
 
 type RunStartIdentity struct {
 	WorkspaceID string
@@ -12,10 +15,18 @@ type RunStartIdentity struct {
 }
 
 func (i RunStartIdentity) Validate() error {
-	if strings.TrimSpace(i.WorkspaceID) == "" || strings.TrimSpace(i.TaskID) == "" || strings.TrimSpace(i.ClientRunID) == "" || !validRunKind(i.Kind) {
+	if strings.TrimSpace(i.WorkspaceID) == "" || strings.TrimSpace(i.TaskID) == "" || !validUUID(i.ClientRunID) || !validRunKind(i.Kind) {
 		return &Violation{Code: CodeInvalidStateTransition}
 	}
 	return nil
+}
+
+func validUUID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	_, err := hex.DecodeString(strings.ReplaceAll(value, "-", ""))
+	return err == nil
 }
 
 func (i RunStartIdentity) Matches(other RunStartIdentity) bool {

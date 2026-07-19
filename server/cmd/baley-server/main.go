@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -48,7 +49,25 @@ func main() {
 	if err != nil || !(host == "127.0.0.1" || host == "localhost" || host == "::1") {
 		log.Fatal("BALEY_HTTP_ADDR must bind to loopback")
 	}
-	api := &httpapi.API{Service: application.NewService(repo), Repo: repo, AllowedOrigin: env("BALEY_VIEWER_ORIGIN", "http://127.0.0.1:5173")}
+	service := application.NewService(repo)
+	if _, err = service.InterruptExpiredRuns(ctx); err != nil {
+		log.Printf("initial Run lease sweep failed: %v", err)
+	}
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, sweepErr := service.InterruptExpiredRuns(ctx); sweepErr != nil {
+					log.Printf("Run lease sweep failed: %v", sweepErr)
+				}
+			}
+		}
+	}()
+	api := &httpapi.API{Service: service, Repo: repo, AllowedOrigins: viewerOrigins()}
 	server := &http.Server{Addr: addr, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
@@ -66,4 +85,21 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func viewerOrigins() []string {
+	raw := os.Getenv("BALEY_VIEWER_ORIGINS")
+	if raw == "" {
+		raw = os.Getenv("BALEY_VIEWER_ORIGIN")
+	}
+	if raw == "" {
+		raw = "http://127.0.0.1:5173,http://localhost:5173"
+	}
+	origins := make([]string, 0)
+	for _, origin := range strings.Split(raw, ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+	return origins
 }

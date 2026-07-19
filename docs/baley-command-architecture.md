@@ -156,7 +156,7 @@ task #104 구현을 진행해
 
 `run.start`가 Task가 pending일 때 같은 transaction에서 자동 시작한다. implementation과 review-response Run은 미해소 dependency가 있으면 거부되지만 상세계획, 독립 Agent 리뷰와 완료보고 Run은 시작할 수 있다. 상세계획과 독립 Agent 리뷰가 없어도 서버는 구현완료를 의미상 거부하지 않는다. 누락은 warning으로 반환하고 판단은 구현 주체가 기록한다.
 
-Run은 lease token과 heartbeat를 사용한다. 같은 client run ID 재호출은 같은 Run을 반환하며 terminal 전이는 version CAS로 하나만 성공한다.
+Run은 lease token과 heartbeat를 사용한다. raw token은 영속화하지 않고 외부 secret과 Run ID의 HMAC으로 재구성한다. 같은 client run ID 재호출은 같은 Run과 같은 token을 반환하며 Run lease/version을 갱신하지 않는다. terminal 전이는 version CAS로 하나만 성공한다.
 
 ## 7. Record 등록
 

@@ -34,7 +34,7 @@ func buildEventEvidenceRules() []EventEvidenceRule {
 		"task.created": {"task"}, "task.updated": {"taskId"}, "task.terminal_set": {"taskId", "reason"}, "task.terminal_cleared": {"taskId"}, "task.started": {"taskId", "clientRunId"}, "task.implemented_reported": {"taskId", "assessment", "warnings", "acknowledgedWarningCodes"}, "task.confirmed": {"taskId"}, "task.discarded": {"taskId", "reason"}, "task.rework_started": {"taskId", "reason"}, "task.blocked": {"taskId", "reason"}, "task.unblocked": {"taskId", "reason"},
 		"dependency.connected": {"diff"}, "dependency.disconnected": {"diff"}, "dependency.patched": {"diff"},
 		"gate.created": {"gateId", "fromPhaseId", "toPhaseId"}, "gate.task_attached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.task_detached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.task_passed": {"gateTaskId", "reason"}, "gate.task_pass_revoked": {"gateTaskId", "reason"}, "gate.passed": {"gateId", "conditions", "humanApprovalAttestationId", "workspaceRevision", "decisionSnapshotHash"},
-		"run.started": {"runId", "taskId", "clientRunId", "kind"}, "run.succeeded": {"runId", "resultSummary"}, "run.failed": {"runId", "errorSummary"}, "run.cancelled": {"runId", "errorSummary"}, "run.interrupted": {"runId", "errorSummary"}, "run.corrected": {"runId", "previousStatus", "newStatus", "reason"},
+		"run.started": {"runId", "taskId", "clientRunId", "kind"}, "run.succeeded": {"runId", "resultSummary"}, "run.failed": {"runId", "errorSummary"}, "run.cancelled": {"runId", "errorSummary"}, "run.interrupted": {"runId", "errorSummary"}, "run.corrected": {"runId", "previousStatus", "previousResultSummary", "previousErrorSummary", "previousEndedAt", "newStatus", "newResultSummary", "newErrorSummary", "newEndedAt", "reason"},
 		"record.registered": {"recordId", "taskId", "repositoryId", "relativePath"}, "record.commit_attached": {"recordId", "commitSha", "blobSha"}, "commit.attached": {"commitId", "taskId", "repositoryId", "commitSha", "relation"}, "git.observed": {"observationId", "runId", "repositoryId", "observedAt"},
 		"human_approval_attestation.recorded": {"action", "entityType", "entityId", "workspaceRevision", "approvedByActorId", "approvedCommandHash"},
 	}
@@ -65,7 +65,7 @@ func ValidateEventEvidence(event PlannedEvent) Evaluation {
 	}
 	for _, key := range rule.RequiredPayloadKeys {
 		value, exists := event.Payload[key]
-		if !exists || !evidencePresent(value) {
+		if !exists || !eventEvidenceValuePresent(event.Type, key, value) {
 			evaluation.Errors = append(evaluation.Errors, Diagnostic{Code: CodeInvalidStateTransition, EntityID: event.Type, Details: map[string]any{"missingKey": key}})
 		}
 	}
@@ -93,6 +93,19 @@ func ValidateEventEvidence(event PlannedEvent) Evaluation {
 	}
 	evaluation.sort()
 	return evaluation
+}
+
+func eventEvidenceValuePresent(eventType, key string, value any) bool {
+	if eventType == "run.corrected" {
+		switch key {
+		case "previousResultSummary", "previousErrorSummary", "newResultSummary", "newErrorSummary":
+			// Terminal Runs carry either a result or an error summary. The empty
+			// counterpart is still required in correction evidence so consumers can
+			// distinguish an explicitly cleared value from an omitted field.
+			return value != nil
+		}
+	}
+	return evidencePresent(value)
 }
 
 func ValidateCommandAudit(expectation AuditExpectation, events []PlannedEvent, provenance ActorProvenance) Evaluation {

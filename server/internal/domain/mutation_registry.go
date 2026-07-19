@@ -470,7 +470,7 @@ func planRunCorrectionMutation(context MutationContext) DomainMutationPlan {
 		return invalidPlan(plan, context.Run.ID, violationCode(err))
 	}
 	plan.ProjectedDiff = run
-	plan.Events = []PlannedEvent{{Type: "run.corrected", EntityType: "run", EntityID: run.ID, Payload: map[string]any{"runId": run.ID, "previousStatus": correction.PreviousStatus, "newStatus": correction.NewStatus, "reason": correction.Reason}}}
+	plan.Events = []PlannedEvent{{Type: "run.corrected", EntityType: "run", EntityID: run.ID, Payload: map[string]any{"runId": run.ID, "previousStatus": correction.PreviousStatus, "previousResultSummary": correction.PreviousResultSummary, "previousErrorSummary": correction.PreviousErrorSummary, "previousEndedAt": correction.PreviousEndedAt, "newStatus": correction.NewStatus, "newResultSummary": correction.NewResultSummary, "newErrorSummary": correction.NewErrorSummary, "newEndedAt": correction.NewEndedAt, "reason": correction.Reason}}}
 	return plan
 }
 

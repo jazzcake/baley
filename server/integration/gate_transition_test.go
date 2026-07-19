@@ -18,12 +18,13 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 		t.Skip("BALEY_TEST_DATABASE_URL is not set")
 	}
 	ctx := context.Background()
+	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "gate-transition-integration-secret")
 	repo, err := postgres.Open(ctx, url)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	if _, err = repo.Pool.Exec(ctx, "TRUNCATE events,human_approval_attestations,commands,workspace_counters,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE"); err != nil {
+	if _, err = repo.Pool.Exec(ctx, "TRUNCATE events,human_approval_attestations,commands,workspace_counters,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE"); err != nil {
 		t.Fatal(err)
 	}
 	if err = repo.SeedDemo(ctx); err != nil {
@@ -123,6 +124,7 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	foundEvidence := false
+	foundCanonicalApproval := false
 	for _, event := range events {
 		if event.EventType == "gate.passed" {
 			var payload struct {
@@ -135,9 +137,18 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 			}
 			foundEvidence = true
 		}
+		if event.EventType == "human_approval_attestation.recorded" {
+			var payload map[string]any
+			if json.Unmarshal(event.Payload, &payload) == nil && payload["action"] == "gate_pass" {
+				foundCanonicalApproval = true
+			}
+		}
 	}
 	if !foundEvidence {
 		t.Fatal("gate.passed event missing")
+	}
+	if !foundCanonicalApproval {
+		t.Fatal("canonical gate_pass approval evidence missing")
 	}
 }
 

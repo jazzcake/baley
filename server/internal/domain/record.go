@@ -1,6 +1,9 @@
 package domain
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 type RecordType string
 
@@ -58,7 +61,7 @@ func NewTaskRecord(taskRecordsRoot string, input RecordRegistration, existingRec
 	if pathErr != nil {
 		return TaskRecord{}, pathErr
 	}
-	if strings.TrimSpace(input.ID) == "" || strings.TrimSpace(input.WorkspaceID) == "" || strings.TrimSpace(input.TaskID) == "" || strings.TrimSpace(input.RepositoryID) == "" || !validRecordType(input.Type) || strings.TrimSpace(input.ShortSummary) == "" || input.SupersedesRecordID == input.ID || !validWorkingTreeHash(input.WorkingTreeHash) {
+	if strings.TrimSpace(input.ID) == "" || strings.TrimSpace(input.WorkspaceID) == "" || strings.TrimSpace(input.TaskID) == "" || strings.TrimSpace(input.RepositoryID) == "" || !validRecordType(input.Type) || strings.TrimSpace(input.ShortSummary) == "" || utf8.RuneCountInString(strings.TrimSpace(input.ShortSummary)) > 500 || input.SupersedesRecordID == input.ID || !validWorkingTreeHash(input.WorkingTreeHash) {
 		return TaskRecord{}, &Violation{Code: CodeInvalidStateTransition}
 	}
 	if err := validateRecordSupersession(input, existingRecords); err != nil {

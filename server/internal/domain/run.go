@@ -53,9 +53,11 @@ type RunCorrection struct {
 	PreviousStatus        RunStatus
 	PreviousResultSummary string
 	PreviousErrorSummary  string
+	PreviousEndedAt       *time.Time
 	NewStatus             RunStatus
 	NewResultSummary      string
 	NewErrorSummary       string
+	NewEndedAt            *time.Time
 	Reason                string
 }
 
@@ -101,9 +103,11 @@ func (r Run) CorrectTerminal(status RunStatus, expectedVersion int64, now time.T
 		PreviousStatus:        r.Status,
 		PreviousResultSummary: r.ResultSummary,
 		PreviousErrorSummary:  r.ErrorSummary,
+		PreviousEndedAt:       r.EndedAt,
 		NewStatus:             status,
 		NewResultSummary:      resultSummary,
 		NewErrorSummary:       errorSummary,
+		NewEndedAt:            timePointer(now),
 		Reason:                trimmedReason,
 	}
 	next := r

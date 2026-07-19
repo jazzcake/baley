@@ -65,3 +65,5 @@ Generate client IDs once and reuse them for retries. Keep Runs alive with heartb
 ```
 
 Use `/v1/commands/preview` for a write-free evaluation and `/v1/commands/execute` for mutation. Bind a human approval attestation to the exact action, target, Workspace revision, command hash and optional decision snapshot hash. It is not a persisted approval request and cannot be reused for another command.
+
+When preview returns warnings, execute must send the exact warning-code set in `acknowledgedWarningCodes`; use `proceedReason` to preserve the Operator's reason in command Event evidence. Both belong to the envelope and are excluded from the canonical command hash.

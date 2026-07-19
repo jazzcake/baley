@@ -578,6 +578,7 @@ Run은 Operator client와 Skill/MCP가 기본적으로 조용히 갱신한다.
 - Task가 pending이면 `run.start` transaction 안에서 `in_progress`로 함께 전환한다. 별도 `task.start → run.start` 순서에 의존하지 않는다.
 - 미래 inactive Phase에서는 `detailed_planning` Run만 허용한다. `implementation`, `independent_agent_review`, `review_response`, `completion_reporting`은 Task Phase가 현재 active이거나 이미 completed일 때만 시작할 수 있다.
 - Run 시작 시 lease token을 반환하고 heartbeat가 lease를 연장한다.
+- raw lease token은 DB, command 결과 또는 Event에 저장하지 않는다. 서버는 외부 secret과 Run ID의 HMAC으로 token을 결정적으로 재구성하여 같은 `client_run_id`/idempotency 재시도에 같은 token을 반환한다. `BALEY_LEASE_TOKEN_SECRET`이 없으면 서버는 시작을 거부하며 모든 server process에 같은 값을 안정적으로 주입해야 한다. secret rotation은 V1 비범위다.
 - terminal 전이는 `running → succeeded | failed | interrupted | cancelled`다.
 - heartbeat 만료 job과 정상 종료 command는 Run version CAS를 사용하며 하나만 terminal 전이에 성공한다.
 - terminal Run의 같은 idempotent 종료 재호출은 기존 결과를 반환하고 다른 terminal 결과는 conflict다.

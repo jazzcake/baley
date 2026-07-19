@@ -7,7 +7,9 @@ export const NODE_HEIGHT = 84;
 const LANE_LABEL_WIDTH = 180;
 const PHASE_PADDING_X = 32;
 const PHASE_HEADER_HEIGHT = 74;
-const LANE_HEIGHT = 154;
+export const LANE_HEIGHT = 154;
+export const LANE_BAND_INSET_Y = 18;
+export const LANE_LABEL_HEIGHT = 52;
 const GATE_CORRIDOR_WIDTH = 250;
 const MIN_PHASE_WIDTH = 340;
 
@@ -21,6 +23,16 @@ export type GraphLayout = {
   width: number;
   height: number;
 };
+
+export function laneBandRect(layout: GraphLayout, laneId: string): LayoutRect | undefined {
+  const y = layout.lanePositions.get(laneId);
+  return y === undefined ? undefined : { id: laneId, x: 0, y: y + LANE_BAND_INSET_Y, width: layout.width, height: LANE_HEIGHT - LANE_BAND_INSET_Y * 2 };
+}
+
+export function laneLabelTop(layout: GraphLayout, laneId: string): number | undefined {
+  const y = layout.lanePositions.get(laneId);
+  return y === undefined ? undefined : y + (LANE_HEIGHT - LANE_LABEL_HEIGHT) / 2;
+}
 
 type LocalPhaseLayout = {
   phaseId: string;

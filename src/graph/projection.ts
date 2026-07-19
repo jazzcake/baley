@@ -2,6 +2,16 @@ import type { WorkspaceFixture } from "../domain/model";
 
 export type ViewSpec = { kind: "multi" } | { kind: "lane"; id: string } | { kind: "gate"; id: string };
 
+export function canvasKey(view: ViewSpec): string {
+  return view.kind === "gate" ? `gate:${view.id}` : "workspace";
+}
+
+export function defaultGateFocusId(fixture: WorkspaceFixture): string | undefined {
+  const activePhaseId = fixture.workspace.activePhaseId;
+  if (!activePhaseId) return fixture.gates[0]?.id;
+  return fixture.gates.find((gate) => gate.fromPhaseId === activePhaseId && gate.status !== "passed")?.id;
+}
+
 export function visibleTaskIds(fixture: WorkspaceFixture, view: ViewSpec): Set<string> {
   if (view.kind === "gate") {
     return new Set(fixture.gateLinks.filter((link) => link.gateId === view.id).map((link) => link.taskId));

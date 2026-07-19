@@ -321,7 +321,7 @@ func validMutationContext(t *testing.T, command string) MutationContext {
 		context.Conditions = []GateTaskCondition{{WorkspaceID: workspace.ID, GateID: "gate", LinkID: "link", TaskID: task.ID, TaskStatus: TaskConfirmed}}
 	case "run.start":
 		context.Task.Status = TaskPending
-		context.RunStartRequest = RunStartRequest{RunID: "run", Identity: RunStartIdentity{WorkspaceID: workspace.ID, TaskID: task.ID, ClientRunID: "client", Kind: RunImplementation}, OperatorActorID: "agent", LeaseToken: "secret", LeaseDuration: time.Minute, Now: now}
+		context.RunStartRequest = RunStartRequest{RunID: "run", Identity: RunStartIdentity{WorkspaceID: workspace.ID, TaskID: task.ID, ClientRunID: testClientRunID, Kind: RunImplementation}, OperatorActorID: "agent", LeaseToken: "secret", LeaseDuration: time.Minute, Now: now}
 	case "run.heartbeat":
 		context.Run = validRegistryRun(now)
 		context.ExpectedVersion, context.LeaseToken, context.LeaseExtension = 1, "secret", time.Minute

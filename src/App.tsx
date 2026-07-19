@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Background, Controls, ReactFlow, type Edge, type Node, type Viewport } from "@xyflow/react";
+import { Background, Panel, ReactFlow, ViewportPortal, useReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ChevronRight, PanelRightClose, PanelRightOpen, RotateCcw } from "lucide-react";
+import { ChevronRight, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, RotateCcw } from "lucide-react";
 import { fetchGraph } from "./api/client";
-import { connectedTaskIds, laneFocusTaskIds, visibleTaskIds, type ViewSpec } from "./graph/projection";
-import { layoutGraph, type GraphLayout } from "./graph/layout";
+import { canvasKey, connectedTaskIds, defaultGateFocusId, laneFocusTaskIds, visibleTaskIds, type ViewSpec } from "./graph/projection";
+import { laneBandRect, laneLabelTop, layoutGraph, type GraphLayout } from "./graph/layout";
 import { TaskNode } from "./components/TaskNode";
 import { GateNode } from "./components/GateNode";
 import type { GateLinkKind, Task, WorkspaceFixture } from "./domain/model";
@@ -31,7 +31,6 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | undefined>(() => new URLSearchParams(location.search).get("task") ?? undefined);
   const [layout, setLayout] = useState<GraphLayout | undefined>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const visible = useMemo(() => visibleTaskIds(graph, view), [graph, view]);
   const laneFocus = useMemo(
     () => view.kind === "lane" ? laneFocusTaskIds(graph, view.id) : undefined,
@@ -39,10 +38,18 @@ export default function App() {
   );
   const connected = useMemo(() => selectedId ? connectedTaskIds(graph, selectedId) : undefined, [graph, selectedId]);
 
-  useEffect(() => { void layoutGraph(graph, visible).then(setLayout); }, [graph, visible]);
   useEffect(() => {
     let active = true;
-    const refresh = () => void fetchGraph().then((next) => { if (active) { setFixture(next); setLoadError(undefined); } }).catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Server unavailable"); });
+    void layoutGraph(graph, visible).then((nextLayout) => { if (active) setLayout(nextLayout); });
+    return () => { active = false; };
+  }, [graph, visible]);
+  useEffect(() => {
+    let active = true;
+    const refresh = () => void fetchGraph().then((next) => {
+      if (!active) return;
+      setFixture((current) => current && JSON.stringify(current) === JSON.stringify(next) ? current : next);
+      setLoadError(undefined);
+    }).catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Server unavailable"); });
     refresh();
     const timer = window.setInterval(refresh, 2000);
     window.addEventListener("focus", refresh);
@@ -63,7 +70,6 @@ export default function App() {
         status: task.status,
         lane: graph.lanes.find((lane) => lane.id === task.laneId)?.name ?? "",
         laneColor: laneColors[task.laneId] ?? "#579bfc",
-        laneFocused: view.kind === "lane" && task.laneId === view.id,
         dimmed: Boolean(
           (laneFocus && !laneFocus.has(task.id)) ||
           (connected && !connected.has(task.id)),
@@ -71,7 +77,11 @@ export default function App() {
         external: view.kind === "lane" && task.laneId !== view.id,
       },
     }));
-    const gateNodes: Node[] = graph.gates.filter((gate) => view.kind !== "lane" || graph.gateLinks.some((link) => link.gateId === gate.id && visible.has(link.taskId))).map((gate) => {
+    const gateNodes: Node[] = graph.gates.filter((gate) =>
+      view.kind === "gate"
+        ? gate.id === view.id
+        : view.kind !== "lane" || graph.gateLinks.some((link) => link.gateId === gate.id && visible.has(link.taskId)),
+    ).map((gate) => {
       const required = graph.gateLinks.filter((link) => link.gateId === gate.id && link.kind === "required");
       const done = required.filter((link) => link.satisfied).length;
       return { id: gate.id, type: "gate", position: layout?.gatePositions.get(gate.id) ?? { x: 0, y: 0 }, selected: gate.id === selectedId, data: { title: gate.name, status: gate.status, summary: `${done}/${required.length} conditions satisfied`, dimmed: Boolean(selectedId && selectedId !== gate.id && !graph.gateLinks.some((link) => link.gateId === gate.id && link.taskId === selectedId)) } };
@@ -109,6 +119,8 @@ export default function App() {
 
   const selectedTask = graph.tasks.find((task) => task.id === selectedId);
   const selectedGate = graph.gates.find((gate) => gate.id === selectedId);
+  const defaultLaneId = graph.lanes.find((lane) => lane.name === "Client")?.id ?? graph.lanes[0]?.id;
+  const defaultGateId = defaultGateFocusId(graph);
   const navigate = (next: ViewSpec) => { setView(next); setSelectedId(undefined); };
 
   if (!fixture && !loadError) return <main className="server-state"><h1>Baley</h1><p>Workspace graph를 불러오는 중입니다…</p></main>;
@@ -119,33 +131,20 @@ export default function App() {
         <div className="brand"><div className="brand-mark">B</div><div><strong>Baley</strong><span>Visual MVP</span></div></div>
         <nav className="view-tabs" aria-label="Graph views">
           <button className={view.kind === "multi" ? "active" : ""} onClick={() => navigate({ kind: "multi" })}>Multi-lane</button>
-          <button className={view.kind === "lane" ? "active" : ""} onClick={() => navigate({ kind: "lane", id: view.kind === "lane" ? view.id : "client" })}>Lane focus</button>
-          <button className={view.kind === "gate" ? "active" : ""} onClick={() => navigate({ kind: "gate", id: "pilot-ready" })}>Gate focus</button>
+          <button className={view.kind === "lane" ? "active" : ""} disabled={!defaultLaneId} onClick={() => defaultLaneId && navigate({ kind: "lane", id: view.kind === "lane" ? view.id : defaultLaneId })}>Lane focus</button>
+          <button className={view.kind === "gate" ? "active" : ""} disabled={!defaultGateId} onClick={() => defaultGateId && navigate({ kind: "gate", id: view.kind === "gate" ? view.id : defaultGateId })}>Gate focus</button>
         </nav>
         <button className="icon-button" aria-label="Toggle inspector" onClick={() => setInspectorOpen((open) => !open)}>{inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
       </header>
 
       <section className={`workspace ${inspectorOpen ? "with-inspector" : ""}`}>
         <div className="graph-wrap">
-          <div className="context-row"><div><span>WORKSPACE · REVISION {graph.workspace.revision}</span><h1>{view.kind === "multi" ? graph.workspace.name : view.kind === "lane" ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane` : "Pilot Ready gate"}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
+          <div className="context-row"><div><span>WORKSPACE · REVISION {graph.workspace.revision}</span><h1>{view.kind === "multi" ? graph.workspace.name : view.kind === "lane" ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane` : `${graph.gates.find((gate) => gate.id === view.id)?.name ?? "Unknown"} gate`}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas">
-            <div className="graph-overlay" style={{ width: layout?.width, height: layout?.height, transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` }}>
-              {layout?.phaseRects.map((rect, index) => {
-                const phase = graph.phases.find((item) => item.id === rect.id);
-                return <div key={rect.id} className={`phase-container phase-${phase?.state}`} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}><span>PHASE {String(index + 1).padStart(2, "0")} · {phase?.state}</span><strong>{phase?.name}</strong></div>;
-              })}
-              {layout && graph.gates.map((gate) => {
-                const position = layout.gatePositions.get(gate.id);
-                const nextPhase = layout.phaseRects.find((phase) => phase.id === gate.toPhaseId);
-                const previousPhase = layout.phaseRects.find((phase) => phase.id === gate.fromPhaseId);
-                if (!position || !nextPhase || !previousPhase) return null;
-                return <div key={`${gate.id}-corridor`} className="gate-corridor" style={{ left: previousPhase.x + previousPhase.width, top: 0, width: nextPhase.x - (previousPhase.x + previousPhase.width), height: layout.height }} />;
-              })}
-              {view.kind !== "gate" && graph.lanes.map((lane, index) => <div key={lane.id} className={`lane-label ${view.kind === "lane" && lane.id !== view.id ? "dimmed" : ""}`} style={{ top: layout?.lanePositions.get(lane.id) ?? 0, "--lane-color": laneColors[lane.id] } as React.CSSProperties} onClick={() => navigate({ kind: "lane", id: lane.id })}><span>{String(index + 1).padStart(2, "0")}</span><strong>{lane.name}</strong><small>{lane.lifecycle}</small><ChevronRight size={14} /></div>)}
-            </div>
-            <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} onMove={(_event: MouseEvent | TouchEvent | null, nextViewport: Viewport) => setViewport(nextViewport)} fitView fitViewOptions={{ padding: 0.16 }} minZoom={0.55} maxZoom={1.55} proOptions={{ hideAttribution: true }}>
+            <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} fitView fitViewOptions={{ padding: 0.16 }} minZoom={0.55} maxZoom={1.55} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
               <Background color="#d8d6ce" gap={24} size={1} />
-              <Controls showInteractive={false} position="bottom-left" />
+              <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} /></ViewportPortal>
+              <CanvasControls />
             </ReactFlow>
           </div>
         </div>
@@ -167,7 +166,41 @@ function Inspector({ fixture, task, gateId, onLane, onGate }: { fixture: Workspa
   const gateLinks = fixture.gateLinks.filter((link) => link.taskId === task.id);
   const upstream = fixture.dependencies.filter((edge) => edge.toTaskId === task.id);
   const downstream = fixture.dependencies.filter((edge) => edge.fromTaskId === task.id);
-  return <aside className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><div className="inspector-id">TASK #{task.publicId}</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span><p>{task.description}</p><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((edge) => <div className="relation-row" key={edge.id}><span>from</span><strong>#{fixture.tasks.find((item) => item.id === edge.fromTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title}</strong></div>)}{downstream.map((edge) => <div className="relation-row" key={edge.id}><span>to</span><strong>#{fixture.tasks.find((item) => item.id === edge.toTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.toTaskId)?.title}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">독립 경로</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>Pilot Ready</strong></button>)}</Section>}<section className="command-hint"><strong>LLM command only</strong><p><code>task #{task.publicId} 뒤에 API 검증 추가</code>처럼 Baley Skill에 명령하세요.</p></section></aside>;
+  const runs = (fixture.runs ?? []).filter((run) => run.taskId === task.id);
+  const records = (fixture.records ?? []).filter((record) => record.taskId === task.id);
+  return <aside className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><div className="inspector-id">TASK #{task.publicId}</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span><p>{task.description}</p><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.currentSummary && <Section title="Current summary"><span className="evidence-copy">{task.currentSummary}</span></Section>}{task.nextAction && <Section title="Next action"><span className="evidence-copy">{task.nextAction}</span></Section>}{task.implementedAssessment && <Section title="Implementation assessment"><span className="evidence-copy">{task.implementedAssessment}</span></Section>}{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((edge) => <div className="relation-row" key={edge.id}><span>from</span><strong>#{fixture.tasks.find((item) => item.id === edge.fromTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title}</strong></div>)}{downstream.map((edge) => <div className="relation-row" key={edge.id}><span>to</span><strong>#{fixture.tasks.find((item) => item.id === edge.toTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.toTaskId)?.title}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">Independent path</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>{fixture.gates.find((gate) => gate.id === link.gateId)?.name}</strong></button>)}</Section>}<Section title="Runs">{runs.map((run) => <div className="evidence-row" key={run.id}><div><strong>{run.kind.replaceAll("_", " ")}</strong><span>{run.status}</span></div>{(run.resultSummary || run.errorSummary) && <p>{run.resultSummary || run.errorSummary}</p>}</div>)}{runs.length === 0 && <span className="muted">No Runs recorded</span>}</Section><Section title="Task Records">{records.map((record) => <div className="evidence-row" key={record.id}><div><strong>{record.recordType}</strong><span>{record.state}</span></div><code>{record.relativePath}</code><p>{record.shortSummary}</p></div>)}{records.length === 0 && <span className="muted">No Task Records indexed</span>}</Section><section className="command-hint"><strong>LLM command only</strong><p>Use Baley Skill commands to update task #{task.publicId}.</p></section></aside>;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) { return <section className="inspector-section"><h3>{title}</h3>{children}</section>; }
+
+function CanvasControls() {
+  const { zoomIn, zoomOut, fitView } = useReactFlow();
+  return <Panel position="bottom-left" className="canvas-controls">
+    <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => { void zoomIn({ duration: 160 }); }}><Plus size={17} /></button>
+    <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => { void zoomOut({ duration: 160 }); }}><Minus size={17} /></button>
+    <button type="button" aria-label="Fit view" title="Fit view" onClick={() => { void fitView({ padding: 0.16, duration: 180 }); }}><Maximize size={15} /></button>
+  </Panel>;
+}
+
+function CanvasOverlay({ graph, layout, view, navigate }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void }) {
+  const focusedLaneId = view.kind === "lane" ? view.id : undefined;
+  const band = focusedLaneId && layout ? laneBandRect(layout, focusedLaneId) : undefined;
+  return <div className="graph-overlay" style={{ width: layout?.width, height: layout?.height }}>
+    {layout?.phaseRects.map((rect, index) => {
+      const phase = graph.phases.find((item) => item.id === rect.id);
+      return <div key={rect.id} className={`phase-container phase-${phase?.state}`} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}><span>PHASE {String(index + 1).padStart(2, "0")} · {phase?.state}</span><strong>{phase?.name}</strong></div>;
+    })}
+    {band && <div className="lane-focus-band" style={{ left: band.x, top: band.y, width: band.width, height: band.height, "--lane-color": laneColors[focusedLaneId!] ?? "#579bfc" } as React.CSSProperties} />}
+    {layout && graph.gates.map((gate) => {
+      const position = layout.gatePositions.get(gate.id);
+      const nextPhase = layout.phaseRects.find((phase) => phase.id === gate.toPhaseId);
+      const previousPhase = layout.phaseRects.find((phase) => phase.id === gate.fromPhaseId);
+      if (!position || !nextPhase || !previousPhase) return null;
+      return <div key={`${gate.id}-corridor`} className="gate-corridor" style={{ left: previousPhase.x + previousPhase.width, top: 0, width: nextPhase.x - (previousPhase.x + previousPhase.width), height: layout.height }} />;
+    })}
+    {view.kind !== "gate" && graph.lanes.map((lane, index) => {
+      const focused = view.kind === "lane" && lane.id === view.id;
+      return <div key={lane.id} className={`lane-label ${focused ? "focused" : ""} ${view.kind === "lane" && !focused ? "dimmed" : ""}`} aria-current={focused ? "true" : undefined} style={{ top: layout ? laneLabelTop(layout, lane.id) : 0, "--lane-color": laneColors[lane.id] } as React.CSSProperties} onClick={() => navigate({ kind: "lane", id: lane.id })}><span>{String(index + 1).padStart(2, "0")}</span><strong>{lane.name}</strong><small>{lane.lifecycle}</small><ChevronRight size={14} /></div>;
+    })}
+  </div>;
+}

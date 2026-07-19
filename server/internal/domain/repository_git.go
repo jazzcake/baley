@@ -93,6 +93,9 @@ func NewRunGitObservation(value RunGitObservation) (RunGitObservation, error) {
 	}
 	value.HeadCommitSHA = strings.ToLower(strings.TrimSpace(value.HeadCommitSHA))
 	value.BranchHint, value.WorktreeLabel = strings.TrimSpace(value.BranchHint), label
+	// PostgreSQL timestamptz stores microseconds. Canonicalizing before both
+	// persistence and comparison keeps entity-level retries stable.
+	value.ObservedAt = value.ObservedAt.UTC().Truncate(time.Microsecond)
 	return value, nil
 }
 
