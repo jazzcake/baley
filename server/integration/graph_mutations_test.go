@@ -69,7 +69,22 @@ func TestTaskAndDependencyMutationsAgainstPostgres(t *testing.T) {
 	if _, err = repo.Pool.Exec(ctx, "UPDATE workspace_counters SET next_task_public_id=150 WHERE workspace_id=$1", wid); err != nil {
 		t.Fatal(err)
 	}
-	execute("task.create", map[string]any{"workspaceId": wid, "taskUuid": "00000000-0000-4000-8000-000000000041", "laneId": "client", "phaseId": "validate", "title": "Acceptance report", "predecessorTaskIds": []int{110}}, "task-create", 8)
+	createArgs := map[string]any{"workspaceId": wid, "taskUuid": "00000000-0000-4000-8000-000000000041", "laneId": "client", "phaseId": "validate", "title": "Acceptance report", "predecessorTaskIds": []int{110}}
+	createRequest := request("task.create", createArgs, "task-create", 8)
+	createPreview, err := service.Preview(ctx, createRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidencePreviewRequest := createRequest
+	evidencePreviewRequest.Envelope.AcknowledgedWarningCodes = []string{domain.CodePhaseOrderInversion}
+	evidencePreviewRequest.Envelope.ProceedReason = "Envelope evidence is not canonical command input."
+	evidencePreview, err := service.Preview(ctx, evidencePreviewRequest)
+	if err != nil || evidencePreview.CommandHash != createPreview.CommandHash {
+		t.Fatalf("task.create envelope evidence changed command hash: %s != %s (%v)", evidencePreview.CommandHash, createPreview.CommandHash, err)
+	}
+	if _, err = service.Execute(ctx, createRequest); err != nil {
+		t.Fatalf("task.create failed: %v", err)
+	}
 	snapshot, _ = repo.LoadSnapshot(ctx, wid)
 	if created := taskByPublicID(snapshot.Tasks, 150); created == nil || snapshot.NextTaskPublicID != 151 {
 		t.Fatalf("Workspace counter did not issue Task #150: %#v", snapshot)

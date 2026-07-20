@@ -1,13 +1,13 @@
 ---
 baley_record: 1
 record_id: "19d370c7-03fd-4a6e-8ab6-f0772dead047"
-task_id: null
+task_id: 110
 task_key: "gate-transition-vertical-slice"
 record_type: independent-agent-review
 run_id: null
 created_at: "2026-07-18T01:19:00+09:00"
 created_by: "independent-review-agent"
-registration_state: pending-bootstrap
+registration_state: registered
 supersedes: null
 ---
 

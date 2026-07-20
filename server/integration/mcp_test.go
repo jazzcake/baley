@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jazzcake/baley/server/internal/persistence/postgres"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -20,6 +21,16 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	testDatabaseURL := os.Getenv("BALEY_TEST_DATABASE_URL")
+	if testDatabaseURL == "" {
+		t.Fatal("BALEY_TEST_DATABASE_URL is required when BALEY_MCP_E2E is set")
+	}
+	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "mcp-stdio-e2e-audit-secret")
+	auditRepo, err := postgres.Open(ctx, testDatabaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer auditRepo.Pool.Close()
 	serverURL := os.Getenv("BALEY_SERVER_URL")
 	if serverURL == "" {
 		serverURL = "http://127.0.0.1:8080"
@@ -37,7 +48,7 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 29 {
+	if len(tools.Tools) != 31 {
 		t.Fatalf("tool count=%d", len(tools.Tools))
 	}
 	want := map[string]bool{
@@ -49,7 +60,8 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 		"baley_run_correct": true, "baley_repository_register": true, "baley_record_register": true,
 		"baley_record_attach_commit": true, "baley_commit_attach": true, "baley_git_observe": true,
 		"baley_task_report_implemented": true,
-		"baley_task_confirm_preview":    true, "baley_task_confirm_execute": true,
+		"baley_task_create_preview":     true, "baley_task_create_execute": true,
+		"baley_task_confirm_preview": true, "baley_task_confirm_execute": true,
 		"baley_gate_pass_task_preview": true, "baley_gate_pass_task_execute": true,
 		"baley_gate_revoke_task_pass_preview": true, "baley_gate_revoke_task_pass_execute": true,
 		"baley_gate_pass_preview": true, "baley_gate_pass_execute": true,
@@ -60,6 +72,13 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 			if marshalErr != nil || !strings.Contains(string(schema), `"acknowledgedWarningCodes"`) || !strings.Contains(string(schema), `"proceedReason"`) {
 				t.Fatalf("task confirm execute schema lacks warning evidence fields: %s %v", schema, marshalErr)
 			}
+		}
+		if tool.Name == "baley_task_create_preview" || tool.Name == "baley_task_create_execute" {
+			schema, marshalErr := json.Marshal(tool.InputSchema)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			assertTaskCreateSchema(t, tool.Name, schema, tool.Name == "baley_task_create_execute")
 		}
 		delete(want, tool.Name)
 	}
@@ -200,14 +219,147 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 	}
 	raw, _ = json.Marshal(result.StructuredContent)
 	var confirmed struct {
-		Projection struct {
+		WorkspaceRevision int64 `json:"workspaceRevision"`
+		Projection        struct {
 			Status struct {
 				After string `json:"after"`
 			} `json:"status"`
 		} `json:"projection"`
 	}
-	if json.Unmarshal(raw, &confirmed) != nil || confirmed.Projection.Status.After != "confirmed" {
+	if json.Unmarshal(raw, &confirmed) != nil || confirmed.Projection.Status.After != "confirmed" || confirmed.WorkspaceRevision == 0 {
 		t.Fatalf("task.confirm execute did not return confirmed projection: %s", raw)
+	}
+
+	createKey := testMCPUUID(t)
+	taskUUID := testMCPUUID(t)
+	createArguments := map[string]any{
+		"workspaceId": postgresDemoWorkspaceID, "taskUuid": taskUUID,
+		"laneId": "client", "phaseId": "validate", "parentTaskId": 110,
+		"title": "MCP-created operational checkpoint", "description": "Verify typed task.create stdio flow.",
+		"predecessorTaskIds": []int{106}, "successorTaskIds": []int{101},
+		"expectedWorkspaceRevision": confirmed.WorkspaceRevision, "idempotencyKey": createKey,
+		"executedByActorId": "00000000-0000-4000-8000-000000000003",
+	}
+	var tasksBeforePreview, commandsBeforePreview, eventsBeforePreview int
+	if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM tasks WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&tasksBeforePreview); err != nil {
+		t.Fatal(err)
+	}
+	if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM commands WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&commandsBeforePreview); err != nil {
+		t.Fatal(err)
+	}
+	if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM events WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&eventsBeforePreview); err != nil {
+		t.Fatal(err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_task_create_preview", Arguments: createArguments})
+	if err != nil || result.IsError {
+		t.Fatalf("task.create preview tool failed: %#v %v", result.StructuredContent, err)
+	}
+	raw, _ = json.Marshal(result.StructuredContent)
+	var createPreview struct {
+		CommandHash   string `json:"commandHash"`
+		ProjectedDiff struct {
+			Task struct {
+				PublicID int `json:"PublicID"`
+			} `json:"task"`
+		} `json:"projectedDiff"`
+		Warnings []struct {
+			Code string `json:"code"`
+		} `json:"warnings"`
+	}
+	if json.Unmarshal(raw, &createPreview) != nil || createPreview.CommandHash == "" || createPreview.ProjectedDiff.Task.PublicID != 111 || len(createPreview.Warnings) != 1 || createPreview.Warnings[0].Code != "phase_order_inversion" {
+		t.Fatalf("task.create preview projection invalid: %#v", result.StructuredContent)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_workspace_graph", Arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID}})
+	raw, _ = json.Marshal(result.StructuredContent)
+	var afterPreview struct {
+		Workspace struct {
+			Revision int64 `json:"revision"`
+		} `json:"workspace"`
+	}
+	if err != nil || result.IsError || json.Unmarshal(raw, &afterPreview) != nil || afterPreview.Workspace.Revision != confirmed.WorkspaceRevision {
+		t.Fatalf("task.create preview wrote state: %#v %v", result.StructuredContent, err)
+	}
+	var tasksAfterPreview, commandsAfterPreview, eventsAfterPreview int
+	if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM tasks WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&tasksAfterPreview); err != nil {
+		t.Fatal(err)
+	}
+	if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM commands WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&commandsAfterPreview); err != nil {
+		t.Fatal(err)
+	}
+	if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM events WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&eventsAfterPreview); err != nil {
+		t.Fatal(err)
+	}
+	if tasksAfterPreview != tasksBeforePreview || commandsAfterPreview != commandsBeforePreview || eventsAfterPreview != eventsBeforePreview {
+		t.Fatalf("task.create preview wrote non-revision state: tasks %d->%d commands %d->%d events %d->%d", tasksBeforePreview, tasksAfterPreview, commandsBeforePreview, commandsAfterPreview, eventsBeforePreview, eventsAfterPreview)
+	}
+	executeCreateArguments := make(map[string]any, len(createArguments)+2)
+	for key, value := range createArguments {
+		executeCreateArguments[key] = value
+	}
+	executeCreateArguments["acknowledgedWarningCodes"] = []string{"phase_order_inversion"}
+	executeCreateArguments["proceedReason"] = "The E2E fixture intentionally verifies a later-phase to earlier-phase relationship warning."
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_task_create_execute", Arguments: executeCreateArguments})
+	if err != nil || result.IsError {
+		t.Fatalf("task.create execute tool failed: %#v %v", result.StructuredContent, err)
+	}
+	raw, _ = json.Marshal(result.StructuredContent)
+	var createResult struct {
+		CommandID         string `json:"commandId"`
+		WorkspaceRevision int64  `json:"workspaceRevision"`
+		Idempotent        bool   `json:"idempotent"`
+	}
+	if json.Unmarshal(raw, &createResult) != nil || createResult.CommandID == "" || createResult.WorkspaceRevision != confirmed.WorkspaceRevision+1 || createResult.Idempotent {
+		t.Fatalf("task.create execute result invalid: %s", raw)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_task_create_execute", Arguments: executeCreateArguments})
+	raw, _ = json.Marshal(result.StructuredContent)
+	var createRetry struct {
+		CommandID  string `json:"commandId"`
+		Idempotent bool   `json:"idempotent"`
+	}
+	if err != nil || result.IsError || json.Unmarshal(raw, &createRetry) != nil || !createRetry.Idempotent || createRetry.CommandID != createResult.CommandID {
+		t.Fatalf("task.create idempotent retry failed: %s %v", raw, err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_task_get", Arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID, "taskId": 111}})
+	raw, _ = json.Marshal(result.StructuredContent)
+	var created struct {
+		PublicID int    `json:"publicId"`
+		Status   string `json:"status"`
+	}
+	if err != nil || result.IsError || json.Unmarshal(raw, &created) != nil || created.PublicID != 111 || created.Status != "pending" {
+		t.Fatalf("task.create task projection unavailable: %s %v", raw, err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_workspace_graph", Arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID}})
+	raw, _ = json.Marshal(result.StructuredContent)
+	if err != nil || result.IsError || !strings.Contains(string(raw), `"fromTaskId":"assets","toTaskId":"`+taskUUID+`"`) || !strings.Contains(string(raw), `"fromTaskId":"`+taskUUID+`","toTaskId":"api"`) {
+		t.Fatalf("task.create relationships missing: %s %v", raw, err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_event_list", Arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID}})
+	raw, _ = json.Marshal(result.StructuredContent)
+	if err != nil || result.IsError || !strings.Contains(string(raw), `"eventType":"task.created"`) {
+		t.Fatalf("task.create Event evidence missing: %s %v", raw, err)
+	}
+	events, err := auditRepo.Events(ctx, postgresDemoWorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundBoundEvent := false
+	for _, event := range events {
+		if event.EventType != "task.created" || event.CommandID != createResult.CommandID || event.EntityID != taskUUID || event.WorkspaceRevision != createResult.WorkspaceRevision {
+			continue
+		}
+		var payload map[string]any
+		if json.Unmarshal(event.Payload, &payload) != nil || payload["proceedReason"] != executeCreateArguments["proceedReason"] {
+			t.Fatalf("task.created bound Event payload invalid: %s", event.Payload)
+		}
+		codes, ok := payload["acknowledgedWarningCodes"].([]any)
+		if !ok || len(codes) != 1 || codes[0] != "phase_order_inversion" {
+			t.Fatalf("task.created bound Event warning evidence invalid: %s", event.Payload)
+		}
+		foundBoundEvent = true
+	}
+	if !foundBoundEvent {
+		t.Fatalf("task.created Event is not bound to command=%s task=%s revision=%d", createResult.CommandID, taskUUID, createResult.WorkspaceRevision)
 	}
 }
 
@@ -223,4 +375,62 @@ func testMCPUUID(t *testing.T) string {
 	value[8] = (value[8] & 0x3f) | 0x80
 	raw := hex.EncodeToString(value[:])
 	return raw[:8] + "-" + raw[8:12] + "-" + raw[12:16] + "-" + raw[16:20] + "-" + raw[20:]
+}
+
+func assertTaskCreateSchema(t *testing.T, name string, raw []byte, execute bool) {
+	t.Helper()
+	var schema struct {
+		Properties map[string]struct {
+			Type  json.RawMessage `json:"type"`
+			Items *struct {
+				Type json.RawMessage `json:"type"`
+			} `json:"items"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("%s schema decode failed: %v", name, err)
+	}
+	required := make(map[string]bool, len(schema.Required))
+	for _, field := range schema.Required {
+		required[field] = true
+	}
+	for _, field := range []string{"workspaceId", "taskUuid", "laneId", "phaseId", "title", "expectedWorkspaceRevision", "idempotencyKey", "executedByActorId"} {
+		if !required[field] {
+			t.Fatalf("%s schema does not require %s: %s", name, field, raw)
+		}
+	}
+	for _, field := range []string{"parentTaskId", "description", "predecessorTaskIds", "successorTaskIds", "terminalReason", "acknowledgedWarningCodes", "proceedReason"} {
+		if required[field] {
+			t.Fatalf("%s schema unexpectedly requires %s: %s", name, field, raw)
+		}
+	}
+	for _, field := range []string{"predecessorTaskIds", "successorTaskIds"} {
+		property, ok := schema.Properties[field]
+		if !ok || !schemaTypeIncludes(property.Type, "array") || property.Items == nil || !schemaTypeIncludes(property.Items.Type, "integer") {
+			t.Fatalf("%s schema has invalid %s items: %s", name, field, raw)
+		}
+	}
+	_, hasAck := schema.Properties["acknowledgedWarningCodes"]
+	_, hasReason := schema.Properties["proceedReason"]
+	if execute != (hasAck && hasReason) {
+		t.Fatalf("%s warning evidence field boundary is invalid: %s", name, raw)
+	}
+}
+
+func schemaTypeIncludes(raw json.RawMessage, expected string) bool {
+	var single string
+	if json.Unmarshal(raw, &single) == nil {
+		return single == expected
+	}
+	var multiple []string
+	if json.Unmarshal(raw, &multiple) != nil {
+		return false
+	}
+	for _, value := range multiple {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }

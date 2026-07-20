@@ -343,11 +343,10 @@ baley gate status <gate>
 
 ## 11. 현재 다음 행동
 
-1. 기존의 안정적인 lease-token secret으로 기본 Baley API를 현재 소스에서 재시작해 runtime과 source 계약을 일치시킨다.
-2. Baley command로 실제 Repository와 Task Record root를 등록해 Phase 3에 진입한다.
-3. pending 상태인 Gate-transition 계획, handoff, 리뷰, 응답과 완료보고 index를 Record 본문 복제 없이 등록한다.
-4. multi-repository CommitReference와 Record 증거를 위한 CLI/Operator 경로를 완성한다.
-5. Branch/worktree lifecycle은 외부 Git 도구에 두고 Baley에는 commit reference와 비권위적 observation만 기록한다.
+1. Task #111의 current-source runtime 계약과 독립 리뷰를 완료하고 사람 확인만 남긴다.
+2. 권한이 다른 legacy 8080 listener는 소유 launch context에서 정리한다. 그 전까지 새 MCP process는 user-level `BALEY_SERVER_URL=http://127.0.0.1:18080`으로 current-source runtime을 사용한다.
+3. 기존 Gate-transition Record index를 등록하고 이번 Task의 Git commit/blob evidence를 연결한다.
+4. multi-repository CommitReference와 Record 증거를 위한 CLI/Operator 경로를 완성한다. Branch/worktree lifecycle은 외부 Git 도구에 두고 Baley에는 commit reference와 비권위적 observation만 기록한다.
 
 ## 12. Gate-transition close-out
 
@@ -355,5 +354,5 @@ baley gate status <gate>
 - [x] 사람 승인과 warning acknowledgement가 분리된 revision-11 Event에 보존됐다.
 - [x] 대체 독립 리뷰와 리뷰 응답이 완료됐고 남은 High/Medium finding이 없다.
 - [x] `task-records/gate-transition-vertical-slice/completion-report-01.md`를 작성했다.
-- [ ] 실제 Repository/Record bootstrap 전이므로 Record index 등록은 대기 중이다.
-- [ ] 권한이 다른 기존 process를 이 세션에서 교체할 수 없어 기본 8080 runtime 재시작은 대기 중이다.
+- [x] 실제 Repository와 Task Record root를 Baley command로 등록했다.
+- [ ] 권한이 다른 legacy 8080 process 정리는 owning launch context에서 대기 중이다. 새 MCP process의 current-source runtime은 18080으로 정렬했다.

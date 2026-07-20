@@ -1,13 +1,13 @@
 ---
 baley_record: 1
 record_id: "272eab02-6839-468f-bc77-01e236de0e62"
-task_id: null
+task_id: 110
 task_key: "gate-transition-vertical-slice"
 record_type: handoff
 run_id: null
 created_at: "2026-07-19T23:40:00+09:00"
 created_by: "codex"
-registration_state: pending-bootstrap
+registration_state: registered
 supersedes: "6fbffba3-26a4-4840-88d0-d786da4f112f"
 ---
 

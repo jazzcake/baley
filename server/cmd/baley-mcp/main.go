@@ -35,6 +35,28 @@ type taskReportImplementedInput struct {
 	AcknowledgedWarningCodes []string `json:"acknowledgedWarningCodes,omitempty"`
 	automaticEnvelope
 }
+type taskCreateFields struct {
+	WorkspaceID        string `json:"workspaceId"`
+	TaskUUID           string `json:"taskUuid"`
+	LaneID             string `json:"laneId"`
+	PhaseID            string `json:"phaseId"`
+	ParentTaskID       int    `json:"parentTaskId,omitempty"`
+	Title              string `json:"title"`
+	Description        string `json:"description,omitempty"`
+	PredecessorTaskIDs []int  `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs   []int  `json:"successorTaskIds,omitempty"`
+	TerminalReason     string `json:"terminalReason,omitempty"`
+}
+type taskCreatePreviewInput struct {
+	taskCreateFields
+	previewEnvelope
+}
+type taskCreateExecuteInput struct {
+	taskCreateFields
+	AcknowledgedWarningCodes []string `json:"acknowledgedWarningCodes,omitempty"`
+	ProceedReason            string   `json:"proceedReason,omitempty"`
+	automaticEnvelope
+}
 type gateInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	GateID      string `json:"gateId"`
@@ -213,6 +235,8 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_commit_attach", Description: "Attach a Git commit reference to a Task"}, c.commitAttach)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_git_observe", Description: "Record non-authoritative Run Git metadata"}, c.gitObserve)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_report_implemented", Description: "Report implementation complete with assessment and explicit warning acknowledgement"}, c.taskReportImplemented)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_preview", Description: "Preview atomic Task creation and initial relationships without writing"}, c.taskCreatePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_execute", Description: "Create a Task and its initial relationships after reviewing the preview"}, c.taskCreateExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_preview", Description: "Preview Task confirmation without writing"}, c.taskConfirmPreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_execute", Description: "Execute an explicitly approved Task confirmation with exact warning acknowledgement when preview returned warnings"}, c.taskConfirmExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_task_preview", Description: "Preview explicit Gate Task pass without writing"}, c.gatePassTaskPreview)
@@ -356,6 +380,27 @@ func (c *client) taskReportImplemented(ctx context.Context, _ *mcp.CallToolReque
 	envelope["acknowledgedWarningCodes"] = in.AcknowledgedWarningCodes
 	envelope["proceedReason"] = in.ProceedReason
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.report_implemented", arguments, envelope))
+}
+func taskCreateArguments(in taskCreateFields) map[string]any {
+	return map[string]any{
+		"workspaceId": in.WorkspaceID, "taskUuid": in.TaskUUID, "laneId": in.LaneID, "phaseId": in.PhaseID,
+		"parentTaskId": in.ParentTaskID, "title": in.Title, "description": in.Description,
+		"predecessorTaskIds": in.PredecessorTaskIDs, "successorTaskIds": in.SuccessorTaskIDs,
+		"terminalReason": in.TerminalReason,
+	}
+}
+func (c *client) taskCreatePreview(ctx context.Context, _ *mcp.CallToolRequest, in taskCreatePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("task.create", taskCreateArguments(in.taskCreateFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) taskCreateExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskCreateExecuteInput) (*mcp.CallToolResult, any, error) {
+	envelope := automaticEnv(in.automaticEnvelope)
+	if len(in.AcknowledgedWarningCodes) != 0 {
+		envelope["acknowledgedWarningCodes"] = in.AcknowledgedWarningCodes
+	}
+	if in.ProceedReason != "" {
+		envelope["proceedReason"] = in.ProceedReason
+	}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.create", taskCreateArguments(in.taskCreateFields), envelope))
 }
 func (c *client) taskConfirmPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskConfirmPreviewInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/preview", command("task.confirm", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID}, previewEnv(in.previewEnvelope)))
