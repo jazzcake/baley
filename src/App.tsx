@@ -5,6 +5,7 @@ import { ChevronRight, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, R
 import { fetchGraph } from "./api/client";
 import { canvasKey, connectedTaskIds, defaultGateFocusId, laneFocusTaskIds, visibleTaskIds, type ViewSpec } from "./graph/projection";
 import { laneBandRect, laneLabelTop, layoutGraph, type GraphLayout } from "./graph/layout";
+import { INSPECTOR_DEFAULT_WIDTH, INSPECTOR_MAX_WIDTH, INSPECTOR_MIN_WIDTH, inspectorWidthFromKey, inspectorWidthFromPointer } from "./layout/inspector";
 import { TaskNode } from "./components/TaskNode";
 import { GateNode } from "./components/GateNode";
 import type { GateLinkKind, Task, WorkspaceFixture } from "./domain/model";
@@ -31,6 +32,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | undefined>(() => new URLSearchParams(location.search).get("task") ?? undefined);
   const [layout, setLayout] = useState<GraphLayout | undefined>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
   const visible = useMemo(() => visibleTaskIds(graph, view), [graph, view]);
   const laneFocus = useMemo(
     () => view.kind === "lane" ? laneFocusTaskIds(graph, view.id) : undefined,
@@ -137,7 +139,7 @@ export default function App() {
         <button className="icon-button" aria-label="Toggle inspector" onClick={() => setInspectorOpen((open) => !open)}>{inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
       </header>
 
-      <section className={`workspace ${inspectorOpen ? "with-inspector" : ""}`}>
+      <section className={`workspace ${inspectorOpen ? "with-inspector" : ""}`} style={{ "--inspector-width": `${inspectorWidth}px` } as React.CSSProperties}>
         <div className="graph-wrap">
           <div className="context-row"><div><span>WORKSPACE · REVISION {graph.workspace.revision}</span><h1>{view.kind === "multi" ? graph.workspace.name : view.kind === "lane" ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane` : `${graph.gates.find((gate) => gate.id === view.id)?.name ?? "Unknown"} gate`}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas">
@@ -148,10 +150,50 @@ export default function App() {
             </ReactFlow>
           </div>
         </div>
-        {inspectorOpen && <Inspector fixture={graph} task={selectedTask} gateId={selectedGate?.id} onLane={(id) => navigate({ kind: "lane", id })} onGate={(id) => navigate({ kind: "gate", id })} />}
+        {inspectorOpen && <div className="inspector-panel">
+          <InspectorResizeHandle width={inspectorWidth} onWidth={setInspectorWidth} />
+          <Inspector fixture={graph} task={selectedTask} gateId={selectedGate?.id} onLane={(id) => navigate({ kind: "lane", id })} onGate={(id) => navigate({ kind: "gate", id })} />
+        </div>}
       </section>
     </main>
   );
+}
+
+function InspectorResizeHandle({ width, onWidth }: { width: number; onWidth: (width: number) => void }) {
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const startX = event.clientX;
+    const startWidth = width;
+    const onPointerMove = (moveEvent: PointerEvent) => onWidth(inspectorWidthFromPointer(startWidth, startX, moveEvent.clientX));
+    const finish = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      document.body.classList.remove("resizing-inspector");
+    };
+    event.preventDefault();
+    document.body.classList.add("resizing-inspector");
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  };
+  return <div
+    className="inspector-resize-handle"
+    role="separator"
+    aria-label="Resize inspector"
+    aria-orientation="vertical"
+    aria-valuemin={INSPECTOR_MIN_WIDTH}
+    aria-valuemax={INSPECTOR_MAX_WIDTH}
+    aria-valuenow={width}
+    tabIndex={0}
+    onPointerDown={onPointerDown}
+    onDoubleClick={() => onWidth(INSPECTOR_DEFAULT_WIDTH)}
+    onKeyDown={(event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      const next = inspectorWidthFromKey(width, event.key, event.shiftKey);
+      event.preventDefault();
+      onWidth(next);
+    }}
+  />;
 }
 
 function Inspector({ fixture, task, gateId, onLane, onGate }: { fixture: WorkspaceFixture; task?: Task; gateId?: string; onLane: (id: string) => void; onGate: (id: string) => void }) {
