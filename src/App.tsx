@@ -14,6 +14,10 @@ import type { GateLinkKind, Task, WorkspaceFixture } from "./domain/model";
 const nodeTypes = { task: TaskNode, gate: GateNode };
 const MIN_ZOOM = 0.55;
 const MAX_ZOOM = 1.55;
+
+function traceCanvas(event: string, details: Record<string, unknown>) {
+  if (import.meta.env.DEV) console.info(`[Baley canvas] ${event}`, details);
+}
 const laneColors: Record<string, string> = {
   server: "#00a887",
   client: "#579bfc",
@@ -145,7 +149,7 @@ export default function App() {
         <div className="graph-wrap">
           <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1>{view.kind === "multi" ? graph.workspace.name : view.kind === "lane" ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane` : `${graph.gates.find((gate) => gate.id === view.id)?.name ?? "Unknown"} gate`}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas">
-            <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
+            <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} onMoveEnd={(_, nextViewport) => traceCanvas("move:end", nextViewport)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
               <Background color="#d8d6ce" gap={24} size={1} />
               <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} /></ViewportPortal>
               <CanvasControls layout={layout} />
@@ -229,13 +233,41 @@ function CanvasControls({ layout }: { layout?: GraphLayout }) {
       height: state.height || state.domNode?.clientHeight || 0,
     };
   };
-  const apply = (viewport: { x: number; y: number; zoom: number } | undefined) => {
-    if (viewport) void store.getState().panZoom?.setViewport(viewport);
+  const apply = async (action: string, viewport: { x: number; y: number; zoom: number } | undefined) => {
+    const state = store.getState();
+    const panZoom = state.panZoom;
+    const { width, height } = canvasSize();
+    traceCanvas(`${action}:click`, {
+      before: { x: state.transform[0], y: state.transform[1], zoom: state.transform[2] },
+      target: viewport,
+      canvas: { width, height },
+      layout: layout ? { width: layout.width, height: layout.height } : undefined,
+      panZoomReady: Boolean(panZoom),
+    });
+    if (!viewport || !panZoom) {
+      if (import.meta.env.DEV) console.warn(`[Baley canvas] ${action}:skipped`, { viewport, panZoomReady: Boolean(panZoom) });
+      return;
+    }
+    try {
+      const result = await panZoom.setViewport(viewport);
+      window.requestAnimationFrame(() => {
+        const after = store.getState();
+        const viewportElement = after.domNode?.querySelector<HTMLElement>(".react-flow__viewport");
+        traceCanvas(`${action}:applied`, {
+          result,
+          store: { x: after.transform[0], y: after.transform[1], zoom: after.transform[2] },
+          panZoom: after.panZoom?.getViewport(),
+          domTransform: viewportElement?.style.transform,
+        });
+      });
+    } catch (error) {
+      console.error(`[Baley canvas] ${action}:failed`, error);
+    }
   };
   const zoomBy = (factor: number) => {
     const state = store.getState();
     const { width, height } = canvasSize();
-    apply(zoomViewportAtCenter(
+    void apply(factor > 1 ? "zoom-in" : "zoom-out", zoomViewportAtCenter(
       { x: state.transform[0], y: state.transform[1], zoom: state.transform[2] },
       factor,
       width,
@@ -248,7 +280,7 @@ function CanvasControls({ layout }: { layout?: GraphLayout }) {
     if (!layout) return;
     const state = store.getState();
     const { width, height } = canvasSize();
-    apply(fitViewportToCanvas(layout.width, layout.height, width, height, state.minZoom, state.maxZoom));
+    void apply("fit", fitViewportToCanvas(layout.width, layout.height, width, height, state.minZoom, state.maxZoom));
   };
   return <Panel position="bottom-left" className="canvas-controls" aria-label="Viewport controls">
     <button type="button" aria-label="Zoom in" title="Zoom in" disabled={zoom >= maxZoom - 0.001} onClick={() => zoomBy(1.2)}><Plus size={17} /></button>
