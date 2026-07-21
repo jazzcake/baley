@@ -26,8 +26,8 @@ describe("phase-aware graph layout", () => {
       const point = layout.taskPositions.get(task.id)!;
       const laneTop = layout.lanePositions.get(task.laneId)!;
       const laneHeight = layout.laneHeights.get(task.laneId)!;
-      expect(point.y).toBeGreaterThanOrEqual(laneTop);
-      expect(point.y + NODE_HEIGHT).toBeLessThanOrEqual(laneTop + laneHeight);
+      expect(point.y).toBeGreaterThanOrEqual(laneTop + LANE_BAND_INSET_Y);
+      expect(point.y + NODE_HEIGHT).toBeLessThanOrEqual(laneTop + laneHeight - LANE_BAND_INSET_Y);
     }
   });
 
