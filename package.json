@@ -10,18 +10,18 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyflow/react": "latest",
+    "@xyflow/react": "12.11.2",
     "elkjs": "latest",
     "lucide-react": "latest",
-    "react": "latest",
-    "react-dom": "latest",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "react-router-dom": "latest"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
+    "@types/react": "18.3.23",
+    "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "^5.1.1",
     "jsdom": "latest",
     "typescript": "latest",
