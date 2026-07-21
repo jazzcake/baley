@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Background, Controls, ReactFlow, ViewportPortal, type Edge, type Node } from "@xyflow/react";
+import { Background, Panel, ReactFlow, ViewportPortal, useStore, useStoreApi, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ChevronRight, PanelRightClose, PanelRightOpen, RotateCcw } from "lucide-react";
+import { ChevronRight, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, RotateCcw } from "lucide-react";
 import { fetchGraph } from "./api/client";
 import { canvasKey, connectedTaskIds, defaultGateFocusId, laneFocusTaskIds, visibleTaskIds, type ViewSpec } from "./graph/projection";
 import { laneBandRect, laneLabelTop, layoutGraph, type GraphLayout } from "./graph/layout";
+import { fitViewportToCanvas, zoomViewportAtCenter } from "./graph/viewport";
 import { INSPECTOR_DEFAULT_WIDTH, INSPECTOR_MAX_WIDTH, INSPECTOR_MIN_WIDTH, inspectorWidthFromKey, inspectorWidthFromPointer } from "./layout/inspector";
 import { TaskNode } from "./components/TaskNode";
 import { GateNode } from "./components/GateNode";
@@ -147,7 +148,7 @@ export default function App() {
             <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
               <Background color="#d8d6ce" gap={24} size={1} />
               <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} /></ViewportPortal>
-              <Controls position="bottom-left" showInteractive={false} fitViewOptions={{ padding: 0.16 }} />
+              <CanvasControls layout={layout} />
             </ReactFlow>
           </div>
         </div>
@@ -215,6 +216,46 @@ function Inspector({ fixture, task, gateId, onLane, onGate }: { fixture: Workspa
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) { return <section className="inspector-section"><h3>{title}</h3>{children}</section>; }
+
+function CanvasControls({ layout }: { layout?: GraphLayout }) {
+  const store = useStoreApi();
+  const zoom = useStore((state) => state.transform[2]);
+  const minZoom = useStore((state) => state.minZoom);
+  const maxZoom = useStore((state) => state.maxZoom);
+  const canvasSize = () => {
+    const state = store.getState();
+    return {
+      width: state.width || state.domNode?.clientWidth || 0,
+      height: state.height || state.domNode?.clientHeight || 0,
+    };
+  };
+  const apply = (viewport: { x: number; y: number; zoom: number } | undefined) => {
+    if (viewport) void store.getState().panZoom?.setViewport(viewport);
+  };
+  const zoomBy = (factor: number) => {
+    const state = store.getState();
+    const { width, height } = canvasSize();
+    apply(zoomViewportAtCenter(
+      { x: state.transform[0], y: state.transform[1], zoom: state.transform[2] },
+      factor,
+      width,
+      height,
+      state.minZoom,
+      state.maxZoom,
+    ));
+  };
+  const fit = () => {
+    if (!layout) return;
+    const state = store.getState();
+    const { width, height } = canvasSize();
+    apply(fitViewportToCanvas(layout.width, layout.height, width, height, state.minZoom, state.maxZoom));
+  };
+  return <Panel position="bottom-left" className="canvas-controls" aria-label="Viewport controls">
+    <button type="button" aria-label="Zoom in" title="Zoom in" disabled={zoom >= maxZoom - 0.001} onClick={() => zoomBy(1.2)}><Plus size={17} /></button>
+    <button type="button" aria-label="Zoom out" title="Zoom out" disabled={zoom <= minZoom + 0.001} onClick={() => zoomBy(1 / 1.2)}><Minus size={17} /></button>
+    <button type="button" aria-label="Fit view" title="Fit view" onClick={fit}><Maximize size={15} /></button>
+  </Panel>;
+}
 
 function CanvasOverlay({ graph, layout, view, navigate }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void }) {
   const focusedLaneId = view.kind === "lane" ? view.id : undefined;

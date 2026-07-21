@@ -15,11 +15,12 @@ vi.mock("./graph/layout", () => ({
 }));
 vi.mock("@xyflow/react", () => ({
   Background: () => null,
-  Controls: () => React.createElement("div", { "data-testid": "controls" }),
-  Panel: ({ children }: { children: React.ReactNode }) => React.createElement("div", null, children),
+  Panel: ({ children, ...props }: { children: React.ReactNode }) => React.createElement("div", props, children),
   ReactFlow: ({ children, viewport, fitView, panOnDrag }: { children: React.ReactNode; viewport?: unknown; fitView?: unknown; panOnDrag?: boolean }) => React.createElement("div", { "data-testid": "graph", "data-controlled": String(Boolean(viewport)), "data-auto-fit": String(Boolean(fitView)), "data-drag-disabled": String(panOnDrag === false) }, children),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
   useReactFlow: () => ({ zoomIn: vi.fn(), zoomOut: vi.fn(), fitView: vi.fn() }),
+  useStore: (selector: (state: unknown) => unknown) => selector({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55 }),
+  useStoreApi: () => ({ getState: () => ({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55, width: 1200, height: 700, panZoom: { setViewport: vi.fn() } }) }),
 }));
 
 describe("Home navigation entry points", () => {
@@ -53,6 +54,6 @@ describe("Home navigation entry points", () => {
     expect(canvas.getAttribute("data-controlled")).toBe("false");
     expect(canvas.getAttribute("data-auto-fit")).toBe("false");
     expect(canvas.getAttribute("data-drag-disabled")).toBe("false");
-    expect(screen.getByTestId("controls")).toBeTruthy();
+    expect(screen.getByLabelText("Viewport controls")).toBeTruthy();
   });
 });
