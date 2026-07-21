@@ -130,7 +130,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand"><div className="brand-mark">B</div><div><strong>Baley</strong><span>Visual MVP</span></div></div>
+        <button type="button" className="brand" aria-label="Go to Home" onClick={() => navigate({ kind: "multi" })}><div className="brand-mark">B</div><div><strong>Baley</strong><span>Visual MVP</span></div></button>
         <nav className="view-tabs" aria-label="Graph views">
           <button className={view.kind === "multi" ? "active" : ""} onClick={() => navigate({ kind: "multi" })}>Multi-lane</button>
           <button className={view.kind === "lane" ? "active" : ""} disabled={!defaultLaneId} onClick={() => defaultLaneId && navigate({ kind: "lane", id: view.kind === "lane" ? view.id : defaultLaneId })}>Lane focus</button>
@@ -141,7 +141,7 @@ export default function App() {
 
       <section className={`workspace ${inspectorOpen ? "with-inspector" : ""}`} style={{ "--inspector-width": `${inspectorWidth}px` } as React.CSSProperties}>
         <div className="graph-wrap">
-          <div className="context-row"><div><span>WORKSPACE · REVISION {graph.workspace.revision}</span><h1>{view.kind === "multi" ? graph.workspace.name : view.kind === "lane" ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane` : `${graph.gates.find((gate) => gate.id === view.id)?.name ?? "Unknown"} gate`}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
+          <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1>{view.kind === "multi" ? graph.workspace.name : view.kind === "lane" ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane` : `${graph.gates.find((gate) => gate.id === view.id)?.name ?? "Unknown"} gate`}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas">
             <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} fitView fitViewOptions={{ padding: 0.16 }} minZoom={0.55} maxZoom={1.55} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
               <Background color="#d8d6ce" gap={24} size={1} />
