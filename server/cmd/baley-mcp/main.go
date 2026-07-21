@@ -57,6 +57,63 @@ type taskCreateExecuteInput struct {
 	ProceedReason            string   `json:"proceedReason,omitempty"`
 	automaticEnvelope
 }
+type phaseCreateFields struct {
+	WorkspaceID string `json:"workspaceId"`
+	PhaseID     string `json:"phaseId"`
+	Name        string `json:"name"`
+}
+type phaseCreatePreviewInput struct {
+	phaseCreateFields
+	previewEnvelope
+}
+type phaseCreateExecuteInput struct {
+	phaseCreateFields
+	mutationExecuteEnvelope
+}
+type laneCreateFields struct {
+	WorkspaceID string `json:"workspaceId"`
+	LaneID      string `json:"laneId"`
+	Name        string `json:"name"`
+	Goal        string `json:"goal,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+}
+type laneCreatePreviewInput struct {
+	laneCreateFields
+	previewEnvelope
+}
+type laneCreateExecuteInput struct {
+	laneCreateFields
+	mutationExecuteEnvelope
+}
+type gateCreateFields struct {
+	WorkspaceID string `json:"workspaceId"`
+	GateID      string `json:"gateId"`
+	Name        string `json:"name"`
+	FromPhaseID string `json:"fromPhaseId"`
+	ToPhaseID   string `json:"toPhaseId"`
+}
+type gateCreatePreviewInput struct {
+	gateCreateFields
+	previewEnvelope
+}
+type gateCreateExecuteInput struct {
+	gateCreateFields
+	mutationExecuteEnvelope
+}
+type gateAttachTaskFields struct {
+	WorkspaceID   string `json:"workspaceId"`
+	GateID        string `json:"gateId"`
+	TaskID        int    `json:"taskId"`
+	ClearTerminal bool   `json:"clearTerminal,omitempty"`
+}
+type gateAttachTaskPreviewInput struct {
+	gateAttachTaskFields
+	previewEnvelope
+}
+type gateAttachTaskExecuteInput struct {
+	gateAttachTaskFields
+	conditionalExecuteEnvelope
+}
 type gateInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	GateID      string `json:"gateId"`
@@ -65,23 +122,41 @@ type previewEnvelope struct {
 	ExpectedWorkspaceRevision int64  `json:"expectedWorkspaceRevision"`
 	IdempotencyKey            string `json:"idempotencyKey"`
 	ExecutedByActorID         string `json:"executedByActorId"`
+	InitiatedByActorID        string `json:"initiatedByActorId,omitempty"`
 }
 type executeEnvelope struct {
-	ExpectedWorkspaceRevision int64    `json:"expectedWorkspaceRevision"`
-	IdempotencyKey            string   `json:"idempotencyKey"`
-	ExecutedByActorID         string   `json:"executedByActorId"`
-	AcknowledgedWarningCodes  []string `json:"acknowledgedWarningCodes,omitempty"`
-	ProceedReason             string   `json:"proceedReason,omitempty"`
-	ApprovedByActorID         string   `json:"approvedByActorId"`
-	ApprovedCommandHash       string   `json:"approvedCommandHash"`
-	DecisionSnapshotHash      string   `json:"decisionSnapshotHash,omitempty"`
-	StatementHash             string   `json:"statementHash,omitempty"`
-	ConversationRef           string   `json:"conversationRef,omitempty"`
+	ExpectedWorkspaceRevision int64      `json:"expectedWorkspaceRevision"`
+	IdempotencyKey            string     `json:"idempotencyKey"`
+	ExecutedByActorID         string     `json:"executedByActorId"`
+	InitiatedByActorID        string     `json:"initiatedByActorId,omitempty"`
+	AcknowledgedWarningCodes  []string   `json:"acknowledgedWarningCodes,omitempty"`
+	ProceedReason             string     `json:"proceedReason,omitempty"`
+	ApprovedByActorID         string     `json:"approvedByActorId"`
+	ApprovedCommandHash       string     `json:"approvedCommandHash"`
+	DecisionSnapshotHash      string     `json:"decisionSnapshotHash,omitempty"`
+	StatementHash             string     `json:"statementHash,omitempty"`
+	ConversationRef           string     `json:"conversationRef,omitempty"`
+	ApprovedAt                *time.Time `json:"approvedAt,omitempty"`
 }
 type automaticEnvelope struct {
 	ExpectedWorkspaceRevision int64  `json:"expectedWorkspaceRevision"`
 	IdempotencyKey            string `json:"idempotencyKey"`
 	ExecutedByActorID         string `json:"executedByActorId"`
+	InitiatedByActorID        string `json:"initiatedByActorId,omitempty"`
+}
+type mutationExecuteEnvelope struct {
+	automaticEnvelope
+	AcknowledgedWarningCodes []string `json:"acknowledgedWarningCodes,omitempty"`
+	ProceedReason            string   `json:"proceedReason,omitempty"`
+}
+type conditionalExecuteEnvelope struct {
+	mutationExecuteEnvelope
+	ApprovedByActorID    string     `json:"approvedByActorId,omitempty"`
+	ApprovedCommandHash  string     `json:"approvedCommandHash,omitempty"`
+	DecisionSnapshotHash string     `json:"decisionSnapshotHash,omitempty"`
+	StatementHash        string     `json:"statementHash,omitempty"`
+	ConversationRef      string     `json:"conversationRef,omitempty"`
+	ApprovedAt           *time.Time `json:"approvedAt,omitempty"`
 }
 type runStartInput struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -237,6 +312,14 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_report_implemented", Description: "Report implementation complete with assessment and explicit warning acknowledgement"}, c.taskReportImplemented)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_preview", Description: "Preview atomic Task creation and initial relationships without writing"}, c.taskCreatePreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_execute", Description: "Create a Task and its initial relationships after reviewing the preview"}, c.taskCreateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_phase_create_preview", Description: "Preview appending a Phase without writing"}, c.phaseCreatePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_phase_create_execute", Description: "Append a Phase after reviewing the preview"}, c.phaseCreateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_lane_create_preview", Description: "Preview creating a Lane without writing"}, c.laneCreatePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_lane_create_execute", Description: "Create a Lane after reviewing the preview"}, c.laneCreateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_create_preview", Description: "Preview creating a Phase Gate without writing"}, c.gateCreatePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_create_execute", Description: "Create a Phase Gate after reviewing the preview"}, c.gateCreateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_task_preview", Description: "Preview attaching a Task as a Gate condition without writing"}, c.gateAttachTaskPreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_task_execute", Description: "Attach a Task to a Gate; active Gates require fields from an explicitly approved fresh preview"}, c.gateAttachTaskExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_preview", Description: "Preview Task confirmation without writing"}, c.taskConfirmPreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_execute", Description: "Execute an explicitly approved Task confirmation with exact warning acknowledgement when preview returned warnings"}, c.taskConfirmExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_task_preview", Description: "Preview explicit Gate Task pass without writing"}, c.gatePassTaskPreview)
@@ -292,13 +375,55 @@ func command(name string, args any, envelope any) map[string]any {
 	return map[string]any{"name": name, "arguments": args, "envelope": envelope}
 }
 func previewEnv(v previewEnvelope) map[string]any {
-	return map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID}
+	envelope := map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID}
+	if v.InitiatedByActorID != "" {
+		envelope["initiatedByActorId"] = v.InitiatedByActorID
+	}
+	return envelope
 }
 func executeEnv(v executeEnvelope) map[string]any {
-	return map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID, "acknowledgedWarningCodes": v.AcknowledgedWarningCodes, "proceedReason": v.ProceedReason, "humanApprovalAttestation": map[string]any{"approvedByActorId": v.ApprovedByActorID, "approvedCommandHash": v.ApprovedCommandHash, "decisionSnapshotHash": v.DecisionSnapshotHash, "statementHash": v.StatementHash, "conversationRef": v.ConversationRef}}
+	envelope := map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID, "acknowledgedWarningCodes": v.AcknowledgedWarningCodes, "proceedReason": v.ProceedReason}
+	if v.InitiatedByActorID != "" {
+		envelope["initiatedByActorId"] = v.InitiatedByActorID
+	}
+	envelope["humanApprovalAttestation"] = approvalAttestation(v.ApprovedByActorID, v.ApprovedCommandHash, v.DecisionSnapshotHash, v.StatementHash, v.ConversationRef, v.ApprovedAt)
+	return envelope
 }
 func automaticEnv(v automaticEnvelope) map[string]any {
-	return map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID}
+	envelope := map[string]any{"expectedWorkspaceRevision": v.ExpectedWorkspaceRevision, "idempotencyKey": v.IdempotencyKey, "executedByActorId": v.ExecutedByActorID}
+	if v.InitiatedByActorID != "" {
+		envelope["initiatedByActorId"] = v.InitiatedByActorID
+	}
+	return envelope
+}
+func mutationExecuteEnv(v mutationExecuteEnvelope) map[string]any {
+	envelope := automaticEnv(v.automaticEnvelope)
+	if len(v.AcknowledgedWarningCodes) != 0 {
+		envelope["acknowledgedWarningCodes"] = v.AcknowledgedWarningCodes
+	}
+	if v.ProceedReason != "" {
+		envelope["proceedReason"] = v.ProceedReason
+	}
+	return envelope
+}
+func conditionalExecuteEnv(v conditionalExecuteEnvelope) map[string]any {
+	envelope := mutationExecuteEnv(v.mutationExecuteEnvelope)
+	if v.ApprovedByActorID != "" || v.ApprovedCommandHash != "" || v.DecisionSnapshotHash != "" || v.StatementHash != "" || v.ConversationRef != "" || v.ApprovedAt != nil {
+		envelope["humanApprovalAttestation"] = approvalAttestation(v.ApprovedByActorID, v.ApprovedCommandHash, v.DecisionSnapshotHash, v.StatementHash, v.ConversationRef, v.ApprovedAt)
+	}
+	return envelope
+}
+func approvalAttestation(approvedByActorID, approvedCommandHash, decisionSnapshotHash, statementHash, conversationRef string, approvedAt *time.Time) map[string]any {
+	attestation := map[string]any{"approvedByActorId": approvedByActorID, "approvedCommandHash": approvedCommandHash}
+	for key, value := range map[string]string{"decisionSnapshotHash": decisionSnapshotHash, "statementHash": statementHash, "conversationRef": conversationRef} {
+		if value != "" {
+			attestation[key] = value
+		}
+	}
+	if approvedAt != nil {
+		attestation["approvedAt"] = approvedAt
+	}
+	return attestation
 }
 
 func (c *client) workspaceGraph(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
@@ -401,6 +526,53 @@ func (c *client) taskCreateExecute(ctx context.Context, _ *mcp.CallToolRequest, 
 		envelope["proceedReason"] = in.ProceedReason
 	}
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.create", taskCreateArguments(in.taskCreateFields), envelope))
+}
+func phaseCreateArguments(in phaseCreateFields) map[string]any {
+	return map[string]any{"workspaceId": in.WorkspaceID, "phaseId": in.PhaseID, "name": in.Name}
+}
+func (c *client) phaseCreatePreview(ctx context.Context, _ *mcp.CallToolRequest, in phaseCreatePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("phase.create", phaseCreateArguments(in.phaseCreateFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) phaseCreateExecute(ctx context.Context, _ *mcp.CallToolRequest, in phaseCreateExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("phase.create", phaseCreateArguments(in.phaseCreateFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
+}
+func laneCreateArguments(in laneCreateFields) map[string]any {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "laneId": in.LaneID, "name": in.Name}
+	if in.Goal != "" {
+		arguments["goal"] = in.Goal
+	}
+	if in.Summary != "" {
+		arguments["summary"] = in.Summary
+	}
+	return arguments
+}
+func (c *client) laneCreatePreview(ctx context.Context, _ *mcp.CallToolRequest, in laneCreatePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("lane.create", laneCreateArguments(in.laneCreateFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) laneCreateExecute(ctx context.Context, _ *mcp.CallToolRequest, in laneCreateExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("lane.create", laneCreateArguments(in.laneCreateFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
+}
+func gateCreateArguments(in gateCreateFields) map[string]any {
+	return map[string]any{"workspaceId": in.WorkspaceID, "gateId": in.GateID, "name": in.Name, "fromPhaseId": in.FromPhaseID, "toPhaseId": in.ToPhaseID}
+}
+func (c *client) gateCreatePreview(ctx context.Context, _ *mcp.CallToolRequest, in gateCreatePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("gate.create", gateCreateArguments(in.gateCreateFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) gateCreateExecute(ctx context.Context, _ *mcp.CallToolRequest, in gateCreateExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("gate.create", gateCreateArguments(in.gateCreateFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
+}
+func gateAttachTaskArguments(in gateAttachTaskFields) map[string]any {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "gateId": in.GateID, "taskId": in.TaskID}
+	if in.ClearTerminal {
+		arguments["clearTerminal"] = true
+	}
+	return arguments
+}
+func (c *client) gateAttachTaskPreview(ctx context.Context, _ *mcp.CallToolRequest, in gateAttachTaskPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("gate.attach_task", gateAttachTaskArguments(in.gateAttachTaskFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) gateAttachTaskExecute(ctx context.Context, _ *mcp.CallToolRequest, in gateAttachTaskExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("gate.attach_task", gateAttachTaskArguments(in.gateAttachTaskFields), conditionalExecuteEnv(in.conditionalExecuteEnvelope)))
 }
 func (c *client) taskConfirmPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskConfirmPreviewInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/preview", command("task.confirm", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID}, previewEnv(in.previewEnvelope)))

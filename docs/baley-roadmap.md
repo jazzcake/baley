@@ -343,9 +343,9 @@ baley gate status <gate>
 
 ## 11. 현재 다음 행동
 
-1. Task #111의 current-source runtime 계약과 독립 리뷰를 완료하고 사람 확인만 남긴다.
-2. 권한이 다른 legacy 8080 listener는 소유 launch context에서 정리한다. 그 전까지 새 MCP process는 user-level `BALEY_SERVER_URL=http://127.0.0.1:18080`으로 current-source runtime을 사용한다.
-3. 기존 Gate-transition Record index를 등록하고 이번 Task의 Git commit/blob evidence를 연결한다.
+1. 새 MCP process에서 `phase.create`, `lane.create`, `gate.create`, `gate.attach_task` typed preview/execute schema를 reload한 뒤 Adoption Lane과 Embedding Contract/Enablement/Pilot 구조를 생성한다.
+2. active Validate Gate에 조건을 추가할 때는 fresh preview의 command hash와 명시적인 사람 승인 진술을 사용하고, 미래 Gate 조건은 Operator 권한으로 구성한다.
+3. 권한이 다른 legacy 8080 listener는 소유 launch context에서 정리한다. 그 전까지 새 MCP process는 user-level `BALEY_SERVER_URL=http://127.0.0.1:18080`으로 current-source runtime을 사용한다.
 4. multi-repository CommitReference와 Record 증거를 위한 CLI/Operator 경로를 완성한다. Branch/worktree lifecycle은 외부 Git 도구에 두고 Baley에는 commit reference와 비권위적 observation만 기록한다.
 
 ## 12. Gate-transition close-out

@@ -162,3 +162,67 @@ func TestTaskCreateExecuteOmitsEmptyOptionalWarningEvidence(t *testing.T) {
 		t.Fatalf("empty proceed reason must be omitted: %#v", envelope)
 	}
 }
+
+func TestStructuralCreateHandlersForwardTypedCommandsAndConditionalApproval(t *testing.T) {
+	type capturedRequest struct {
+		path string
+		body map[string]any
+	}
+	requests := make(chan capturedRequest, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests <- capturedRequest{path: r.URL.Path, body: body}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"commandHash":"sha256:test","workspaceRevision":12}`))
+	}))
+	defer server.Close()
+
+	c := &client{base: server.URL, http: server.Client()}
+	previewEnvValue := previewEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "preview-key", ExecutedByActorID: "agent", InitiatedByActorID: "human"}
+	executeEnvValue := mutationExecuteEnvelope{automaticEnvelope: automaticEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "execute-key", ExecutedByActorID: "agent", InitiatedByActorID: "human"}}
+
+	_, _, _ = c.phaseCreatePreview(context.Background(), nil, phaseCreatePreviewInput{phaseCreateFields: phaseCreateFields{WorkspaceID: "workspace", PhaseID: "contract", Name: "Embedding Contract"}, previewEnvelope: previewEnvValue})
+	_, _, _ = c.phaseCreateExecute(context.Background(), nil, phaseCreateExecuteInput{phaseCreateFields: phaseCreateFields{WorkspaceID: "workspace", PhaseID: "contract", Name: "Embedding Contract"}, mutationExecuteEnvelope: executeEnvValue})
+	_, _, _ = c.laneCreatePreview(context.Background(), nil, laneCreatePreviewInput{laneCreateFields: laneCreateFields{WorkspaceID: "workspace", LaneID: "adoption", Name: "Adoption", Goal: "Adopt", Summary: "Enablement"}, previewEnvelope: previewEnvValue})
+	_, _, _ = c.laneCreateExecute(context.Background(), nil, laneCreateExecuteInput{laneCreateFields: laneCreateFields{WorkspaceID: "workspace", LaneID: "adoption", Name: "Adoption", Goal: "Adopt", Summary: "Enablement"}, mutationExecuteEnvelope: executeEnvValue})
+	_, _, _ = c.gateCreatePreview(context.Background(), nil, gateCreatePreviewInput{gateCreateFields: gateCreateFields{WorkspaceID: "workspace", GateID: "contract-ready", Name: "Contract Ready", FromPhaseID: "validate", ToPhaseID: "contract"}, previewEnvelope: previewEnvValue})
+	_, _, _ = c.gateCreateExecute(context.Background(), nil, gateCreateExecuteInput{gateCreateFields: gateCreateFields{WorkspaceID: "workspace", GateID: "contract-ready", Name: "Contract Ready", FromPhaseID: "validate", ToPhaseID: "contract"}, mutationExecuteEnvelope: executeEnvValue})
+	_, _, _ = c.gateAttachTaskPreview(context.Background(), nil, gateAttachTaskPreviewInput{gateAttachTaskFields: gateAttachTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 116, ClearTerminal: true}, previewEnvelope: previewEnvValue})
+	_, _, _ = c.gateAttachTaskExecute(context.Background(), nil, gateAttachTaskExecuteInput{gateAttachTaskFields: gateAttachTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 116, ClearTerminal: true}, conditionalExecuteEnvelope: conditionalExecuteEnvelope{mutationExecuteEnvelope: executeEnvValue, ApprovedByActorID: "human", ApprovedCommandHash: "sha256:test", ConversationRef: "thread"}})
+
+	wantNames := []string{"phase.create", "phase.create", "lane.create", "lane.create", "gate.create", "gate.create", "gate.attach_task", "gate.attach_task"}
+	for index, wantName := range wantNames {
+		request := <-requests
+		wantPath := "/v1/commands/preview"
+		if index%2 == 1 {
+			wantPath = "/v1/commands/execute"
+		}
+		if request.path != wantPath || request.body["name"] != wantName {
+			t.Fatalf("request %d mismatch: path=%s body=%#v", index, request.path, request.body)
+		}
+		envelope, ok := request.body["envelope"].(map[string]any)
+		if !ok {
+			t.Fatalf("request %d missing envelope: %#v", index, request.body)
+		}
+		if envelope["initiatedByActorId"] != "human" {
+			t.Fatalf("request %d missing initiator attribution: %#v", index, envelope)
+		}
+		if index == 7 {
+			attestation, ok := envelope["humanApprovalAttestation"].(map[string]any)
+			if !ok || attestation["approvedByActorId"] != "human" || attestation["approvedCommandHash"] != "sha256:test" || attestation["conversationRef"] != "thread" {
+				t.Fatalf("conditional approval not forwarded: %#v", envelope)
+			}
+			for _, field := range []string{"decisionSnapshotHash", "statementHash", "approvedAt"} {
+				if _, exists := attestation[field]; exists {
+					t.Fatalf("empty optional approval field %s must be omitted: %#v", field, attestation)
+				}
+			}
+		} else if envelope["humanApprovalAttestation"] != nil {
+			t.Fatalf("approval leaked into non-conditional request %d: %#v", index, envelope)
+		}
+	}
+}

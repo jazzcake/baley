@@ -48,7 +48,7 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 31 {
+	if len(tools.Tools) != 39 {
 		t.Fatalf("tool count=%d", len(tools.Tools))
 	}
 	want := map[string]bool{
@@ -61,6 +61,10 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 		"baley_record_attach_commit": true, "baley_commit_attach": true, "baley_git_observe": true,
 		"baley_task_report_implemented": true,
 		"baley_task_create_preview":     true, "baley_task_create_execute": true,
+		"baley_phase_create_preview": true, "baley_phase_create_execute": true,
+		"baley_lane_create_preview": true, "baley_lane_create_execute": true,
+		"baley_gate_create_preview": true, "baley_gate_create_execute": true,
+		"baley_gate_attach_task_preview": true, "baley_gate_attach_task_execute": true,
 		"baley_task_confirm_preview": true, "baley_task_confirm_execute": true,
 		"baley_gate_pass_task_preview": true, "baley_gate_pass_task_execute": true,
 		"baley_gate_revoke_task_pass_preview": true, "baley_gate_revoke_task_pass_execute": true,
@@ -79,6 +83,13 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 				t.Fatal(marshalErr)
 			}
 			assertTaskCreateSchema(t, tool.Name, schema, tool.Name == "baley_task_create_execute")
+		}
+		if fields, ok := structuralToolRequiredFields(tool.Name); ok {
+			schema, marshalErr := json.Marshal(tool.InputSchema)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			assertStructuralCreateSchema(t, tool.Name, schema, fields)
 		}
 		delete(want, tool.Name)
 	}
@@ -361,6 +372,219 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 	if !foundBoundEvent {
 		t.Fatalf("task.created Event is not bound to command=%s task=%s revision=%d", createResult.CommandID, taskUUID, createResult.WorkspaceRevision)
 	}
+
+	structuralRevision := createResult.WorkspaceRevision
+	structuralSuffix := strings.ReplaceAll(testMCPUUID(t), "-", "")[:8]
+	phaseID := "mcp-embedding-" + structuralSuffix
+	laneID := "mcp-adoption-" + structuralSuffix
+	gateID := "mcp-embedding-gate-" + structuralSuffix
+	type structuralMutation struct {
+		previewTool string
+		executeTool string
+		eventType   string
+		entityID    string
+		arguments   map[string]any
+	}
+	structuralMutations := []structuralMutation{
+		{
+			previewTool: "baley_phase_create_preview", executeTool: "baley_phase_create_execute",
+			eventType: "phase.created", entityID: phaseID,
+			arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID, "phaseId": phaseID, "name": "Embedding Contract"},
+		},
+		{
+			previewTool: "baley_lane_create_preview", executeTool: "baley_lane_create_execute",
+			eventType: "lane.created", entityID: laneID,
+			arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID, "laneId": laneID, "name": "Adoption", "goal": "Adopt typed Baley structures", "summary": "MCP structural fixture"},
+		},
+		{
+			previewTool: "baley_gate_create_preview", executeTool: "baley_gate_create_execute",
+			eventType: "gate.created", entityID: gateID,
+			arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID, "gateId": gateID, "name": "Embedding Entry", "fromPhaseId": "validate", "toPhaseId": phaseID},
+		},
+		{
+			previewTool: "baley_gate_attach_task_preview", executeTool: "baley_gate_attach_task_execute",
+			eventType: "gate.task_attached", entityID: gateID,
+			arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID, "gateId": gateID, "taskId": 110},
+		},
+	}
+	for _, mutation := range structuralMutations {
+		key := testMCPUUID(t)
+		arguments := make(map[string]any, len(mutation.arguments)+4)
+		for name, value := range mutation.arguments {
+			arguments[name] = value
+		}
+		arguments["expectedWorkspaceRevision"] = structuralRevision
+		arguments["idempotencyKey"] = key
+		arguments["executedByActorId"] = "00000000-0000-4000-8000-000000000003"
+
+		var commandsBefore, eventsBefore int
+		if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM commands WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&commandsBefore); err != nil {
+			t.Fatal(err)
+		}
+		if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM events WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&eventsBefore); err != nil {
+			t.Fatal(err)
+		}
+		result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: mutation.previewTool, Arguments: arguments})
+		if err != nil || result.IsError {
+			t.Fatalf("%s failed: %#v %v", mutation.previewTool, result.StructuredContent, err)
+		}
+		raw, _ = json.Marshal(result.StructuredContent)
+		var previewResult struct {
+			CommandHash               string `json:"commandHash"`
+			ExpectedWorkspaceRevision int64  `json:"expectedWorkspaceRevision"`
+			Errors                    []any  `json:"errors"`
+		}
+		if json.Unmarshal(raw, &previewResult) != nil || previewResult.CommandHash == "" || previewResult.ExpectedWorkspaceRevision != structuralRevision || len(previewResult.Errors) != 0 || !strings.Contains(string(raw), mutation.entityID) {
+			t.Fatalf("%s preview projection invalid: %s", mutation.previewTool, raw)
+		}
+		var commandsAfter, eventsAfter int
+		if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM commands WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&commandsAfter); err != nil {
+			t.Fatal(err)
+		}
+		if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM events WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&eventsAfter); err != nil {
+			t.Fatal(err)
+		}
+		if commandsAfter != commandsBefore || eventsAfter != eventsBefore {
+			t.Fatalf("%s preview wrote state: commands %d->%d events %d->%d", mutation.previewTool, commandsBefore, commandsAfter, eventsBefore, eventsAfter)
+		}
+
+		result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: mutation.executeTool, Arguments: arguments})
+		if err != nil || result.IsError {
+			t.Fatalf("%s failed: %#v %v", mutation.executeTool, result.StructuredContent, err)
+		}
+		raw, _ = json.Marshal(result.StructuredContent)
+		var executeResult struct {
+			CommandID         string `json:"commandId"`
+			WorkspaceRevision int64  `json:"workspaceRevision"`
+			Idempotent        bool   `json:"idempotent"`
+		}
+		if json.Unmarshal(raw, &executeResult) != nil || executeResult.CommandID == "" || executeResult.WorkspaceRevision != structuralRevision+1 || executeResult.Idempotent || !strings.Contains(string(raw), mutation.entityID) {
+			t.Fatalf("%s execute result invalid: %s", mutation.executeTool, raw)
+		}
+		result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: mutation.executeTool, Arguments: arguments})
+		raw, _ = json.Marshal(result.StructuredContent)
+		var retryResult struct {
+			CommandID  string `json:"commandId"`
+			Idempotent bool   `json:"idempotent"`
+		}
+		if err != nil || result.IsError || json.Unmarshal(raw, &retryResult) != nil || !retryResult.Idempotent || retryResult.CommandID != executeResult.CommandID {
+			t.Fatalf("%s idempotent retry failed: %s %v", mutation.executeTool, raw, err)
+		}
+		structuralEvents, eventErr := auditRepo.Events(ctx, postgresDemoWorkspaceID)
+		if eventErr != nil {
+			t.Fatal(eventErr)
+		}
+		foundBoundStructuralEvent := false
+		for _, event := range structuralEvents {
+			if event.EventType == mutation.eventType && event.CommandID == executeResult.CommandID && event.EntityID == mutation.entityID && event.WorkspaceRevision == executeResult.WorkspaceRevision {
+				foundBoundStructuralEvent = true
+				break
+			}
+		}
+		if !foundBoundStructuralEvent {
+			t.Fatalf("%s Event is not bound to command=%s entity=%s revision=%d", mutation.eventType, executeResult.CommandID, mutation.entityID, executeResult.WorkspaceRevision)
+		}
+		structuralRevision = executeResult.WorkspaceRevision
+	}
+
+	activeGateTaskUUID := testMCPUUID(t)
+	activeGateTaskKey := testMCPUUID(t)
+	activeGateTaskArguments := map[string]any{
+		"workspaceId": postgresDemoWorkspaceID, "taskUuid": activeGateTaskUUID,
+		"laneId": "server", "phaseId": "build", "title": "Active Gate typed MCP approval fixture",
+		"expectedWorkspaceRevision": structuralRevision, "idempotencyKey": activeGateTaskKey,
+		"executedByActorId": "00000000-0000-4000-8000-000000000003",
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_task_create_preview", Arguments: activeGateTaskArguments})
+	if err != nil || result.IsError {
+		t.Fatalf("active Gate fixture Task preview failed: %#v %v", result.StructuredContent, err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_task_create_execute", Arguments: activeGateTaskArguments})
+	raw, _ = json.Marshal(result.StructuredContent)
+	var activeGateTaskResult struct {
+		WorkspaceRevision int64 `json:"workspaceRevision"`
+		Projection        struct {
+			Task struct {
+				PublicID int `json:"PublicID"`
+			} `json:"task"`
+		} `json:"projection"`
+	}
+	if err != nil || result.IsError || json.Unmarshal(raw, &activeGateTaskResult) != nil || activeGateTaskResult.WorkspaceRevision != structuralRevision+1 || activeGateTaskResult.Projection.Task.PublicID == 0 {
+		t.Fatalf("active Gate fixture Task execute failed: %s %v", raw, err)
+	}
+	structuralRevision = activeGateTaskResult.WorkspaceRevision
+
+	activeAttachPreviewKey := testMCPUUID(t)
+	activeAttachPreviewArguments := map[string]any{
+		"workspaceId": postgresDemoWorkspaceID, "gateId": "pilot-ready", "taskId": activeGateTaskResult.Projection.Task.PublicID,
+		"expectedWorkspaceRevision": structuralRevision, "idempotencyKey": activeAttachPreviewKey,
+		"executedByActorId": "00000000-0000-4000-8000-000000000003", "initiatedByActorId": "00000000-0000-4000-8000-000000000002",
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_gate_attach_task_preview", Arguments: activeAttachPreviewArguments})
+	raw, _ = json.Marshal(result.StructuredContent)
+	var activeAttachPreview struct {
+		CommandHash        string `json:"commandHash"`
+		RequiredCapability string `json:"requiredCapability"`
+		Errors             []struct {
+			Code string `json:"code"`
+		} `json:"errors"`
+	}
+	if err != nil || result.IsError || json.Unmarshal(raw, &activeAttachPreview) != nil || activeAttachPreview.CommandHash == "" || activeAttachPreview.RequiredCapability != "gate:approve" || len(activeAttachPreview.Errors) != 1 || activeAttachPreview.Errors[0].Code != "human_approval_required" {
+		t.Fatalf("active Gate attach preview approval evidence invalid: %s %v", raw, err)
+	}
+
+	unapprovedArguments := make(map[string]any, len(activeAttachPreviewArguments))
+	for name, value := range activeAttachPreviewArguments {
+		unapprovedArguments[name] = value
+	}
+	unapprovedArguments["idempotencyKey"] = testMCPUUID(t)
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_gate_attach_task_execute", Arguments: unapprovedArguments})
+	raw, _ = json.Marshal(result.StructuredContent)
+	if err != nil || !result.IsError || !strings.Contains(string(raw), `"code":"human_approval_mismatch"`) {
+		t.Fatalf("active Gate approval-less execute was not rejected: %s %v", raw, err)
+	}
+
+	approvedArguments := make(map[string]any, len(activeAttachPreviewArguments)+4)
+	for name, value := range activeAttachPreviewArguments {
+		approvedArguments[name] = value
+	}
+	approvedArguments["idempotencyKey"] = testMCPUUID(t)
+	approvedArguments["approvedByActorId"] = "00000000-0000-4000-8000-000000000002"
+	approvedArguments["approvedCommandHash"] = activeAttachPreview.CommandHash
+	approvedArguments["conversationRef"] = "mcp-e2e-active-gate-approval"
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_gate_attach_task_execute", Arguments: approvedArguments})
+	raw, _ = json.Marshal(result.StructuredContent)
+	var activeAttachResult struct {
+		CommandID         string `json:"commandId"`
+		WorkspaceRevision int64  `json:"workspaceRevision"`
+	}
+	if err != nil || result.IsError || json.Unmarshal(raw, &activeAttachResult) != nil || activeAttachResult.CommandID == "" || activeAttachResult.WorkspaceRevision != structuralRevision+1 {
+		t.Fatalf("active Gate approved execute failed: %s %v", raw, err)
+	}
+	activeAttachEvents, eventErr := auditRepo.Events(ctx, postgresDemoWorkspaceID)
+	if eventErr != nil {
+		t.Fatal(eventErr)
+	}
+	foundActiveAttachEvent := false
+	for _, event := range activeAttachEvents {
+		if event.EventType == "gate.task_attached" && event.CommandID == activeAttachResult.CommandID && event.EntityID == "pilot-ready" && event.WorkspaceRevision == activeAttachResult.WorkspaceRevision {
+			foundActiveAttachEvent = true
+			break
+		}
+	}
+	if !foundActiveAttachEvent {
+		t.Fatalf("active gate.task_attached Event is not bound to command=%s gate=pilot-ready revision=%d", activeAttachResult.CommandID, activeAttachResult.WorkspaceRevision)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_event_list", Arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID}})
+	raw, _ = json.Marshal(result.StructuredContent)
+	if err != nil || result.IsError {
+		t.Fatalf("structural Event query failed: %s %v", raw, err)
+	}
+	for _, mutation := range structuralMutations {
+		if !strings.Contains(string(raw), `"eventType":"`+mutation.eventType+`"`) {
+			t.Fatalf("missing %s Event evidence: %s", mutation.eventType, raw)
+		}
+	}
 }
 
 const postgresDemoWorkspaceID = "00000000-0000-4000-8000-000000000001"
@@ -415,6 +639,65 @@ func assertTaskCreateSchema(t *testing.T, name string, raw []byte, execute bool)
 	_, hasReason := schema.Properties["proceedReason"]
 	if execute != (hasAck && hasReason) {
 		t.Fatalf("%s warning evidence field boundary is invalid: %s", name, raw)
+	}
+}
+
+func structuralToolRequiredFields(name string) ([]string, bool) {
+	common := []string{"workspaceId", "expectedWorkspaceRevision", "idempotencyKey", "executedByActorId"}
+	var fields []string
+	switch {
+	case strings.HasPrefix(name, "baley_phase_create_"):
+		fields = []string{"phaseId", "name"}
+	case strings.HasPrefix(name, "baley_lane_create_"):
+		fields = []string{"laneId", "name"}
+	case strings.HasPrefix(name, "baley_gate_create_"):
+		fields = []string{"gateId", "name", "fromPhaseId", "toPhaseId"}
+	case strings.HasPrefix(name, "baley_gate_attach_task_"):
+		fields = []string{"gateId", "taskId"}
+	default:
+		return nil, false
+	}
+	return append(common, fields...), true
+}
+
+func assertStructuralCreateSchema(t *testing.T, name string, raw []byte, requiredFields []string) {
+	t.Helper()
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("%s schema decode failed: %v", name, err)
+	}
+	required := make(map[string]bool, len(schema.Required))
+	for _, field := range schema.Required {
+		required[field] = true
+	}
+	for _, field := range requiredFields {
+		if !required[field] {
+			t.Fatalf("%s schema does not require %s: %s", name, field, raw)
+		}
+	}
+	for _, field := range []string{"goal", "summary", "clearTerminal", "initiatedByActorId", "acknowledgedWarningCodes", "proceedReason", "approvedByActorId", "approvedCommandHash", "decisionSnapshotHash", "statementHash", "conversationRef", "approvedAt"} {
+		if required[field] {
+			t.Fatalf("%s schema unexpectedly requires %s: %s", name, field, raw)
+		}
+	}
+	isExecute := strings.HasSuffix(name, "_execute")
+	_, hasAcknowledgements := schema.Properties["acknowledgedWarningCodes"]
+	_, hasProceedReason := schema.Properties["proceedReason"]
+	if isExecute != (hasAcknowledgements && hasProceedReason) {
+		t.Fatalf("%s warning evidence field boundary is invalid: %s", name, raw)
+	}
+	if _, ok := schema.Properties["initiatedByActorId"]; !ok {
+		t.Fatalf("%s schema lacks optional initiatedByActorId: %s", name, raw)
+	}
+	_, hasApprovedBy := schema.Properties["approvedByActorId"]
+	_, hasApprovedHash := schema.Properties["approvedCommandHash"]
+	_, hasApprovedAt := schema.Properties["approvedAt"]
+	wantsConditionalApproval := name == "baley_gate_attach_task_execute"
+	if wantsConditionalApproval != (hasApprovedBy && hasApprovedHash && hasApprovedAt) {
+		t.Fatalf("%s conditional approval field boundary is invalid: %s", name, raw)
 	}
 }
 
