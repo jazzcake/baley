@@ -21,6 +21,14 @@ describe("phase-aware graph layout", () => {
         expect(rectanglesOverlap(boxes[index]!, boxes[other]!)).toBe(false);
       }
     }
+
+    for (const task of pilotReadyFixture.tasks) {
+      const point = layout.taskPositions.get(task.id)!;
+      const laneTop = layout.lanePositions.get(task.laneId)!;
+      const laneHeight = layout.laneHeights.get(task.laneId)!;
+      expect(point.y).toBeGreaterThanOrEqual(laneTop);
+      expect(point.y + NODE_HEIGHT).toBeLessThanOrEqual(laneTop + laneHeight);
+    }
   });
 
   it("places every gate in the empty corridor between phases", async () => {
@@ -46,10 +54,11 @@ describe("phase-aware graph layout", () => {
       x: 0,
       y: layout.lanePositions.get("client")! + LANE_BAND_INSET_Y,
       width: layout.width,
-      height: LANE_HEIGHT - LANE_BAND_INSET_Y * 2,
+      height: layout.laneHeights.get("client")! - LANE_BAND_INSET_Y * 2,
     });
     expect(laneLabelTop(layout, "client")).toBe(
-      layout.lanePositions.get("client")! + (LANE_HEIGHT - LANE_LABEL_HEIGHT) / 2,
+      layout.lanePositions.get("client")! + (layout.laneHeights.get("client")! - LANE_LABEL_HEIGHT) / 2,
     );
+    expect(layout.laneHeights.get("client")).toBeGreaterThan(LANE_HEIGHT);
   });
 });

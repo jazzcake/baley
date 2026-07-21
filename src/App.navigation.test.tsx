@@ -15,6 +15,7 @@ vi.mock("./graph/layout", () => ({
 }));
 vi.mock("@xyflow/react", () => ({
   Background: () => null,
+  Controls: () => React.createElement("div", { "data-testid": "controls" }),
   Panel: ({ children }: { children: React.ReactNode }) => React.createElement("div", null, children),
   ReactFlow: () => React.createElement("div", { "data-testid": "graph" }),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),

@@ -3,7 +3,7 @@ import type { WorkspaceFixture } from "../domain/model";
 
 const elk = new ELK();
 export const NODE_WIDTH = 190;
-export const NODE_HEIGHT = 84;
+export const NODE_HEIGHT = 110;
 const LANE_LABEL_WIDTH = 180;
 const PHASE_PADDING_X = 32;
 const PHASE_HEADER_HEIGHT = 74;
@@ -20,23 +20,27 @@ export type GraphLayout = {
   gatePositions: Map<string, Point>;
   phaseRects: LayoutRect[];
   lanePositions: Map<string, number>;
+  laneHeights: Map<string, number>;
   width: number;
   height: number;
 };
 
 export function laneBandRect(layout: GraphLayout, laneId: string): LayoutRect | undefined {
   const y = layout.lanePositions.get(laneId);
-  return y === undefined ? undefined : { id: laneId, x: 0, y: y + LANE_BAND_INSET_Y, width: layout.width, height: LANE_HEIGHT - LANE_BAND_INSET_Y * 2 };
+  const height = layout.laneHeights.get(laneId);
+  return y === undefined || height === undefined ? undefined : { id: laneId, x: 0, y: y + LANE_BAND_INSET_Y, width: layout.width, height: height - LANE_BAND_INSET_Y * 2 };
 }
 
 export function laneLabelTop(layout: GraphLayout, laneId: string): number | undefined {
   const y = layout.lanePositions.get(laneId);
-  return y === undefined ? undefined : y + (LANE_HEIGHT - LANE_LABEL_HEIGHT) / 2;
+  const height = layout.laneHeights.get(laneId);
+  return y === undefined || height === undefined ? undefined : y + (height - LANE_LABEL_HEIGHT) / 2;
 }
 
 type LocalPhaseLayout = {
   phaseId: string;
   laneNodes: Map<string, Map<string, Point>>;
+  laneContentHeights: Map<string, number>;
   contentWidth: number;
 };
 
@@ -46,6 +50,7 @@ async function layoutPhase(
   taskIds: Set<string>,
 ): Promise<LocalPhaseLayout> {
   const laneNodes = new Map<string, Map<string, Point>>();
+  const laneContentHeights = new Map<string, number>();
   let contentWidth = 0;
 
   for (const lane of fixture.lanes) {
@@ -71,14 +76,17 @@ async function layoutPhase(
     });
 
     const positions = new Map<string, Point>();
+    let contentHeight = NODE_HEIGHT;
     graph.children?.forEach((node) => {
       positions.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
       contentWidth = Math.max(contentWidth, (node.x ?? 0) + NODE_WIDTH);
+      contentHeight = Math.max(contentHeight, (node.y ?? 0) + NODE_HEIGHT);
     });
     laneNodes.set(lane.id, positions);
+    laneContentHeights.set(lane.id, contentHeight);
   }
 
-  return { phaseId, laneNodes, contentWidth };
+  return { phaseId, laneNodes, laneContentHeights, contentWidth };
 }
 
 export async function layoutGraph(
@@ -89,13 +97,20 @@ export async function layoutGraph(
   const localLayouts = await Promise.all(
     phases.map((phase) => layoutPhase(fixture, phase.id, taskIds)),
   );
-  const height = PHASE_HEADER_HEIGHT + fixture.lanes.length * LANE_HEIGHT + 42;
   const taskPositions = new Map<string, Point>();
   const gatePositions = new Map<string, Point>();
   const phaseRects: LayoutRect[] = [];
-  const lanePositions = new Map(
-    fixture.lanes.map((lane, index) => [lane.id, PHASE_HEADER_HEIGHT + index * LANE_HEIGHT]),
-  );
+  const laneHeights = new Map(fixture.lanes.map((lane) => {
+    const contentHeight = Math.max(NODE_HEIGHT, ...localLayouts.map((local) => local.laneContentHeights.get(lane.id) ?? 0));
+    return [lane.id, Math.max(LANE_HEIGHT, contentHeight + LANE_BAND_INSET_Y * 2)] as const;
+  }));
+  const lanePositions = new Map<string, number>();
+  let cursorY = PHASE_HEADER_HEIGHT;
+  fixture.lanes.forEach((lane) => {
+    lanePositions.set(lane.id, cursorY);
+    cursorY += laneHeights.get(lane.id) ?? LANE_HEIGHT;
+  });
+  const height = cursorY + 42;
 
   let cursorX = LANE_LABEL_WIDTH;
   localLayouts.forEach((local, phaseIndex) => {
@@ -113,10 +128,12 @@ export async function layoutGraph(
 
     for (const [laneId, positions] of local.laneNodes) {
       const laneY = lanePositions.get(laneId) ?? PHASE_HEADER_HEIGHT;
+      const laneHeight = laneHeights.get(laneId) ?? LANE_HEIGHT;
+      const contentHeight = local.laneContentHeights.get(laneId) ?? NODE_HEIGHT;
       for (const [taskId, point] of positions) {
         taskPositions.set(taskId, {
           x: cursorX + PHASE_PADDING_X + point.x,
-          y: laneY + (LANE_HEIGHT - NODE_HEIGHT) / 2 + point.y,
+          y: laneY + (laneHeight - contentHeight) / 2 + point.y,
         });
       }
     }
@@ -144,6 +161,7 @@ export async function layoutGraph(
     gatePositions,
     phaseRects,
     lanePositions,
+    laneHeights,
     width: cursorX + 48,
     height,
   };

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Background, Panel, ReactFlow, ViewportPortal, useReactFlow, type Edge, type Node } from "@xyflow/react";
+import { Background, Controls, ReactFlow, ViewportPortal, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ChevronRight, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, RotateCcw } from "lucide-react";
+import { ChevronRight, PanelRightClose, PanelRightOpen, RotateCcw } from "lucide-react";
 import { fetchGraph } from "./api/client";
 import { canvasKey, connectedTaskIds, defaultGateFocusId, laneFocusTaskIds, visibleTaskIds, type ViewSpec } from "./graph/projection";
 import { laneBandRect, laneLabelTop, layoutGraph, type GraphLayout } from "./graph/layout";
@@ -146,7 +146,7 @@ export default function App() {
             <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} fitView fitViewOptions={{ padding: 0.16 }} minZoom={0.55} maxZoom={1.55} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
               <Background color="#d8d6ce" gap={24} size={1} />
               <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} /></ViewportPortal>
-              <CanvasControls />
+              <Controls position="bottom-left" showInteractive={false} />
             </ReactFlow>
           </div>
         </div>
@@ -214,15 +214,6 @@ function Inspector({ fixture, task, gateId, onLane, onGate }: { fixture: Workspa
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) { return <section className="inspector-section"><h3>{title}</h3>{children}</section>; }
-
-function CanvasControls() {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
-  return <Panel position="bottom-left" className="canvas-controls">
-    <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => { void zoomIn({ duration: 160 }); }}><Plus size={17} /></button>
-    <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => { void zoomOut({ duration: 160 }); }}><Minus size={17} /></button>
-    <button type="button" aria-label="Fit view" title="Fit view" onClick={() => { void fitView({ padding: 0.16, duration: 180 }); }}><Maximize size={15} /></button>
-  </Panel>;
-}
 
 function CanvasOverlay({ graph, layout, view, navigate }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void }) {
   const focusedLaneId = view.kind === "lane" ? view.id : undefined;
