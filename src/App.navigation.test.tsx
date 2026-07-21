@@ -15,9 +15,8 @@ vi.mock("./graph/layout", () => ({
 }));
 vi.mock("@xyflow/react", () => ({
   Background: () => null,
-  Controls: () => React.createElement("div", { "data-testid": "controls" }),
   Panel: ({ children }: { children: React.ReactNode }) => React.createElement("div", null, children),
-  ReactFlow: ({ viewport, onViewportChange }: { viewport: { x: number; y: number; zoom: number }; onViewportChange: (viewport: { x: number; y: number; zoom: number }) => void }) => React.createElement("button", { "aria-label": "Simulate viewport change", "data-testid": "graph", "data-zoom": viewport.zoom, onClick: () => onViewportChange({ x: 12, y: 24, zoom: 1.25 }) }),
+  ReactFlow: ({ children }: { children: React.ReactNode }) => React.createElement("div", { "data-testid": "graph" }, React.createElement("div", { className: "react-flow__viewport" }, children)),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
   useReactFlow: () => ({ zoomIn: vi.fn(), zoomOut: vi.fn(), fitView: vi.fn() }),
 }));
@@ -47,11 +46,12 @@ describe("Home navigation entry points", () => {
     expect(screen.getByRole("heading", { name: pilotReadyFixture.workspace.name })).toBeTruthy();
   });
 
-  it("keeps the rendered canvas synchronized with viewport changes", async () => {
+  it("changes the rendered viewport through the app-owned zoom controls", async () => {
     render(<App />);
-    const canvas = await screen.findByRole("button", { name: "Simulate viewport change" });
-    expect(canvas.getAttribute("data-zoom")).toBe("1");
-    fireEvent.click(canvas);
-    await waitFor(() => expect(canvas.getAttribute("data-zoom")).toBe("1.25"));
+    const zoom = await screen.findByRole("status", { name: "Current zoom" });
+    expect(zoom.textContent).toBe("100%");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    await waitFor(() => expect(zoom.textContent).toBe("120%"));
+    expect(document.querySelector<HTMLElement>(".react-flow__viewport")?.style.transform).toContain("scale(1.2)");
   });
 });
