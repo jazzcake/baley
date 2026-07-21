@@ -43,6 +43,16 @@ describe("phase-aware graph layout", () => {
     expect(gate.x + 210).toBeLessThanOrEqual(validate.x);
   });
 
+  it("keeps sibling tasks in the same layer 4px apart", async () => {
+    const layout = await layoutGraph(
+      pilotReadyFixture,
+      new Set(pilotReadyFixture.tasks.map((task) => task.id)),
+    );
+    const pilotUi = layout.taskPositions.get("pilot-ui")!;
+    const accessibility = layout.taskPositions.get("a11y")!;
+    expect(Math.abs(pilotUi.y - accessibility.y) - NODE_HEIGHT).toBe(4);
+  });
+
   it("projects a focused lane band across the full virtual canvas", async () => {
     const layout = await layoutGraph(
       pilotReadyFixture,

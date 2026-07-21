@@ -66,7 +66,7 @@ async function layoutPhase(
       layoutOptions: {
         "elk.algorithm": "layered",
         "elk.direction": "RIGHT",
-        "elk.spacing.nodeNode": "36",
+        "elk.spacing.nodeNode": "4",
         "elk.layered.spacing.nodeNodeBetweenLayers": "70",
         "elk.padding": "[top=0,left=0,bottom=0,right=0]",
       },

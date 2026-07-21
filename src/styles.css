@@ -110,12 +110,6 @@ body { background: #f6f7fb; }
 .react-flow__controls-button { width: 28px; height: 28px; border-bottom-color: #e6e7eb; color: #323338; cursor: pointer; }
 .react-flow__controls-button:hover { background: #f0f1f5; }
 .react-flow__controls-button:focus-visible { position: relative; z-index: 1; outline: 2px solid #0073ea; outline-offset: -2px; }
-.canvas-controls { position: absolute; left: 15px; bottom: 15px; z-index: 20; display: grid; grid-template-columns: repeat(3,28px) auto; overflow: hidden; border: 1px solid #c5c7d0; border-radius: 8px; background: #fff; box-shadow: 0 3px 12px rgba(9,30,66,.1); }
-.canvas-controls button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-right: 1px solid #e6e7eb; background: #fff; color: #323338; cursor: pointer; }
-.canvas-controls button:hover:not(:disabled) { background: #f0f1f5; }
-.canvas-controls button:disabled { color: #b8bbc5; cursor: not-allowed; }
-.canvas-controls button:focus-visible { position: relative; z-index: 1; outline: 2px solid #0073ea; outline-offset: -2px; }
-.canvas-controls output { min-width: 44px; display: grid; place-items: center; padding: 0 7px; color: #676879; font-family: 'DM Mono'; font-size: 9px; }
 .evidence-copy { display: block; color: #545866; font-size: 11px; line-height: 1.6; white-space: pre-wrap; }
 .evidence-row { padding: 9px 0; border-bottom: 1px solid #eceef3; }
 .evidence-row:last-child { border-bottom: 0; }

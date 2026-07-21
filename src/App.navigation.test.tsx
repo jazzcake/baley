@@ -15,8 +15,9 @@ vi.mock("./graph/layout", () => ({
 }));
 vi.mock("@xyflow/react", () => ({
   Background: () => null,
+  Controls: () => React.createElement("div", { "data-testid": "controls" }),
   Panel: ({ children }: { children: React.ReactNode }) => React.createElement("div", null, children),
-  ReactFlow: ({ children }: { children: React.ReactNode }) => React.createElement("div", { "data-testid": "graph" }, React.createElement("div", { className: "react-flow__viewport" }, children)),
+  ReactFlow: ({ children, viewport, fitView, panOnDrag }: { children: React.ReactNode; viewport?: unknown; fitView?: unknown; panOnDrag?: boolean }) => React.createElement("div", { "data-testid": "graph", "data-controlled": String(Boolean(viewport)), "data-auto-fit": String(Boolean(fitView)), "data-drag-disabled": String(panOnDrag === false) }, children),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
   useReactFlow: () => ({ zoomIn: vi.fn(), zoomOut: vi.fn(), fitView: vi.fn() }),
 }));
@@ -46,16 +47,12 @@ describe("Home navigation entry points", () => {
     expect(screen.getByRole("heading", { name: pilotReadyFixture.workspace.name })).toBeTruthy();
   });
 
-  it("changes the rendered viewport through the app-owned zoom controls", async () => {
+  it("uses React Flow's native uncontrolled draggable viewport", async () => {
     render(<App />);
-    const zoom = await screen.findByRole("status", { name: "Current zoom" });
-    const canvas = document.querySelector<HTMLElement>(".graph-canvas")!;
-    Object.defineProperty(canvas, "clientWidth", { configurable: true, value: 1200 });
-    Object.defineProperty(canvas, "clientHeight", { configurable: true, value: 700 });
-    expect(zoom.textContent).toBe("100%");
-    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
-    await waitFor(() => expect(zoom.textContent).toBe("120%"));
-    expect(document.querySelector<HTMLElement>(".react-flow__viewport")?.style.transform).toContain("scale(1.2)");
-    expect(document.querySelector<HTMLElement>(".react-flow__viewport")?.style.transform).not.toContain("NaN");
+    const canvas = await screen.findByTestId("graph");
+    expect(canvas.getAttribute("data-controlled")).toBe("false");
+    expect(canvas.getAttribute("data-auto-fit")).toBe("false");
+    expect(canvas.getAttribute("data-drag-disabled")).toBe("false");
+    expect(screen.getByTestId("controls")).toBeTruthy();
   });
 });
