@@ -17,7 +17,7 @@ vi.mock("@xyflow/react", () => ({
   Background: () => null,
   Controls: () => React.createElement("div", { "data-testid": "controls" }),
   Panel: ({ children }: { children: React.ReactNode }) => React.createElement("div", null, children),
-  ReactFlow: () => React.createElement("div", { "data-testid": "graph" }),
+  ReactFlow: ({ viewport, onViewportChange }: { viewport: { x: number; y: number; zoom: number }; onViewportChange: (viewport: { x: number; y: number; zoom: number }) => void }) => React.createElement("button", { "aria-label": "Simulate viewport change", "data-testid": "graph", "data-zoom": viewport.zoom, onClick: () => onViewportChange({ x: 12, y: 24, zoom: 1.25 }) }),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
   useReactFlow: () => ({ zoomIn: vi.fn(), zoomOut: vi.fn(), fitView: vi.fn() }),
 }));
@@ -45,5 +45,13 @@ describe("Home navigation entry points", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Go to Workspace Home" }));
     await waitFor(() => expect(window.location.pathname + window.location.search).toBe("/"));
     expect(screen.getByRole("heading", { name: pilotReadyFixture.workspace.name })).toBeTruthy();
+  });
+
+  it("keeps the rendered canvas synchronized with viewport changes", async () => {
+    render(<App />);
+    const canvas = await screen.findByRole("button", { name: "Simulate viewport change" });
+    expect(canvas.getAttribute("data-zoom")).toBe("1");
+    fireEvent.click(canvas);
+    await waitFor(() => expect(canvas.getAttribute("data-zoom")).toBe("1.25"));
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Background, Controls, ReactFlow, ViewportPortal, type Edge, type Node } from "@xyflow/react";
+import { Background, Controls, ReactFlow, ViewportPortal, type Edge, type Node, type Viewport } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ChevronRight, PanelRightClose, PanelRightOpen, RotateCcw } from "lucide-react";
 import { fetchGraph } from "./api/client";
@@ -33,6 +33,7 @@ export default function App() {
   const [layout, setLayout] = useState<GraphLayout | undefined>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
+  const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
   const visible = useMemo(() => visibleTaskIds(graph, view), [graph, view]);
   const laneFocus = useMemo(
     () => view.kind === "lane" ? laneFocusTaskIds(graph, view.id) : undefined,
@@ -143,7 +144,7 @@ export default function App() {
         <div className="graph-wrap">
           <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1>{view.kind === "multi" ? graph.workspace.name : view.kind === "lane" ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane` : `${graph.gates.find((gate) => gate.id === view.id)?.name ?? "Unknown"} gate`}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas">
-            <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} fitView fitViewOptions={{ padding: 0.16 }} minZoom={0.55} maxZoom={1.55} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
+            <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} viewport={viewport} onViewportChange={setViewport} onNodeClick={(_, node) => setSelectedId(node.id)} fitView fitViewOptions={{ padding: 0.16 }} minZoom={0.55} maxZoom={1.55} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
               <Background color="#d8d6ce" gap={24} size={1} />
               <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} /></ViewportPortal>
               <Controls position="bottom-left" showInteractive={false} />
