@@ -8,7 +8,8 @@ const LANE_LABEL_WIDTH = 180;
 const PHASE_PADDING_X = 32;
 const PHASE_HEADER_HEIGHT = 74;
 export const LANE_HEIGHT = 154;
-export const LANE_BAND_INSET_Y = 40;
+export const LANE_BAND_INSET_Y = 18;
+export const LANE_CONTENT_BREATHING_ROOM_Y = 40;
 export const LANE_LABEL_HEIGHT = 52;
 const GATE_CORRIDOR_WIDTH = 250;
 const MIN_PHASE_WIDTH = 340;
@@ -102,7 +103,10 @@ export async function layoutGraph(
   const phaseRects: LayoutRect[] = [];
   const laneHeights = new Map(fixture.lanes.map((lane) => {
     const contentHeight = Math.max(NODE_HEIGHT, ...localLayouts.map((local) => local.laneContentHeights.get(lane.id) ?? 0));
-    return [lane.id, Math.max(LANE_HEIGHT, contentHeight + LANE_BAND_INSET_Y * 2)] as const;
+    return [lane.id, Math.max(
+      LANE_HEIGHT,
+      contentHeight + (LANE_BAND_INSET_Y + LANE_CONTENT_BREATHING_ROOM_Y) * 2,
+    )] as const;
   }));
   const lanePositions = new Map<string, number>();
   let cursorY = PHASE_HEADER_HEIGHT;

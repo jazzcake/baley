@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pilotReadyFixture } from "../fixtures/pilot-ready";
-import { laneBandRect, laneLabelTop, layoutGraph, LANE_BAND_INSET_Y, LANE_HEIGHT, LANE_LABEL_HEIGHT, NODE_HEIGHT, NODE_WIDTH, rectanglesOverlap } from "./layout";
+import { laneBandRect, laneLabelTop, layoutGraph, LANE_BAND_INSET_Y, LANE_CONTENT_BREATHING_ROOM_Y, LANE_HEIGHT, LANE_LABEL_HEIGHT, NODE_HEIGHT, NODE_WIDTH, rectanglesOverlap } from "./layout";
 
 describe("phase-aware graph layout", () => {
   it("keeps task nodes inside their phase containers without overlap", async () => {
@@ -26,8 +26,8 @@ describe("phase-aware graph layout", () => {
       const point = layout.taskPositions.get(task.id)!;
       const laneTop = layout.lanePositions.get(task.laneId)!;
       const laneHeight = layout.laneHeights.get(task.laneId)!;
-      expect(point.y).toBeGreaterThanOrEqual(laneTop + LANE_BAND_INSET_Y);
-      expect(point.y + NODE_HEIGHT).toBeLessThanOrEqual(laneTop + laneHeight - LANE_BAND_INSET_Y);
+      expect(point.y).toBeGreaterThanOrEqual(laneTop + LANE_BAND_INSET_Y + LANE_CONTENT_BREATHING_ROOM_Y);
+      expect(point.y + NODE_HEIGHT).toBeLessThanOrEqual(laneTop + laneHeight - LANE_BAND_INSET_Y - LANE_CONTENT_BREATHING_ROOM_Y);
     }
   });
 
@@ -56,6 +56,9 @@ describe("phase-aware graph layout", () => {
       width: layout.width,
       height: layout.laneHeights.get("client")! - LANE_BAND_INSET_Y * 2,
     });
+    expect(band.height).toBeGreaterThanOrEqual(
+      LANE_CONTENT_BREATHING_ROOM_Y * 2 + NODE_HEIGHT,
+    );
     expect(laneLabelTop(layout, "client")).toBe(
       layout.lanePositions.get("client")! + (layout.laneHeights.get("client")! - LANE_LABEL_HEIGHT) / 2,
     );
