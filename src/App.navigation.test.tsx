@@ -49,9 +49,13 @@ describe("Home navigation entry points", () => {
   it("changes the rendered viewport through the app-owned zoom controls", async () => {
     render(<App />);
     const zoom = await screen.findByRole("status", { name: "Current zoom" });
+    const canvas = document.querySelector<HTMLElement>(".graph-canvas")!;
+    Object.defineProperty(canvas, "clientWidth", { configurable: true, value: 1200 });
+    Object.defineProperty(canvas, "clientHeight", { configurable: true, value: 700 });
     expect(zoom.textContent).toBe("100%");
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
     await waitFor(() => expect(zoom.textContent).toBe("120%"));
     expect(document.querySelector<HTMLElement>(".react-flow__viewport")?.style.transform).toContain("scale(1.2)");
+    expect(document.querySelector<HTMLElement>(".react-flow__viewport")?.style.transform).not.toContain("NaN");
   });
 });

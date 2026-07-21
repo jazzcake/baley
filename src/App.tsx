@@ -76,15 +76,25 @@ export default function App() {
     const canvas = canvasRef.current;
     const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.zoom * factor));
     if (!canvas || nextZoom === current.zoom) return current;
-    const centerX = canvas.clientWidth / 2;
-    const centerY = canvas.clientHeight / 2;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (width <= 0 || height <= 0) return current;
+    if (layout?.width && layout.height) {
+      return {
+        x: (width - layout.width * nextZoom) / 2,
+        y: (height - layout.height * nextZoom) / 2,
+        zoom: nextZoom,
+      };
+    }
+    const centerX = width / 2;
+    const centerY = height / 2;
     const graphX = (centerX - current.x) / current.zoom;
     const graphY = (centerY - current.y) / current.zoom;
     return { x: centerX - graphX * nextZoom, y: centerY - graphY * nextZoom, zoom: nextZoom };
   });
   const fitCanvas = () => {
     const canvas = canvasRef.current;
-    if (!canvas || !layout?.width || !layout.height) return;
+    if (!canvas || !layout?.width || !layout.height || canvas.clientWidth <= 0 || canvas.clientHeight <= 0) return;
     const padding = 32;
     const availableWidth = Math.max(1, canvas.clientWidth - padding * 2);
     const availableHeight = Math.max(1, canvas.clientHeight - padding * 2);
@@ -176,7 +186,7 @@ export default function App() {
         <div className="graph-wrap">
           <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1>{view.kind === "multi" ? graph.workspace.name : view.kind === "lane" ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane` : `${graph.gates.find((gate) => gate.id === view.id)?.name ?? "Unknown"} gate`}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas" ref={canvasRef}>
-            <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} viewport={viewport} onViewportChange={setViewport} onNodeClick={(_, node) => setSelectedId(node.id)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
+            <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} viewport={viewport} onNodeClick={(_, node) => setSelectedId(node.id)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} panOnDrag={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} proOptions={{ hideAttribution: true }}>
               <Background color="#d8d6ce" gap={24} size={1} />
               <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} /></ViewportPortal>
             </ReactFlow>
