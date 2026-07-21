@@ -250,14 +250,21 @@ function CanvasControls({ layout }: { layout?: GraphLayout }) {
     }
     try {
       const result = await panZoom.setViewport(viewport);
+      const latest = store.getState();
+      const renderer = latest.domNode?.querySelector<HTMLElement & { __zoom?: unknown }>(".react-flow__renderer");
+      const viewportElement = latest.domNode?.querySelector<HTMLElement>(".react-flow__viewport");
+      if (result && renderer) renderer.__zoom = result;
+      store.setState({ transform: [viewport.x, viewport.y, viewport.zoom] });
+      if (viewportElement) viewportElement.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
       window.requestAnimationFrame(() => {
         const after = store.getState();
-        const viewportElement = after.domNode?.querySelector<HTMLElement>(".react-flow__viewport");
+        const renderedViewport = after.domNode?.querySelector<HTMLElement>(".react-flow__viewport");
         traceCanvas(`${action}:applied`, {
           result,
           store: { x: after.transform[0], y: after.transform[1], zoom: after.transform[2] },
           panZoom: after.panZoom?.getViewport(),
-          domTransform: viewportElement?.style.transform,
+          domTransform: renderedViewport?.style.transform,
+          rendererZoomStateUpdated: Boolean(result && renderer),
         });
       });
     } catch (error) {
