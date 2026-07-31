@@ -14,13 +14,14 @@ const (
 
 func TestBuildCreatesDeterministicBootstrapAndFileManifest(t *testing.T) {
 	plan, err := Build(validInput())
-	if err != nil || plan.Bootstrap.Name != "project.bootstrap" || plan.Bootstrap.Arguments.ClientProjectID != projectID || plan.Bootstrap.Envelope.IdempotencyKey != projectID || plan.Bootstrap.Envelope.ExecutedByActorID != "agent" || plan.Bootstrap.Envelope.InitiatedByActorID != "human" || len(plan.Files) != 9 || !plan.Ready {
+	if err != nil || plan.Bootstrap.Name != "project.bootstrap" || plan.Bootstrap.Arguments.ClientProjectID != projectID || plan.Bootstrap.Envelope.IdempotencyKey != projectID || plan.Bootstrap.Envelope.ExecutedByActorID != "agent" || plan.Bootstrap.Envelope.InitiatedByActorID != "human" || len(plan.Files) != 10 || !plan.Ready {
 		t.Fatalf("init manifest failed: %+v %v", plan, err)
 	}
 	wantPaths := []string{
 		".baley-init-state.json", ".rgignore", "baley.yaml", "task-records/README.md", "task-records/_templates/completion-report.md",
 		"task-records/_templates/detailed-plan.md", "task-records/_templates/handoff.md",
-		"task-records/_templates/independent-agent-review.md", "task-records/_templates/review-response.md",
+		"task-records/_templates/independent-agent-review.md", "task-records/_templates/pilot-measurement.md",
+		"task-records/_templates/review-response.md",
 	}
 	if got := filePaths(plan.Files); !reflect.DeepEqual(got, wantPaths) {
 		t.Fatalf("manifest paths drift: %v", got)
@@ -99,7 +100,7 @@ func TestBuildRecoversClientProjectIDAfterCrashFromDurableState(t *testing.T) {
 	}
 	input := Input{ExistingFiles: map[string]string{recoveryStatePath: fileByPath(initial.Files, recoveryStatePath).DesiredContent}}
 	resumed, err := Build(input)
-	if err != nil || resumed.Bootstrap.Arguments.ClientProjectID != projectID || resumed.Bootstrap.Envelope.IdempotencyKey != projectID || resumed.Bootstrap.Arguments.WorkspaceID != workspaceID || resumed.Bootstrap.Envelope.ExecutedByActorID != "agent" || fileByPath(resumed.Files, recoveryStatePath).Action != FileKeep || resumed.Recovery[0].Action != "execute_or_retry_project_bootstrap" {
+	if err != nil || resumed.Bootstrap.Arguments.ClientProjectID != projectID || resumed.Bootstrap.Envelope.IdempotencyKey != projectID || resumed.Bootstrap.Arguments.WorkspaceID != workspaceID || resumed.Bootstrap.Envelope.ExecutedByActorID != "agent" || fileByPath(resumed.Files, recoveryStatePath).Action != FileKeep || resumed.Recovery[0].Action != "create_workspace_owner_and_register_repository" {
 		t.Fatalf("durable retry identity not recovered: %+v %v", resumed, err)
 	}
 }
@@ -110,6 +111,17 @@ func TestBuildRejectsTamperedRecoveryState(t *testing.T) {
 	content = strings.Replace(content, "https://baley.example.com", "https://attacker.example.com", 1)
 	if _, err := Build(Input{ExistingFiles: map[string]string{recoveryStatePath: content}}); err != ErrInvalidInput {
 		t.Fatalf("tampered retry state accepted: %v", err)
+	}
+}
+
+func TestBuildRejectsCallerValuesThatConflictWithRecoveryState(t *testing.T) {
+	initial, _ := Build(validInput())
+	state := fileByPath(initial.Files, recoveryStatePath).DesiredContent
+	input := validInput()
+	input.WorkspaceID = "018f4c18-7a3b-7cc1-8b1a-b9f8f03f4599"
+	input.ExistingFiles = map[string]string{recoveryStatePath: state}
+	if _, err := Build(input); err != ErrInvalidInput {
+		t.Fatalf("recovery identity conflict accepted: %v", err)
 	}
 }
 

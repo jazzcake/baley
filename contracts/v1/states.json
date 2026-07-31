@@ -18,6 +18,14 @@
       ["implemented", "discarded"]
     ]
   },
+  "backlogItem": {
+    "values": ["active", "promoted", "discarded"],
+    "terminal": ["promoted", "discarded"],
+    "transitions": [
+      ["active", "promoted"],
+      ["active", "discarded"]
+    ]
+  },
   "lane": {
     "values": ["active", "closed_out", "discarded"],
     "terminal": ["closed_out", "discarded"]
@@ -36,7 +44,14 @@
   },
   "taskRecord": {
     "values": ["reported_uncommitted", "committed_unverified", "verified"],
-    "types": ["detailed-plan", "handoff", "independent-agent-review", "review-response", "completion-report"]
+    "types": ["detailed-plan", "handoff", "independent-agent-review", "review-response", "completion-report", "pilot-measurement"]
+  },
+  "taskAcceptance": {
+    "requestedModes": ["delegated", "human_required", "inherit"],
+    "effectiveModes": ["delegated", "human_required"],
+    "verificationVerdicts": ["passed", "failed", "unavailable"],
+    "reviewVerdicts": ["pass", "fail", "unavailable"],
+    "referenceKinds": ["task_record", "run", "commit_reference", "artifact"]
   },
   "commitReference": {
     "relations": ["base", "produced", "reviewed", "superseded"],

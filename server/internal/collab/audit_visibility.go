@@ -293,11 +293,13 @@ func auditCommandEventRelation(command, eventType string, activeGate bool) (bool
 }
 
 var secondaryAuditEvents = map[string][]string{
-	"project.bootstrap":  {"workspace.created", "repository.registered"},
-	"workspace.activate": {"phase.activated"},
-	"workspace.close":    {"phase.completed"},
-	"gate.pass":          {"phase.completed", "phase.activated"},
-	"run.start":          {"task.started"},
+	"backlog.promote":      {"task.created"},
+	"project.bootstrap":    {"workspace.created", "repository.registered"},
+	"workspace.activate":   {"phase.activated"},
+	"workspace.close":      {"phase.completed"},
+	"gate.pass":            {"phase.completed", "phase.activated"},
+	"run.start":            {"task.started"},
+	"task.evidence.report": {"task.auto_confirmed"},
 }
 
 func eventRequiresTaskScope(eventType string) bool {
@@ -349,11 +351,23 @@ var auditEventImportance = map[string]bool{
 	"task.rework_started":                 true,
 	"task.blocked":                        true,
 	"task.unblocked":                      true,
+	"task.acceptance_policy_changed":      true,
+	"task.acceptance_mode_escalated":      true,
+	"task.acceptance_evidence_reported":   true,
+	"task.auto_confirmed":                 true,
+	"backlog.created":                     false,
+	"backlog.updated":                     false,
+	"backlog.moved":                       true,
+	"backlog.reordered":                   true,
+	"backlog.discarded":                   true,
+	"backlog.promoted":                    true,
 	"dependency.connected":                true,
 	"dependency.disconnected":             true,
 	"dependency.patched":                  true,
 	"gate.task_attached":                  true,
 	"gate.task_detached":                  true,
+	"gate.entry_task_attached":            true,
+	"gate.entry_task_detached":            true,
 	"gate.task_passed":                    true,
 	"gate.task_pass_revoked":              true,
 	"gate.passed":                         true,

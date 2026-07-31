@@ -24,6 +24,7 @@ export const pilotReadyFixture: WorkspaceFixture = {
     { id: "findings", publicId: 109, laneId: "research", phaseId: "build", title: "결과 정리", description: "학습과 후속 제안을 기록합니다.", status: "confirmed" },
     { id: "user-test", publicId: 110, laneId: "client", phaseId: "validate", title: "사용자 테스트", description: "Pilot Ready 통과 후 실제 사용성을 검증합니다.", status: "pending" },
   ],
+  backlogItems: [],
   dependencies: [
     { id: "d1", fromTaskId: "api-design", toTaskId: "api-build" },
     { id: "d2", fromTaskId: "screen-design", toTaskId: "pilot-ui" },
@@ -31,7 +32,7 @@ export const pilotReadyFixture: WorkspaceFixture = {
     { id: "d4", fromTaskId: "research", toTaskId: "experiment" },
     { id: "d5", fromTaskId: "experiment", toTaskId: "findings" },
   ],
-  gates: [{ id: "pilot-ready", name: "Pilot Ready", fromPhaseId: "build", toPhaseId: "validate", status: "open" }],
+  gates: [{ id: "pilot-ready", publicId: 1, alias: "pilot-ready", name: "Pilot Ready", fromPhaseId: "build", toPhaseId: "validate", status: "open" }],
   gateLinks: [
     { gateId: "pilot-ready", taskId: "api-build", kind: "required" },
     { gateId: "pilot-ready", taskId: "pilot-ui", kind: "required" },

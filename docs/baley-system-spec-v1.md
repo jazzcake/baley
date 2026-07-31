@@ -171,16 +171,22 @@ task-records/
 │  ├─ handoff.md
 │  ├─ independent-agent-review.md
 │  ├─ review-response.md
-│  └─ completion-report.md
+│  ├─ completion-report.md
+│  └─ pilot-measurement.md
 └─ task-104/
    ├─ detailed-plan-01.md
    ├─ handoff-01.md
    ├─ independent-agent-review-01.md
    ├─ review-response-01.md
-   └─ completion-report-01.md
+   ├─ completion-report-01.md
+   └─ pilot-measurement-01.md
 ```
 
 경로명은 프로젝트가 바꿀 수 있으며 Baley는 특정 디렉터리 이름을 강제하지 않는다.
+허용 Record type은 `detailed-plan`, `handoff`, `independent-agent-review`,
+`review-response`, `completion-report`, `pilot-measurement`다.
+`pilot-measurement`는 Pilot sample을 append-only로 남기는 측정 Record이며,
+등록 후 수정 대신 새 Record와 correction Event 참조를 만든다.
 
 ### 5.3 검색 제외
 
@@ -287,6 +293,31 @@ Lane Group과 Lane fork는 V1에 포함하지 않는다.
 
 Lane `closed_out`과 `discarded`는 업무 전선의 전략적 종료이므로 사람 승인 진술이 필요하다. Operator는 종료를 preview하고 실행할 수 있지만 승인 주체가 될 수는 없다.
 
+### 7.4 Lane Backlog
+
+Lane Backlog는 Phase를 정하기 전 후보를 보존하는 별도 `BacklogItem` 모델이다.
+Task의 `phase_id`를 nullable로 만들지 않는다.
+
+```text
+BacklogItem
+id, workspace_id, public_id, lane_id, title, description
+status: active | promoted | discarded
+position nullable
+promoted_task_id nullable
+discard_reason nullable
+```
+
+- active item만 lane-scoped positive position을 가지며 lane 안에서 연속 정렬한다.
+- 표시 ID는 `B#<publicId>`이고 Task public counter와 독립이다.
+- promoted/discarded item은 terminal이며 수정·이동·재정렬할 수 없다.
+- discard는 audited soft transition이며 Task terminal reason을 만들지 않는다.
+- active Backlog가 남은 Lane은 close-out/discard할 수 없다.
+- Workspace close 시 active Backlog는 exact acknowledgement가 필요한 warning이다.
+- promote는 lane/title/description을 복사하고 명시 target Phase, parent,
+  predecessor/successor와 terminal reason을 기존 `task.create` planner로 검증한다.
+- Task/dependencies, Backlog transition, counters, Events와 revision은 하나의
+  transaction이며 Gate condition/entry binding은 자동 변경하지 않는다.
+
 ## 8. Task
 
 ### 8.1 식별자
@@ -343,6 +374,9 @@ pending → in_progress → implemented → confirmed
 
 - 첫 작업 Run을 시작하면 Operator가 Task를 `in_progress`로 자동 전환한다.
 - 구현 주체가 최소 assessment를 남기고 `implemented`를 선언한다.
+- 하나의 구현 결과가 관련 Task의 범위를 완전히 충족할 수 있다. 이 경우 구현 주체는 같은 commit·test/build·독립 리뷰 증거를 명시한 assessment로 각 Task를 정상 `implemented` 상태까지 진행한 뒤 사람 확인을 요청한다. 사람 확인은 `pending` 또는 `in_progress`에서 `implemented`로의 전이를 대신하지 않는다.
+- 다른 변경 때문에 Task가 불필요해진 경우는 구현 완료가 아니므로 `confirmed`가 아니라 `task.discard` 판단 대상이다. 대체된 경우 discard 사유에 `superseded by #<id>`를 기록한다. 일부만 충족됐거나 불확실한 Task는 열린 상태로 남는다.
+- 이미 `implemented`인 관련 Task도 assessment와 증거가 acceptance를 실제로 충족하는지 다시 확인한다. 부족하면 Agent가 `task.rework`로 `in_progress`에 돌리고 남은 일을 기록한다. 이미 confirmed/discarded인 terminal Task에 새 일이 필요하면 새 follow-up Task를 만든다.
 - Baley는 구현 의미를 판정하지 않고 허용된 상태 전이와 기록 참조만 확인한다.
 - 사람의 자연어 승인을 LLM이 명령으로 전달하면 `confirmed`가 된다.
 - `confirmed`와 `discarded`는 V1 terminal 상태다.
@@ -449,9 +483,10 @@ implemented Task를 rework해 `in_progress`로 되돌리면 이미 시작된 후
 Gate는 특정 Phase의 자식이나 종료 지점이 아니라 `fromPhase → toPhase` 전이 규칙이다.
 
 ```text
-id UUID
+id stable internal identifier
 workspace_id
-slug
+public_id INTEGER
+alias nullable
 name
 from_phase_id
 to_phase_id
@@ -461,12 +496,23 @@ passed_by nullable
 created_at, updated_at
 ```
 
+`public_id`는 Workspace 안에서 단조 증가하며 재사용하지 않고 사람에게는
+`G#<public_id>`로 표시한다. `alias`는 선택적인 소문자 slug이며 Workspace 안에서
+대소문자를 무시하고 유일하다. 기존 `gateId`/`id`는 Event, foreign key, URL 호환성을
+위한 내부 안정 식별자로 유지한다.
+
+Gate reference 입력은 내부 `gateId`, `G#<public_id>`, alias를 모두 허용한다.
+정규형 `G#[1-9][0-9]*` namespace는 public reference 전용이므로 새 내부 `gateId`로
+생성할 수 없다. 예약된 `G#<number>` 문법을 먼저 해석하며 일치하는 public number가
+없으면 내부 ID나 alias로 fallback하지 않는다. 그 다음 정확한 내부 ID와 alias를 해석한다. HTTP, CLI, MCP,
+Viewer 출력은 public number와 내부 gateId를 함께 제공하며 alias가 있으면 같이 제공한다.
+
 V1에서는 인접한 Phase만 연결하며 각 Phase에는 outgoing Gate가 최대 하나다.
 첫 Phase를 제외한 각 Phase의 incoming Gate도 최대 하나다. 아직 active가 아닌 미래 Phase와 Gate를 미리 구성할 수 있지만 전이 mutation은 현재 active Phase의 outgoing Gate에만 허용한다.
 
-### 10.2 Gate–Task 연결
+### 10.2 Gate condition과 entry Task 연결
 
-V1 Gate에 연결된 모든 Task는 전이 조건이다. `required`, `reference`, `unlocks` 타입은 사용하지 않는다.
+Gate condition과 Gate entry는 별도 관계다. condition은 전이 준비도를 결정하고, entry는 통과 후 `toPhase`에서 다음 작업 후보로 보여 줄 Task만 지정한다. legacy `reference` 관계는 사용하지 않는다.
 
 ```text
 id UUID
@@ -492,6 +538,15 @@ pass_reason nullable
 - intentional leaf Task를 Gate에 attach할 때는 `clearTerminalReason=true`를 같은 transaction에 포함해야 한다.
 - 조건 변경마다 `criteria_revision`을 증가시키고 `gate.status`의 condition snapshot hash를 갱신한다.
 
+`gate_entry_tasks`는 `workspace_id`, `gate_id`, `task_id`, `selection_source=explicit`을 저장한다.
+
+- entry Task는 Gate의 `toPhase`에 속해야 한다.
+- entry binding은 Task를 시작하거나 dependency를 추가·제거하지 않고 Gate readiness에도 영향을 주지 않는다.
+- explicit binding이 하나 이상이면 그 집합을 사용한다.
+- explicit binding이 없으면 `toPhase` 안에서 같은 Phase의 incoming dependency가 없는 DAG root 전체를 public ID 순으로 `selectionSource=automatic`으로 투영한다. automatic entry는 DB에 기록하지 않는다.
+- passed Gate의 entry binding은 변경할 수 없다.
+- Viewer는 condition을 Task → Gate 방향으로, entry를 Gate → Task `unlocks` 방향으로 구분한다.
+
 ### 10.3 Gate 상태
 
 ```text
@@ -501,7 +556,7 @@ ready: 모든 연결 Task가 confirmed 또는 passed
 passed: 사람이 승인해 Phase 전이가 완료됨
 ```
 
-`ready`는 별도 ApprovalRequest 없이 **Gate 통과 승인 대기**를 의미한다. `gate.status`는 `decisionRequired=gate.pass`, Workspace revision, Gate criteria revision과 condition snapshot hash를 반환한다.
+`ready`는 별도 ApprovalRequest 없이 **Gate 통과 승인 대기**를 의미한다. `gate.status`는 `decisionRequired=gate.pass`, Workspace revision, Gate criteria revision과 condition 및 resolved entry 집합을 결속한 snapshot hash를 반환한다.
 
 Gate pass transaction:
 
@@ -514,7 +569,7 @@ Gate pass transaction:
 7. Gate pass와 Phase 전이 Event 기록
 8. Workspace revision 증가
 
-`gate.passed` Event에는 통과 당시 연결 Task ID, 각 Task의 `confirmed` 또는 Gate-specific `passed` 근거, pass 사유, 사람 승인 진술 ID와 Workspace revision을 snapshot으로 기록한다. Gate reopen과 rollback이 없는 V1에서 이 Event가 역사적 근거를 보존한다.
+`gate.passed` Event에는 통과 당시 condition Task ID, 각 Task의 `confirmed` 또는 Gate-specific `passed` 근거, resolved entry Task ID와 `explicit|automatic` source, pass 사유, 사람 승인 진술 ID와 Workspace revision을 snapshot으로 기록한다. Gate reopen과 rollback이 없는 V1에서 이 Event가 역사적 근거를 보존한다.
 
 Gate에 연결되지 않은 이전 Phase Task는 전이를 차단하지 않으며 전이 후에도 계속 수행할 수 있다.
 
@@ -798,8 +853,9 @@ executed_command_id UNIQUE
 - 승인 진술은 action, 대상 entity, canonical command payload hash와 Workspace revision에 결속된다. Gate 통과처럼 조건 snapshot이 있는 action은 snapshot hash에도 결속된다.
 - `task_confirm/task_discard`는 Task ID, `lane_close_out/lane_discard`는 Lane ID, `gate_attach_task/gate_pass`는 Gate ID, `gate_pass_task/gate_revoke_task_pass`는 `gate_tasks.id`, `workspace_close`는 Workspace ID를 대상으로 사용한다.
 - 승인 대상 command는 공통 mutation envelope에 `humanApprovalAttestation` payload를 포함한다.
-- 서버는 mutation transaction 안에서 승인 진술과 실행 command를 1:1로 기록한다.
-- 같은 idempotency key와 command hash의 재시도는 같은 결과를 반환할 수 있지만, 승인 진술을 다른 command·action·entity·revision에 재사용할 수 없다.
+- 서버는 mutation transaction 안에서 command별 attestation과 실행 command를 1:1로 기록한다.
+- 같은 idempotency key와 command hash의 재시도는 같은 결과를 반환할 수 있지만, attestation과 command hash를 다른 command·action·entity·revision에 재사용할 수 없다.
+- 하나의 명시적 사람 발화는 바로 앞 decision brief에 열거된 유한한 `task.confirm` outcome 집합을 승인할 수 있다. LLM은 각 command에 fresh preview와 별도 attestation을 만들되 동일하며 비어 있지 않은 `statement_hash`와 `conversation_ref`로 그 승인 집합을 연관시킨다. 다른 action 종류는 별도 승인 질문을 사용한다.
 - V1은 만료되거나 대기 중인 승인 요청을 저장하지 않는다. 장기 비동기 승인 생명주기는 후속 `ApprovalRequest`의 책임이다.
 - V1의 승인은 protocol audit이며 사람 신원을 보안적으로 증명하지 않는다. 실제 신뢰는 단일 사용자 배포 보호와 Skill 준수에 의존한다.
 
@@ -820,7 +876,13 @@ Gate ready
 
 `task.get`, `gate.status`, `workspace.get`과 `decision.list`는 대상 action, 대상 ID, expected Workspace revision, 관련 criteria/condition snapshot hash와 warning을 반환한다. Viewer는 각각 “완료확인 대기”, “Gate 통과 승인 대기”, “Workspace 종료 가능”으로 표시한다.
 
-Operator는 사람 전용 action에 도달하면 실행을 멈추고 이 snapshot을 사람에게 제시한다. 사람이 승인하면 같은 revision과 snapshot에 결속된 `humanApprovalAttestation`으로 mutation을 실행한다. 상태가 바뀌면 승인 진술은 stale conflict다. 여러 사람의 장기 비동기 결재함이 필요해질 때만 후속 버전에서 `ApprovalRequest`를 추가한다.
+Operator는 사람 전용 action에 도달하면 fresh preview를 만든 뒤 실행을 멈춘다. 사람에게는 raw revision/hash 목록보다 결과, 검증, 리뷰와 의사결정에 영향을 주는 잔여 위험을 우선 제시한다. Task 완료 확인은 기본적으로 `#<id>은 <구현 결과>, <test/build 검증>, <독립 리뷰 결과>를 완료했습니다. 완료로 확인할까요?`처럼 묻는다. 여러 Task가 이미 `implemented`이면 각 outcome을 명시한 하나의 질문으로 묶을 수 있다. 명확한 긍정 응답을 승인 진술로 사용하고, 내부적으로 각 command의 현재 revision, command hash와 선택적 snapshot hash에 결속된 별도 `humanApprovalAttestation`으로 순차 실행한다.
+
+공동 승인 질문 전 Operator는 같은 시작 Workspace revision에서 대상마다 write-free `task.confirm` baseline preview를 확보하고 그 group baseline revision을 보존한다. 승인 후 첫 fresh preview revision은 group baseline revision과 같아야 하며, 이후 fresh preview revision은 직전 성공 execute 결과 revision과 같아야 한다. 이 진행 조건을 통과한 뒤 expected revision과 command hash만 제외한 action, target, projected diff, required capability, errors/warnings/advisories 전체와 선택적 decision snapshot을 해당 baseline과 비교해 모두 같을 때만 계속한다. 첫 command 전이나 command 사이의 revision mismatch 또는 다른 비교 차이가 있으면 외부·예상 밖 변경으로 보고 해당 지점에서 멈춰 갱신된 판단 요약으로 다시 승인받는다. V1 서버는 batch mutation을 제공하지 않으므로 앞선 command는 성공하고 뒤 command가 중단될 수 있으며 Operator는 부분 진행을 명확히 보고한다. 여러 사람의 장기 비동기 결재함이 필요해질 때만 후속 버전에서 `ApprovalRequest`를 추가한다.
+
+서버는 각 command의 현재 revision, canonical hash, target, warning acknowledgement와 command별 attestation만 강제한다. 공동 승인 대상의 baseline 동등성, 동일 statement correlation과 앞선 성공 command만으로 이어진 revision chain은 Skill/Operator protocol의 책임이다. 이 묶음을 서버가 원자적으로 강제하려면 별도 batch command 또는 persisted ApprovalRequest가 필요하며 V1 범위에는 두지 않는다.
+
+`dangling_path` 같은 topology warning은 구현 품질 실패가 아니며 Task 확인을 위해 terminal reason을 만들라는 뜻도 아니다. 승인된 확인 command가 정확한 warning acknowledgement를 요구하면 Operator가 이를 audit evidence로 전달하되, warning이 사람의 판단을 실제로 바꿀 때만 사람용 요약에 노출한다.
 
 사람 전용 mutation을 승인 없이 preview하면 서버는 `human_approval_required`와 canonical command hash를 반환한다. 이는 pending row를 만들지 않는 일회성 decision preview다. active Gate 조건 attach처럼 파생 상태가 아닌 제안도 같은 방식으로 승인받는다.
 
@@ -1327,7 +1389,7 @@ Task done/running/blocked/ready
 Lane active/close-out/discard
 Phase.order
 Gate open/ready/passed/reopened
-Gate required/reference/unlocks
+Gate legacy required/reference/unlocks fixture edges
 Execution
 GitBinding
 ```
@@ -1339,9 +1401,10 @@ GitBinding
 - Lane `close-out`은 `closed_out`, `discard`는 `discarded`로 매핑
 - `Phase.order`는 `Phase.position`으로 매핑
 - Gate `reopened`는 제거하며 reopen과 Phase rollback을 지원하지 않음
-- Gate `required` Task만 단일 Gate–Task link로 migration
-- `reference`와 `unlocks` edge 제거
-- 다음 Phase Task는 Phase 활성화로 통제
+- Gate `required` Task는 condition link로 migration
+- `reference` edge는 제거
+- legacy `unlocks` edge는 검증 후 `toPhase` entry binding으로 migration하며, 없으면 DAG root fallback을 사용
+- 다음 Phase Task 실행 가능 여부는 Phase 활성화와 dependency가 계속 통제
 - `Execution`은 `Run`, 결과 Git 관계는 `CommitReference`로 대체
 
 이 문서는 Baley V1 도메인 의미와 불변식의 규범적 정본이다. 정확한 command·상태·diagnostic·capability literal은 [`contracts/v1`](../contracts/v1/README.md)이 정본이다.

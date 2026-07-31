@@ -251,7 +251,7 @@ func validMutationContext(t *testing.T, command string) MutationContext {
 	}
 	context := MutationContext{
 		Mode: MutationPreview, ProjectID: "project", Workspace: workspace, Phase: p1, FromPhase: p1, ToPhase: p2,
-		Phases: []Phase{p1}, Lane: lane, Gate: Gate{ID: "gate", WorkspaceID: workspace.ID, FromPhaseID: p1.ID, ToPhaseID: p2.ID},
+		Phases: []Phase{p1}, Lane: lane, Gate: Gate{ID: "gate", PublicID: 1, WorkspaceID: workspace.ID, FromPhaseID: p1.ID, ToPhaseID: p2.ID},
 		Task: task, Graph: graph, Now: now, Reason: "because", Title: "Updated", Description: "goal", Summary: "summary", NextAction: "next",
 	}
 	switch command {
@@ -272,6 +272,27 @@ func validMutationContext(t *testing.T, command string) MutationContext {
 	case "gate.create":
 	case "task.create":
 		context.Task = Task{ID: "new", PublicID: 3, WorkspaceID: workspace.ID, LaneID: lane.ID, PhaseID: p1.ID, PhasePosition: 1, Title: "New", Status: TaskPending}
+		context.InitialPatch = DependencyPatch{Add: []Dependency{{FromTaskID: "task", ToTaskID: "new"}}}
+	case "backlog.create":
+		position := 1
+		context.Backlog = BacklogItem{ID: "backlog", WorkspaceID: workspace.ID, PublicID: 1, LaneID: lane.ID, Title: "Backlog", Status: BacklogActive, Position: &position}
+	case "backlog.update":
+		position := 1
+		context.Backlog = BacklogItem{ID: "backlog", WorkspaceID: workspace.ID, PublicID: 1, LaneID: lane.ID, Title: "Backlog", Status: BacklogActive, Position: &position}
+	case "backlog.move":
+		position := 1
+		context.Backlog = BacklogItem{ID: "backlog", WorkspaceID: workspace.ID, PublicID: 1, LaneID: "source", Title: "Backlog", Status: BacklogActive, Position: &position}
+	case "backlog.reorder":
+		position := 2
+		context.Backlog = BacklogItem{ID: "backlog", WorkspaceID: workspace.ID, PublicID: 1, LaneID: lane.ID, Title: "Backlog", Status: BacklogActive, Position: &position}
+		context.BacklogItems, context.OrderedBacklogPublicIDs = []BacklogItem{context.Backlog}, []int{1}
+	case "backlog.discard":
+		position := 1
+		context.Backlog = BacklogItem{ID: "backlog", WorkspaceID: workspace.ID, PublicID: 1, LaneID: lane.ID, Title: "Backlog", Status: BacklogActive, Position: &position}
+	case "backlog.promote":
+		position := 1
+		context.Backlog = BacklogItem{ID: "backlog", WorkspaceID: workspace.ID, PublicID: 1, LaneID: lane.ID, Title: "Backlog", Status: BacklogActive, Position: &position}
+		context.Task = Task{ID: "new", PublicID: 3, WorkspaceID: workspace.ID, LaneID: lane.ID, PhaseID: p1.ID, PhasePosition: 1, Title: "Backlog", Status: TaskPending}
 		context.InitialPatch = DependencyPatch{Add: []Dependency{{FromTaskID: "task", ToTaskID: "new"}}}
 	case "task.update":
 	case "task.set_terminal", "task.clear_terminal":
@@ -296,6 +317,27 @@ func validMutationContext(t *testing.T, command string) MutationContext {
 		}
 	case "task.confirm":
 		context.Task.Status = TaskImplemented
+	case "task.acceptance_policy.change":
+		context.AcceptancePolicy = AcceptancePolicy{
+			WorkspaceID: workspace.ID, PolicyVersion: "policy-v2",
+			DefaultMode: AcceptanceDelegated, EvidenceProfileID: "technical-v1",
+		}
+	case "task.acceptance_mode.escalate":
+		context.AcceptanceAssignment = TaskAcceptanceAssignment{
+			ID: "assignment-v2", WorkspaceID: workspace.ID, TaskID: task.ID, Version: 2,
+			RequestedMode: AcceptanceDelegated, EffectiveMode: AcceptanceHumanRequired,
+			PolicyVersion: "policy-v2", EvidenceProfileID: "technical-v1",
+			SupersedesAssignmentID: "assignment-v1",
+		}
+	case "task.evidence.report":
+		context.Task.Status = TaskImplemented
+		context.AcceptanceEvidence = TaskAcceptanceEvidence{
+			ID: "evidence-v1", WorkspaceID: workspace.ID, TaskID: task.ID, Version: 1,
+			CompletionReportRecordID: "completion", VerificationVerdict: EvidencePassed,
+			VerificationReference: "go test ./...", VerificationReferenceKind: "artifact",
+			IndependentReviewRecordID: "review", ReviewVerdict: ReviewPass,
+		}
+		context.AcceptanceEvaluation = AcceptanceEvaluation{Eligible: true}
 	case "task.discard":
 	case "task.rework":
 		context.Task.Status = TaskImplemented
@@ -313,12 +355,22 @@ func validMutationContext(t *testing.T, command string) MutationContext {
 		context.Workspace.ActivePhaseID = "other-phase"
 		context.FromPhase.State = PhasePlanned
 		context.Conditions = []GateTaskCondition{{WorkspaceID: workspace.ID, GateID: "gate", LinkID: "link", TaskID: task.ID}}
+	case "gate.attach_entry_task":
+		context.Task.PhaseID = p2.ID
+		context.Task.PhasePosition = p2.Position
+		context.EntryTask = GateEntryTask{WorkspaceID: workspace.ID, GateID: "gate", TaskID: task.ID, SelectionSource: "explicit"}
+	case "gate.detach_entry_task":
+		context.Task.PhaseID = p2.ID
+		context.Task.PhasePosition = p2.Position
+		context.EntryTask = GateEntryTask{WorkspaceID: workspace.ID, GateID: "gate", TaskID: task.ID, SelectionSource: "explicit"}
+		context.EntryTasks = []GateEntryTask{context.EntryTask}
 	case "gate.pass_task":
 		context.Condition = GateTaskCondition{WorkspaceID: workspace.ID, GateID: "gate", LinkID: "link", TaskID: task.ID, TaskStatus: TaskInProgress}
 	case "gate.revoke_task_pass":
 		context.Condition = GateTaskCondition{WorkspaceID: workspace.ID, GateID: "gate", LinkID: "link", TaskID: task.ID, TaskStatus: TaskInProgress, Passed: true, PassReason: "old"}
 	case "gate.pass":
 		context.Conditions = []GateTaskCondition{{WorkspaceID: workspace.ID, GateID: "gate", LinkID: "link", TaskID: task.ID, TaskStatus: TaskConfirmed}}
+		context.EntryTasks = []GateEntryTask{{WorkspaceID: workspace.ID, GateID: "gate", TaskID: "next", SelectionSource: "automatic"}}
 	case "run.start":
 		context.Task.Status = TaskPending
 		context.RunStartRequest = RunStartRequest{RunID: "run", Identity: RunStartIdentity{WorkspaceID: workspace.ID, TaskID: task.ID, ClientRunID: testClientRunID, Kind: RunImplementation}, OperatorActorID: "agent", LeaseToken: "secret", LeaseDuration: time.Minute, Now: now}
@@ -459,14 +511,46 @@ func TestWorkspacePhaseLaneAndGateCreationPlans(t *testing.T) {
 	if plan.Evaluation.HasErrors() || updated.Goal != "ship" {
 		t.Fatalf("lane update failed: %+v", plan)
 	}
-	gate := Gate{ID: "gate", WorkspaceID: "workspace", FromPhaseID: "p1", ToPhaseID: "p2"}
+	gate := Gate{ID: "gate", PublicID: 1, Alias: "release-ready", WorkspaceID: "workspace", FromPhaseID: "p1", ToPhaseID: "p2"}
 	plan = PlanGateCreate(active, gate, nextPhases[0], phase2, nil)
 	if plan.Evaluation.HasErrors() {
 		t.Fatalf("gate create failed: %+v", plan)
 	}
-	plan = PlanGateCreate(active, Gate{ID: "duplicate", WorkspaceID: "workspace", FromPhaseID: "p1", ToPhaseID: "p2"}, nextPhases[0], phase2, []Gate{gate})
+	plan = PlanGateCreate(active, Gate{ID: "duplicate", PublicID: 2, WorkspaceID: "workspace", FromPhaseID: "p1", ToPhaseID: "p2"}, nextPhases[0], phase2, []Gate{gate})
 	if !plan.Evaluation.HasErrors() {
 		t.Fatal("duplicate Gate endpoints accepted")
+	}
+}
+
+func TestNormalizeGateAlias(t *testing.T) {
+	alias, err := NormalizeGateAlias("  Release-Ready  ")
+	if err != nil || alias != "release-ready" {
+		t.Fatalf("alias normalization failed: %q %v", alias, err)
+	}
+	for _, invalid := range []string{"-release", "release-", "release--ready", "release ready", "릴리스"} {
+		if _, err = NormalizeGateAlias(invalid); err == nil {
+			t.Fatalf("invalid alias accepted: %q", invalid)
+		}
+	}
+}
+
+func TestGatePublicReferenceNamespaceIsReserved(t *testing.T) {
+	for _, value := range []string{"G#1", "g#42", " G#999 "} {
+		if !IsReservedGatePublicReference(value) {
+			t.Fatalf("public Gate reference was not reserved: %q", value)
+		}
+	}
+	for _, value := range []string{"G#0", "G#01", "G#-1", "G#name", "gate-1"} {
+		if IsReservedGatePublicReference(value) {
+			t.Fatalf("non-public Gate reference was reserved: %q", value)
+		}
+	}
+	workspace := Workspace{ID: "workspace", State: WorkspaceActive}
+	from := Phase{ID: "from", WorkspaceID: workspace.ID, Position: 1, State: PhaseActive}
+	to := Phase{ID: "to", WorkspaceID: workspace.ID, Position: 2, State: PhasePlanned}
+	plan := PlanGateCreate(workspace, Gate{ID: "G#17", PublicID: 1, WorkspaceID: workspace.ID, FromPhaseID: from.ID, ToPhaseID: to.ID}, from, to, nil)
+	if !plan.Evaluation.HasErrors() {
+		t.Fatal("reserved G# public namespace accepted as an internal Gate ID")
 	}
 }
 

@@ -5,13 +5,21 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/jazzcake/baley/server/internal/authz"
 	"github.com/jazzcake/baley/server/internal/domain"
 )
 
 type CommandRequest struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
-	Envelope  CommandEnvelope `json:"envelope"`
+	Name                  string            `json:"name"`
+	Arguments             json.RawMessage   `json:"arguments"`
+	Envelope              CommandEnvelope   `json:"envelope"`
+	Principal             *CommandPrincipal `json:"-"`
+	TenantAuditAuthorized bool              `json:"-"`
+}
+
+type CommandPrincipal struct {
+	AccountID, CredentialID, WorkspaceID string
+	Subject                              authz.Subject
 }
 
 type CommandEnvelope struct {
@@ -22,6 +30,8 @@ type CommandEnvelope struct {
 	AcknowledgedWarningCodes  []string                  `json:"acknowledgedWarningCodes,omitempty"`
 	ProceedReason             string                    `json:"proceedReason,omitempty"`
 	HumanApprovalAttestation  *HumanApprovalAttestation `json:"humanApprovalAttestation,omitempty"`
+	ApprovalGrantToken        string                    `json:"approvalGrantToken,omitempty"`
+	AttemptID                 string                    `json:"-"`
 }
 
 type HumanApprovalAttestation struct {
@@ -34,38 +44,59 @@ type HumanApprovalAttestation struct {
 }
 
 type PhaseProjection struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	Position int    `json:"position"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	State      string    `json:"state"`
+	Position   int       `json:"position"`
+	ObservedAt time.Time `json:"-"`
 }
 type LaneProjection struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Goal    string `json:"goal,omitempty"`
-	Summary string `json:"summary,omitempty"`
-	State   string `json:"state"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Goal       string    `json:"goal,omitempty"`
+	Summary    string    `json:"summary,omitempty"`
+	State      string    `json:"state"`
+	ObservedAt time.Time `json:"-"`
 }
 type TaskProjection struct {
-	ID                        string  `json:"id"`
-	PublicID                  int     `json:"publicId"`
-	LaneID                    string  `json:"laneId"`
-	PhaseID                   string  `json:"phaseId"`
-	ParentTaskID              string  `json:"parentTaskId,omitempty"`
-	Title                     string  `json:"title"`
-	Description               string  `json:"description"`
-	CurrentSummary            string  `json:"currentSummary,omitempty"`
-	NextAction                string  `json:"nextAction,omitempty"`
-	Status                    string  `json:"status"`
-	BlockerReason             *string `json:"blockerReason,omitempty"`
-	TerminalReason            string  `json:"terminalReason,omitempty"`
-	ImplementedAssessment     string  `json:"implementedAssessment,omitempty"`
-	DecisionRequired          string  `json:"decisionRequired,omitempty"`
-	ExpectedWorkspaceRevision int64   `json:"expectedWorkspaceRevision,omitempty"`
+	ID                        string                       `json:"id"`
+	PublicID                  int                          `json:"publicId"`
+	LaneID                    string                       `json:"laneId"`
+	PhaseID                   string                       `json:"phaseId"`
+	ParentTaskID              string                       `json:"parentTaskId,omitempty"`
+	Title                     string                       `json:"title"`
+	Description               string                       `json:"description"`
+	CurrentSummary            string                       `json:"currentSummary,omitempty"`
+	NextAction                string                       `json:"nextAction,omitempty"`
+	Status                    string                       `json:"status"`
+	BlockerReason             *string                      `json:"blockerReason,omitempty"`
+	TerminalReason            string                       `json:"terminalReason,omitempty"`
+	ImplementedAssessment     string                       `json:"implementedAssessment,omitempty"`
+	DecisionRequired          string                       `json:"decisionRequired,omitempty"`
+	ExpectedWorkspaceRevision int64                        `json:"expectedWorkspaceRevision,omitempty"`
+	ObservedAt                time.Time                    `json:"-"`
+	RequestedAcceptanceMode   string                       `json:"requestedAcceptanceMode"`
+	EffectiveAcceptanceMode   string                       `json:"effectiveAcceptanceMode"`
+	AcceptancePolicyVersion   string                       `json:"acceptancePolicyVersion"`
+	EvidenceProfileID         string                       `json:"evidenceProfileId"`
+	AcceptanceEvaluation      *domain.AcceptanceEvaluation `json:"acceptanceEvaluation,omitempty"`
+}
+type BacklogItemProjection struct {
+	ID                   string  `json:"id"`
+	PublicID             int     `json:"publicId"`
+	LaneID               string  `json:"laneId"`
+	Title                string  `json:"title"`
+	Description          string  `json:"description"`
+	Status               string  `json:"status"`
+	Position             *int    `json:"position"`
+	PromotedTaskID       *string `json:"promotedTaskId"`
+	PromotedTaskPublicID *int    `json:"promotedTaskPublicId"`
+	DiscardReason        *string `json:"discardReason,omitempty"`
 }
 type DependencyProjection struct {
-	FromTaskID string `json:"fromTaskId"`
-	ToTaskID   string `json:"toTaskId"`
+	FromTaskID string    `json:"fromTaskId"`
+	ToTaskID   string    `json:"toTaskId"`
+	ObservedAt time.Time `json:"-"`
 }
 type GateTaskProjection struct {
 	ID                 string     `json:"id"`
@@ -75,26 +106,37 @@ type GateTaskProjection struct {
 	PassReason         *string    `json:"passReason,omitempty"`
 	Satisfied          bool       `json:"satisfied"`
 	SatisfactionReason string     `json:"satisfactionReason"`
+	ObservedAt         time.Time  `json:"-"`
+}
+type GateEntryTaskProjection struct {
+	GateID          string `json:"gateId"`
+	TaskID          string `json:"taskId"`
+	SelectionSource string `json:"selectionSource"`
 }
 type GateProjection struct {
-	ID                        string               `json:"id"`
-	Name                      string               `json:"name"`
-	FromPhaseID               string               `json:"fromPhaseId"`
-	ToPhaseID                 string               `json:"toPhaseId"`
-	CriteriaRevision          int64                `json:"criteriaRevision"`
-	PassedAt                  *time.Time           `json:"passedAt,omitempty"`
-	Conditions                []GateTaskProjection `json:"conditions"`
-	Status                    string               `json:"status"`
-	DecisionRequired          string               `json:"decisionRequired,omitempty"`
-	DecisionSnapshotHash      string               `json:"decisionSnapshotHash,omitempty"`
-	ExpectedWorkspaceRevision int64                `json:"expectedWorkspaceRevision,omitempty"`
+	ID                        string                    `json:"id"`
+	PublicID                  int                       `json:"publicId"`
+	Alias                     string                    `json:"alias,omitempty"`
+	Name                      string                    `json:"name"`
+	FromPhaseID               string                    `json:"fromPhaseId"`
+	ToPhaseID                 string                    `json:"toPhaseId"`
+	CriteriaRevision          int64                     `json:"criteriaRevision"`
+	PassedAt                  *time.Time                `json:"passedAt,omitempty"`
+	Conditions                []GateTaskProjection      `json:"conditions"`
+	EntryTasks                []GateEntryTaskProjection `json:"entryTasks"`
+	Status                    string                    `json:"status"`
+	DecisionRequired          string                    `json:"decisionRequired,omitempty"`
+	DecisionSnapshotHash      string                    `json:"decisionSnapshotHash,omitempty"`
+	ExpectedWorkspaceRevision int64                     `json:"expectedWorkspaceRevision,omitempty"`
+	ObservedAt                time.Time                 `json:"-"`
 }
 type WorkspaceProjection struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	State         string  `json:"state"`
-	Revision      int64   `json:"revision"`
-	ActivePhaseID *string `json:"activePhaseId,omitempty"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	State         string    `json:"state"`
+	Revision      int64     `json:"revision"`
+	ActivePhaseID *string   `json:"activePhaseId,omitempty"`
+	ObservedAt    time.Time `json:"-"`
 }
 type RunProjection struct {
 	ID              string     `json:"id"`
@@ -124,27 +166,29 @@ type RepositoryProjection struct {
 	TaskRecordsRoot    string `json:"taskRecordsRoot,omitempty"`
 }
 type TaskRecordProjection struct {
-	ID                 string `json:"id"`
-	TaskID             string `json:"taskId"`
-	RunID              string `json:"runId,omitempty"`
-	Type               string `json:"recordType"`
-	RepositoryID       string `json:"repositoryId"`
-	RelativePath       string `json:"relativePath"`
-	WorkingTreeHash    string `json:"workingTreeHash,omitempty"`
-	CommitSHA          string `json:"commitSha,omitempty"`
-	BlobSHA            string `json:"blobSha,omitempty"`
-	State              string `json:"state"`
-	ShortSummary       string `json:"shortSummary"`
-	SupersedesRecordID string `json:"supersedesRecordId,omitempty"`
+	ID                 string    `json:"id"`
+	TaskID             string    `json:"taskId"`
+	RunID              string    `json:"runId,omitempty"`
+	Type               string    `json:"recordType"`
+	RepositoryID       string    `json:"repositoryId"`
+	RelativePath       string    `json:"relativePath"`
+	WorkingTreeHash    string    `json:"workingTreeHash,omitempty"`
+	CommitSHA          string    `json:"commitSha,omitempty"`
+	BlobSHA            string    `json:"blobSha,omitempty"`
+	State              string    `json:"state"`
+	ShortSummary       string    `json:"shortSummary"`
+	SupersedesRecordID string    `json:"supersedesRecordId,omitempty"`
+	ObservedAt         time.Time `json:"-"`
 }
 type CommitReferenceProjection struct {
-	ID                string `json:"id"`
-	TaskID            string `json:"taskId"`
-	RunID             string `json:"runId,omitempty"`
-	RepositoryID      string `json:"repositoryId"`
-	CommitSHA         string `json:"commitSha"`
-	Relation          string `json:"relation"`
-	VerificationState string `json:"verificationState"`
+	ID                string    `json:"id"`
+	TaskID            string    `json:"taskId"`
+	RunID             string    `json:"runId,omitempty"`
+	RepositoryID      string    `json:"repositoryId"`
+	CommitSHA         string    `json:"commitSha"`
+	Relation          string    `json:"relation"`
+	VerificationState string    `json:"verificationState"`
+	ObservedAt        time.Time `json:"-"`
 }
 type GitObservationProjection struct {
 	ID            string    `json:"id"`
@@ -169,22 +213,59 @@ type EventProjection struct {
 	Payload            json.RawMessage `json:"payload"`
 	CreatedAt          time.Time       `json:"createdAt"`
 }
+type MutationAttemptProjection struct {
+	ID                        string    `json:"id"`
+	WorkspaceID               string    `json:"workspaceId"`
+	CommandName               string    `json:"commandName"`
+	Source                    string    `json:"source"`
+	Outcome                   string    `json:"outcome"`
+	EntityType                string    `json:"entityType,omitempty"`
+	EntityID                  string    `json:"entityId,omitempty"`
+	InitiatedByActorID        string    `json:"initiatedByActorId,omitempty"`
+	ExecutedByActorID         string    `json:"executedByActorId,omitempty"`
+	IdempotencyKeyHash        string    `json:"idempotencyKeyHash,omitempty"`
+	ArgumentDigest            string    `json:"argumentDigest,omitempty"`
+	RequestFingerprint        string    `json:"requestFingerprint,omitempty"`
+	CommandHash               string    `json:"commandHash,omitempty"`
+	CommandID                 string    `json:"commandId,omitempty"`
+	EventIDs                  []string  `json:"eventIds"`
+	ExpectedWorkspaceRevision int64     `json:"expectedWorkspaceRevision,omitempty"`
+	ObservedWorkspaceRevision int64     `json:"observedWorkspaceRevision,omitempty"`
+	DiagnosticCodes           []string  `json:"diagnosticCodes"`
+	DurationMS                int64     `json:"durationMs"`
+	OccurredAt                time.Time `json:"occurredAt"`
+}
+
+type MutationAttemptRecorder interface {
+	RecordMutationAttempt(context.Context, MutationAttemptProjection) error
+}
+
+type MutationAttemptReader interface {
+	MutationAttempts(context.Context, string, string, string, time.Time, string, int) ([]MutationAttemptProjection, error)
+}
 
 type Snapshot struct {
-	Workspace        WorkspaceProjection         `json:"workspace"`
-	Phases           []PhaseProjection           `json:"phases"`
-	Lanes            []LaneProjection            `json:"lanes"`
-	Tasks            []TaskProjection            `json:"tasks"`
-	Dependencies     []DependencyProjection      `json:"dependencies"`
-	Gates            []GateProjection            `json:"gates"`
-	Runs             []RunProjection             `json:"runs"`
-	Repositories     []RepositoryProjection      `json:"repositories"`
-	Records          []TaskRecordProjection      `json:"records"`
-	Commits          []CommitReferenceProjection `json:"commits"`
-	GitObservations  []GitObservationProjection  `json:"gitObservations"`
-	HumanActorIDs    map[string]bool             `json:"-"`
-	ActorIDs         map[string]bool             `json:"-"`
-	NextTaskPublicID int                         `json:"-"`
+	Workspace             WorkspaceProjection               `json:"workspace"`
+	Phases                []PhaseProjection                 `json:"phases"`
+	Lanes                 []LaneProjection                  `json:"lanes"`
+	Tasks                 []TaskProjection                  `json:"tasks"`
+	BacklogItems          []BacklogItemProjection           `json:"backlogItems"`
+	Dependencies          []DependencyProjection            `json:"dependencies"`
+	Gates                 []GateProjection                  `json:"gates"`
+	Runs                  []RunProjection                   `json:"runs"`
+	Repositories          []RepositoryProjection            `json:"repositories"`
+	Records               []TaskRecordProjection            `json:"records"`
+	Commits               []CommitReferenceProjection       `json:"commits"`
+	GitObservations       []GitObservationProjection        `json:"gitObservations"`
+	HumanActorIDs         map[string]bool                   `json:"-"`
+	ActorIDs              map[string]bool                   `json:"-"`
+	NextTaskPublicID      int                               `json:"-"`
+	NextBacklogPublicID   int                               `json:"-"`
+	NextGatePublicID      int                               `json:"-"`
+	AcceptancePolicy      domain.AcceptancePolicy           `json:"acceptancePolicy"`
+	EvidenceProfiles      []domain.EvidenceProfile          `json:"evidenceProfiles"`
+	AcceptanceAssignments []domain.TaskAcceptanceAssignment `json:"acceptanceAssignments"`
+	AcceptanceEvidence    []domain.TaskAcceptanceEvidence   `json:"acceptanceEvidence"`
 }
 
 type Diagnostic = domain.Diagnostic
@@ -197,6 +278,8 @@ type PreviewResult struct {
 	Warnings                  []Diagnostic `json:"warnings"`
 	Advisories                []Diagnostic `json:"advisories"`
 	DecisionSnapshotHash      string       `json:"decisionSnapshotHash,omitempty"`
+	EntityType                string       `json:"entityType,omitempty"`
+	EntityID                  string       `json:"entityId,omitempty"`
 }
 
 type EventWrite struct {
@@ -206,46 +289,57 @@ type EventWrite struct {
 	Payload    any
 }
 type MutationPlan struct {
-	CommandName          string
-	TaskID               string
-	TaskStatus           string
-	TaskUpdate           *domain.Task
-	TaskCreate           *domain.Task
-	ExpectedTaskPublicID int
-	DependencyAdd        []domain.Dependency
-	DependencyRemove     []domain.Dependency
-	TerminalUpdates      []domain.TerminalUpdate
-	LaneUpdate           *domain.Lane
-	PhaseCreate          *domain.Phase
-	PhaseName            string
-	GateCreate           *domain.Gate
-	GateName             string
-	GateTaskCreate       *domain.GateTaskCondition
-	GateTaskDeleteID     string
-	GateCriteriaRevision int64
-	ForceHumanApproval   bool
-	GateTaskID           string
-	GateTaskPassed       bool
-	GateTaskReason       string
-	GateID               string
-	FromPhaseID          string
-	ToPhaseID            string
-	Events               []EventWrite
-	Action               string
-	EntityType           string
-	EntityID             string
-	Run                  *domain.Run
-	RunUpdate            *domain.Run
-	RunExpectedVersion   int64
-	RunLeaseToken        string
-	RunTaskStatus        string
-	ExistingRunClientID  string
-	Repository           *domain.Repository
-	Record               *domain.TaskRecord
-	CommitReference      *domain.CommitReference
-	GitObservation       *domain.RunGitObservation
-	NoWorkspaceRevision  bool
-	IdempotentNoMutation bool
+	CommandName             string
+	TaskID                  string
+	TaskStatus              string
+	TaskUpdate              *domain.Task
+	TaskCreate              *domain.Task
+	ExpectedTaskPublicID    int
+	BacklogCreate           *domain.BacklogItem
+	BacklogUpdate           *domain.BacklogItem
+	BacklogPositions        []domain.BacklogItem
+	ExpectedBacklogPublicID int
+	DependencyAdd           []domain.Dependency
+	DependencyRemove        []domain.Dependency
+	TerminalUpdates         []domain.TerminalUpdate
+	LaneUpdate              *domain.Lane
+	PhaseCreate             *domain.Phase
+	PhaseName               string
+	GateCreate              *domain.Gate
+	ExpectedGatePublicID    int
+	GateName                string
+	GateTaskCreate          *domain.GateTaskCondition
+	GateTaskDeleteID        string
+	GateEntryTaskCreate     *domain.GateEntryTask
+	GateEntryTaskDelete     *domain.GateEntryTask
+	GateCriteriaRevision    int64
+	ForceHumanApproval      bool
+	GateTaskID              string
+	GateTaskPassed          bool
+	GateTaskReason          string
+	GateID                  string
+	FromPhaseID             string
+	ToPhaseID               string
+	Events                  []EventWrite
+	Action                  string
+	EntityType              string
+	EntityID                string
+	Run                     *domain.Run
+	RunUpdate               *domain.Run
+	RunExpectedVersion      int64
+	RunLeaseToken           string
+	RunTaskStatus           string
+	ExistingRunClientID     string
+	Repository              *domain.Repository
+	Record                  *domain.TaskRecord
+	CommitReference         *domain.CommitReference
+	GitObservation          *domain.RunGitObservation
+	NoWorkspaceRevision     bool
+	IdempotentNoMutation    bool
+	AcceptancePolicy        *domain.AcceptancePolicy
+	AcceptanceAssignment    *domain.TaskAcceptanceAssignment
+	AcceptanceEvidence      *domain.TaskAcceptanceEvidence
+	AutoConfirmTask         bool
 }
 
 type ExecutionResult struct {
@@ -256,6 +350,7 @@ type ExecutionResult struct {
 	Idempotent        bool     `json:"idempotent"`
 	ApprovalProtocol  string   `json:"approvalProtocol,omitempty"`
 	LeaseToken        string   `json:"leaseToken,omitempty"`
+	CommandHash       string   `json:"-"`
 }
 
 type Repository interface {
@@ -264,6 +359,8 @@ type Repository interface {
 	RunLeaseToken(string) (string, error)
 	Execute(context.Context, string, CommandRequest, string, func(Snapshot) (PreviewResult, MutationPlan, error)) (ExecutionResult, error)
 	Task(context.Context, string, int) (TaskProjection, error)
+	Backlog(context.Context, string, int) (BacklogItemProjection, error)
+	BacklogList(context.Context, string, string, string, int, int) ([]BacklogItemProjection, error)
 	Events(context.Context, string) ([]EventProjection, error)
 }
 

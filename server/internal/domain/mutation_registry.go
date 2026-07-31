@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -11,26 +12,35 @@ type MutationContext struct {
 	Mode      MutationPlanMode
 	ProjectID string
 
-	Workspace  Workspace
-	Phase      Phase
-	FromPhase  Phase
-	ToPhase    Phase
-	Phases     []Phase
-	Lane       Lane
-	Gate       Gate
-	Gates      []Gate
-	Condition  GateTaskCondition
-	Conditions []GateTaskCondition
-	Task       Task
-	Tasks      []Task
-	Graph      *WorkspaceGraph
-	Lanes      []Lane
+	Workspace               Workspace
+	Phase                   Phase
+	FromPhase               Phase
+	ToPhase                 Phase
+	Phases                  []Phase
+	Lane                    Lane
+	Gate                    Gate
+	Gates                   []Gate
+	Condition               GateTaskCondition
+	Conditions              []GateTaskCondition
+	EntryTask               GateEntryTask
+	EntryTasks              []GateEntryTask
+	Task                    Task
+	Backlog                 BacklogItem
+	BacklogItems            []BacklogItem
+	OrderedBacklogPublicIDs []int
+	Tasks                   []Task
+	Graph                   *WorkspaceGraph
+	Lanes                   []Lane
 
-	InitialPatch    DependencyPatch
-	DependencyPatch DependencyPatch
-	RunningTaskIDs  map[string]bool
-	Predecessors    []Task
-	Records         []TaskRecord
+	InitialPatch         DependencyPatch
+	DependencyPatch      DependencyPatch
+	RunningTaskIDs       map[string]bool
+	Predecessors         []Task
+	Records              []TaskRecord
+	AcceptancePolicy     AcceptancePolicy
+	AcceptanceAssignment TaskAcceptanceAssignment
+	AcceptanceEvidence   TaskAcceptanceEvidence
+	AcceptanceEvaluation AcceptanceEvaluation
 
 	Repository      Repository
 	Record          TaskRecord
@@ -84,46 +94,57 @@ type HumanApprovalAttestation struct {
 // the registry total makes a contract addition fail tests until a planner is
 // supplied, instead of silently accepting metadata-only coverage.
 var MutationHandlers = map[string]MutationHandler{
-	"project.bootstrap":       planProjectBootstrap,
-	"repository.register":     planRepositoryRegister,
-	"workspace.create":        planWorkspaceCreate,
-	"workspace.activate":      planWorkspaceActivation,
-	"workspace.close":         planWorkspaceClose,
-	"phase.create":            planPhaseCreation,
-	"lane.create":             planLaneCreation,
-	"lane.update":             planLaneUpdateMutation,
-	"lane.close_out":          planLaneTerminationMutation("lane.close_out"),
-	"lane.discard":            planLaneTerminationMutation("lane.discard"),
-	"gate.create":             planGateCreation,
-	"task.create":             planTaskCreation,
-	"task.update":             planTaskUpdateMutation,
-	"task.set_terminal":       planTaskTerminalMutation(true),
-	"task.clear_terminal":     planTaskTerminalMutation(false),
-	"task.block":              planTaskLifecycleMutation("task.block"),
-	"task.unblock":            planTaskLifecycleMutation("task.unblock"),
-	"task.report_implemented": planTaskImplementedMutation,
-	"task.confirm":            planTaskConfirm,
-	"task.discard":            planTaskLifecycleMutation("task.discard"),
-	"task.rework":             planTaskLifecycleMutation("task.rework"),
-	"dependency.connect":      planDependencyMutation("dependency.connect"),
-	"dependency.disconnect":   planDependencyMutation("dependency.disconnect"),
-	"dependency.patch":        planDependencyMutation("dependency.patch"),
-	"gate.attach_task":        planGateAttachmentMutation(true),
-	"gate.detach_task":        planGateAttachmentMutation(false),
-	"gate.pass_task":          planGateConditionMutation(true),
-	"gate.revoke_task_pass":   planGateConditionMutation(false),
-	"gate.pass":               planGatePassMutation,
-	"run.start":               planRunStartMutation,
-	"run.heartbeat":           planRunHeartbeatMutation,
-	"run.succeed":             planRunTerminationMutation("run.succeed", RunSucceeded),
-	"run.fail":                planRunTerminationMutation("run.fail", RunFailed),
-	"run.cancel":              planRunTerminationMutation("run.cancel", RunCancelled),
-	"run.interrupt":           planRunTerminationMutation("run.interrupt", RunInterrupted),
-	"run.correct":             planRunCorrectionMutation,
-	"record.register":         planRecordRegistration,
-	"record.attach_commit":    planRecordCommitAttachment,
-	"commit.attach":           planCommitAttachment,
-	"git.observe":             planGitObservation,
+	"project.bootstrap":             planProjectBootstrap,
+	"repository.register":           planRepositoryRegister,
+	"workspace.create":              planWorkspaceCreate,
+	"workspace.activate":            planWorkspaceActivation,
+	"workspace.close":               planWorkspaceClose,
+	"phase.create":                  planPhaseCreation,
+	"lane.create":                   planLaneCreation,
+	"lane.update":                   planLaneUpdateMutation,
+	"lane.close_out":                planLaneTerminationMutation("lane.close_out"),
+	"lane.discard":                  planLaneTerminationMutation("lane.discard"),
+	"gate.create":                   planGateCreation,
+	"task.create":                   planTaskCreation,
+	"backlog.create":                planBacklogMutation("backlog.create"),
+	"backlog.update":                planBacklogMutation("backlog.update"),
+	"backlog.move":                  planBacklogMutation("backlog.move"),
+	"backlog.reorder":               planBacklogMutation("backlog.reorder"),
+	"backlog.discard":               planBacklogMutation("backlog.discard"),
+	"backlog.promote":               planBacklogMutation("backlog.promote"),
+	"task.update":                   planTaskUpdateMutation,
+	"task.set_terminal":             planTaskTerminalMutation(true),
+	"task.clear_terminal":           planTaskTerminalMutation(false),
+	"task.block":                    planTaskLifecycleMutation("task.block"),
+	"task.unblock":                  planTaskLifecycleMutation("task.unblock"),
+	"task.report_implemented":       planTaskImplementedMutation,
+	"task.confirm":                  planTaskConfirm,
+	"task.acceptance_policy.change": planAcceptancePolicyChange,
+	"task.acceptance_mode.escalate": planAcceptanceModeEscalation,
+	"task.evidence.report":          planAcceptanceEvidenceReport,
+	"task.discard":                  planTaskLifecycleMutation("task.discard"),
+	"task.rework":                   planTaskLifecycleMutation("task.rework"),
+	"dependency.connect":            planDependencyMutation("dependency.connect"),
+	"dependency.disconnect":         planDependencyMutation("dependency.disconnect"),
+	"dependency.patch":              planDependencyMutation("dependency.patch"),
+	"gate.attach_task":              planGateAttachmentMutation(true),
+	"gate.detach_task":              planGateAttachmentMutation(false),
+	"gate.attach_entry_task":        planGateEntryTaskMutation(true),
+	"gate.detach_entry_task":        planGateEntryTaskMutation(false),
+	"gate.pass_task":                planGateConditionMutation(true),
+	"gate.revoke_task_pass":         planGateConditionMutation(false),
+	"gate.pass":                     planGatePassMutation,
+	"run.start":                     planRunStartMutation,
+	"run.heartbeat":                 planRunHeartbeatMutation,
+	"run.succeed":                   planRunTerminationMutation("run.succeed", RunSucceeded),
+	"run.fail":                      planRunTerminationMutation("run.fail", RunFailed),
+	"run.cancel":                    planRunTerminationMutation("run.cancel", RunCancelled),
+	"run.interrupt":                 planRunTerminationMutation("run.interrupt", RunInterrupted),
+	"run.correct":                   planRunCorrectionMutation,
+	"record.register":               planRecordRegistration,
+	"record.attach_commit":          planRecordCommitAttachment,
+	"commit.attach":                 planCommitAttachment,
+	"git.observe":                   planGitObservation,
 }
 
 func PlanMutation(command string, context MutationContext) DomainMutationPlan {
@@ -222,6 +243,14 @@ func planWorkspaceClose(context MutationContext) DomainMutationPlan {
 			plan.Evaluation.Warnings = append(plan.Evaluation.Warnings, Diagnostic{Code: CodeWorkspaceCloseActiveLane, EntityID: lane.ID})
 		}
 	}
+	for _, item := range context.BacklogItems {
+		if item.WorkspaceID != context.Workspace.ID {
+			return invalidPlan(plan, item.ID, CodeInvalidStateTransition)
+		}
+		if item.Status == BacklogActive {
+			plan.Evaluation.Warnings = append(plan.Evaluation.Warnings, Diagnostic{Code: CodeWorkspaceCloseResidualBacklog, EntityID: fmt.Sprint(item.PublicID)})
+		}
+	}
 	plan.Evaluation.sort()
 	closed := context.Workspace
 	closed.State, closed.ActivePhaseID = WorkspaceClosed, ""
@@ -250,6 +279,11 @@ func planLaneUpdateMutation(context MutationContext) DomainMutationPlan {
 
 func planLaneTerminationMutation(command string) MutationHandler {
 	return func(context MutationContext) DomainMutationPlan {
+		for _, item := range context.BacklogItems {
+			if item.WorkspaceID == context.Workspace.ID && item.LaneID == context.Lane.ID && item.Status == BacklogActive {
+				return invalidMutationPlan(command, fmt.Sprint(item.PublicID), CodeLaneHasActiveBacklog)
+			}
+		}
 		_, plan := PlanLaneTermination(context.Workspace, command, context.Lane, context.Reason)
 		return plan
 	}
@@ -261,6 +295,75 @@ func planGateCreation(context MutationContext) DomainMutationPlan {
 
 func planTaskCreation(context MutationContext) DomainMutationPlan {
 	return PlanTaskCreate(context.Workspace, context.Lane, context.Phase, context.Graph, context.Task, context.InitialPatch)
+}
+
+func planBacklogMutation(command string) MutationHandler {
+	return func(context MutationContext) DomainMutationPlan {
+		plan := newDomainPlan(command, false)
+		if context.Workspace.State != WorkspaceActive || context.Backlog.WorkspaceID != context.Workspace.ID {
+			return invalidPlan(plan, context.Backlog.ID, CodeInvalidStateTransition)
+		}
+		entityID := fmt.Sprint(context.Backlog.PublicID)
+		switch command {
+		case "backlog.create":
+			item, err := NewBacklogItem(context.Backlog, context.Lane, dereferencePosition(context.Backlog.Position))
+			if err != nil {
+				return invalidPlan(plan, entityID, violationCode(err))
+			}
+			plan.ProjectedDiff = item
+			plan.Events = []PlannedEvent{{Type: "backlog.created", EntityType: "backlog_item", EntityID: entityID, Payload: map[string]any{"backlogPublicId": item.PublicID, "laneId": item.LaneID, "position": *item.Position}}}
+		case "backlog.update":
+			title, description := context.Title, context.Description
+			item, err := context.Backlog.Update(&title, &description)
+			if err != nil {
+				return invalidPlan(plan, entityID, violationCode(err))
+			}
+			plan.ProjectedDiff = item
+			plan.Events = []PlannedEvent{{Type: "backlog.updated", EntityType: "backlog_item", EntityID: entityID, Payload: map[string]any{"backlogPublicId": item.PublicID}}}
+		case "backlog.move":
+			if context.Backlog.Status != BacklogActive || context.Lane.State != LaneActive || context.Backlog.LaneID == context.Lane.ID {
+				return invalidPlan(plan, entityID, CodeBacklogLaneUnchanged)
+			}
+			plan.ProjectedDiff = map[string]any{"backlogPublicId": context.Backlog.PublicID, "sourceLaneId": context.Backlog.LaneID, "targetLaneId": context.Lane.ID}
+			plan.Events = []PlannedEvent{{Type: "backlog.moved", EntityType: "backlog_item", EntityID: entityID, Payload: plan.ProjectedDiff.(map[string]any)}}
+		case "backlog.reorder":
+			items, err := ReorderBacklog(context.BacklogItems, context.Lane.ID, context.OrderedBacklogPublicIDs)
+			if err != nil {
+				return invalidPlan(plan, context.Lane.ID, violationCode(err))
+			}
+			plan.ProjectedDiff = map[string]any{"laneId": context.Lane.ID, "orderedBacklogPublicIds": context.OrderedBacklogPublicIDs, "items": items}
+			plan.Events = []PlannedEvent{{Type: "backlog.reordered", EntityType: "backlog_item", EntityID: context.Lane.ID, Payload: map[string]any{"laneId": context.Lane.ID, "orderedBacklogPublicIds": context.OrderedBacklogPublicIDs}}}
+		case "backlog.discard":
+			item, err := context.Backlog.Discard(context.Reason)
+			if err != nil {
+				return invalidPlan(plan, entityID, violationCode(err))
+			}
+			plan.ProjectedDiff = item
+			plan.Events = []PlannedEvent{{Type: "backlog.discarded", EntityType: "backlog_item", EntityID: entityID, Payload: map[string]any{"backlogPublicId": item.PublicID, "reason": item.DiscardReason}}}
+		case "backlog.promote":
+			taskPlan := PlanTaskCreate(context.Workspace, context.Lane, context.Phase, context.Graph, context.Task, context.InitialPatch)
+			if taskPlan.Evaluation.HasErrors() {
+				return taskPlan
+			}
+			item, err := context.Backlog.Promote(context.Task.ID)
+			if err != nil {
+				return invalidPlan(plan, entityID, violationCode(err))
+			}
+			plan.Evaluation, plan.ProjectedDiff = taskPlan.Evaluation, map[string]any{"backlogPublicId": item.PublicID, "taskId": context.Task.ID, "taskPublicId": context.Task.PublicID, "laneId": item.LaneID, "phaseId": context.Task.PhaseID}
+			plan.Events = []PlannedEvent{
+				{Type: "backlog.promoted", EntityType: "backlog_item", EntityID: entityID, Payload: plan.ProjectedDiff.(map[string]any)},
+				taskPlan.Events[0],
+			}
+		}
+		return plan
+	}
+}
+
+func dereferencePosition(position *int) int {
+	if position == nil {
+		return 0
+	}
+	return *position
 }
 
 func planTaskUpdateMutation(context MutationContext) DomainMutationPlan {
@@ -334,6 +437,45 @@ func planTaskConfirm(context MutationContext) DomainMutationPlan {
 	return plan
 }
 
+func planAcceptancePolicyChange(context MutationContext) DomainMutationPlan {
+	plan := newDomainPlan("task.acceptance_policy.change", false)
+	policy := context.AcceptancePolicy
+	if context.Workspace.State == WorkspaceClosed || policy.WorkspaceID != context.Workspace.ID ||
+		strings.TrimSpace(policy.PolicyVersion) == "" || strings.TrimSpace(policy.EvidenceProfileID) == "" ||
+		(policy.DefaultMode != AcceptanceDelegated && policy.DefaultMode != AcceptanceHumanRequired) {
+		return invalidPlan(plan, context.Workspace.ID, CodeInvalidStateTransition)
+	}
+	plan.ProjectedDiff = policy
+	plan.Events = []PlannedEvent{{Type: "task.acceptance_policy_changed", EntityType: "acceptance_policy", EntityID: context.Workspace.ID, Payload: map[string]any{"workspaceId": context.Workspace.ID, "policy": policy}}}
+	return plan
+}
+
+func planAcceptanceModeEscalation(context MutationContext) DomainMutationPlan {
+	plan := newDomainPlan("task.acceptance_mode.escalate", false)
+	assignment := context.AcceptanceAssignment
+	if context.Workspace.State == WorkspaceClosed || context.Task.WorkspaceID != context.Workspace.ID ||
+		assignment.WorkspaceID != context.Workspace.ID || assignment.TaskID != context.Task.ID ||
+		assignment.EffectiveMode != AcceptanceHumanRequired || assignment.SupersedesAssignmentID == "" {
+		return invalidPlan(plan, context.Task.ID, CodeInvalidStateTransition)
+	}
+	plan.ProjectedDiff = assignment
+	plan.Events = []PlannedEvent{{Type: "task.acceptance_mode_escalated", EntityType: "task", EntityID: context.Task.ID, Payload: map[string]any{"taskId": context.Task.ID, "assignment": assignment}}}
+	return plan
+}
+
+func planAcceptanceEvidenceReport(context MutationContext) DomainMutationPlan {
+	plan := newDomainPlan("task.evidence.report", false)
+	evidence := context.AcceptanceEvidence
+	if context.Workspace.State == WorkspaceClosed || context.Task.WorkspaceID != context.Workspace.ID ||
+		context.Task.Status != TaskImplemented || evidence.WorkspaceID != context.Workspace.ID ||
+		evidence.TaskID != context.Task.ID || evidence.ID == "" {
+		return invalidPlan(plan, context.Task.ID, CodeInvalidStateTransition)
+	}
+	plan.ProjectedDiff = map[string]any{"evidence": evidence, "evaluation": context.AcceptanceEvaluation}
+	plan.Events = []PlannedEvent{{Type: "task.acceptance_evidence_reported", EntityType: "task", EntityID: context.Task.ID, Payload: map[string]any{"taskId": context.Task.ID, "evidenceId": evidence.ID, "evaluation": context.AcceptanceEvaluation}}}
+	return plan
+}
+
 func planDependencyMutation(command string) MutationHandler {
 	return func(context MutationContext) DomainMutationPlan {
 		return PlanDependencyMutation(context.Workspace, command, context.Graph, context.DependencyPatch, context.RunningTaskIDs)
@@ -348,6 +490,37 @@ func planGateAttachmentMutation(attach bool) MutationHandler {
 			}
 		}
 		return PlanGateTaskAttachment(context.Workspace, context.Gate, context.FromPhase, context.Task, context.Conditions, attach, context.ClearTerminal)
+	}
+}
+
+func planGateEntryTaskMutation(attach bool) MutationHandler {
+	return func(context MutationContext) DomainMutationPlan {
+		command, eventType, after := "gate.detach_entry_task", "gate.entry_task_detached", "detached"
+		if attach {
+			command, eventType, after = "gate.attach_entry_task", "gate.entry_task_attached", "attached"
+		}
+		plan := newDomainPlan(command, false)
+		entry := context.EntryTask
+		if context.Workspace.State == WorkspaceClosed || context.Gate.PassedAt != nil ||
+			context.Gate.WorkspaceID != context.Workspace.ID || context.Task.WorkspaceID != context.Workspace.ID ||
+			entry.WorkspaceID != context.Workspace.ID || entry.GateID != context.Gate.ID ||
+			entry.TaskID != context.Task.ID || context.Task.PhaseID != context.Gate.ToPhaseID ||
+			entry.SelectionSource != "explicit" {
+			return invalidPlan(plan, context.Task.ID, CodeInvalidStateTransition)
+		}
+		exists := false
+		for _, current := range context.EntryTasks {
+			if current.WorkspaceID != context.Workspace.ID || current.GateID != context.Gate.ID || current.SelectionSource != "explicit" {
+				return invalidPlan(plan, context.Task.ID, CodeInvalidStateTransition)
+			}
+			exists = exists || current.TaskID == entry.TaskID
+		}
+		if attach == exists {
+			return invalidPlan(plan, context.Task.ID, CodeInvalidStateTransition)
+		}
+		plan.ProjectedDiff = map[string]any{"gateId": context.Gate.ID, "entryTaskId": context.Task.ID, "after": after}
+		plan.Events = []PlannedEvent{{Type: eventType, EntityType: "gate", EntityID: context.Gate.ID, Payload: map[string]any{"gateId": context.Gate.ID, "taskId": context.Task.ID, "selectionSource": "explicit"}}}
+		return plan
 	}
 }
 
@@ -391,7 +564,7 @@ func planGatePassMutation(context MutationContext) DomainMutationPlan {
 	if err != nil {
 		return invalidPlan(plan, context.Gate.ID, violationCode(err))
 	}
-	decisionSnapshotHash := GateDecisionSnapshotHash(context.Workspace, context.Gate, context.Conditions)
+	decisionSnapshotHash := GateDecisionSnapshotHashWithEntries(context.Workspace, context.Gate, context.Conditions, context.EntryTasks)
 	var evidence GatePassEvidence
 	if context.Mode == MutationExecute {
 		evidence, err = ProjectGatePassEvidence(context.Gate.ID, context.Workspace.Revision+1, context.Attestation.ID, context.Conditions)
@@ -406,9 +579,9 @@ func planGatePassMutation(context MutationContext) DomainMutationPlan {
 		evidence = GatePassEvidence{GateID: context.Gate.ID, WorkspaceRevision: context.Workspace.Revision + 1, Conditions: conditionEvidence}
 	}
 	plan.DecisionSnapshotHash = decisionSnapshotHash
-	plan.ProjectedDiff = map[string]any{"transition": transition, "decisionSnapshotHash": decisionSnapshotHash}
+	plan.ProjectedDiff = map[string]any{"transition": transition, "decisionSnapshotHash": decisionSnapshotHash, "entryTasks": context.EntryTasks}
 	plan.Events = []PlannedEvent{
-		{Type: "gate.passed", EntityType: "gate", EntityID: context.Gate.ID, Payload: map[string]any{"gateId": evidence.GateID, "conditions": evidence.Conditions, "humanApprovalAttestationId": evidence.HumanApprovalAttestationID, "workspaceRevision": evidence.WorkspaceRevision, "decisionSnapshotHash": decisionSnapshotHash}},
+		{Type: "gate.passed", EntityType: "gate", EntityID: context.Gate.ID, Payload: map[string]any{"gateId": evidence.GateID, "conditions": evidence.Conditions, "entryTasks": context.EntryTasks, "humanApprovalAttestationId": evidence.HumanApprovalAttestationID, "workspaceRevision": evidence.WorkspaceRevision, "decisionSnapshotHash": decisionSnapshotHash}},
 		{Type: "phase.completed", EntityType: "phase", EntityID: transition.From.ID, Payload: map[string]any{"phaseId": transition.From.ID}},
 		{Type: "phase.activated", EntityType: "phase", EntityID: transition.To.ID, Payload: map[string]any{"phaseId": transition.To.ID}},
 	}
@@ -654,6 +827,8 @@ func canonicalMutationInput(command string, context MutationContext, plan Domain
 		return map[string]any{"taskId": context.Task.ID, "reason": strings.TrimSpace(context.Reason)}
 	case "gate.attach_task":
 		return map[string]any{"gateId": context.Gate.ID, "taskId": context.Task.ID, "clearTerminalReason": context.ClearTerminal}
+	case "gate.attach_entry_task", "gate.detach_entry_task":
+		return map[string]any{"gateId": context.Gate.ID, "taskId": context.Task.ID}
 	case "gate.pass_task", "gate.revoke_task_pass":
 		return map[string]any{"gateTaskId": context.Condition.LinkID, "reason": strings.TrimSpace(context.Reason)}
 	case "gate.pass":

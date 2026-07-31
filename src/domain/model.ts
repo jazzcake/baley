@@ -25,12 +25,44 @@ export type Task = {
   nextAction?: string;
   terminalReason?: string;
   implementedAssessment?: string;
+  requestedAcceptanceMode?: "delegated" | "human_required" | "inherit";
+  effectiveAcceptanceMode?: "delegated" | "human_required";
+  acceptancePolicyVersion?: string;
+  evidenceProfileId?: string;
+  acceptanceEvaluation?: { eligible: boolean; reasons: string[] };
+};
+export type BacklogItem = {
+  id: string;
+  publicId: number;
+  laneId: string;
+  title: string;
+  description: string;
+  status: "active" | "promoted" | "discarded";
+  position: number | null;
+  promotedTaskId: string | null;
+  promotedTaskPublicId: number | null;
 };
 export type Run = { id: string; taskId: string; kind: string; status: string; startedAt: string; endedAt?: string; resultSummary?: string; errorSummary?: string };
 export type TaskRecord = { id: string; taskId: string; runId?: string; recordType: string; repositoryId: string; relativePath: string; state: string; shortSummary: string; commitSha?: string };
+export type AcceptanceEvidence = {
+  id: string;
+  taskId: string;
+  version: number;
+  completionReportRecordId: string;
+  verificationVerdict: "passed" | "failed" | "unavailable";
+  verificationReference?: string;
+  verificationReferenceKind?: "task_record" | "run" | "commit_reference" | "artifact";
+  independentReviewRecordId: string;
+  reviewVerdict: "pass" | "fail" | "unavailable";
+  unresolvedBlockingCount: number;
+  commitReferenceId?: string;
+  reportedByActorId: string;
+};
 export type Dependency = { id: string; fromTaskId: string; toTaskId: string };
 export type Gate = {
   id: string;
+  publicId: number;
+  alias?: string;
   name: string;
   fromPhaseId: string;
   toPhaseId: string;
@@ -42,10 +74,12 @@ export type WorkspaceFixture = {
   phases: Phase[];
   lanes: Lane[];
   tasks: Task[];
+  backlogItems: BacklogItem[];
   dependencies: Dependency[];
   gates: Gate[];
   gateLinks: GateLink[];
 	decisions: Array<{ action: string; entityType: string; entityId: string | number; expectedWorkspaceRevision: number }>;
 	runs?: Run[];
 	records?: TaskRecord[];
+	acceptanceEvidence?: AcceptanceEvidence[];
 };

@@ -23,10 +23,36 @@ func (r *Repository) SeedDemo(ctx context.Context) error {
 		`INSERT INTO phases(workspace_id,id,name,position,state) VALUES ('` + DemoWorkspaceID + `','build','Build',0,'active'),('` + DemoWorkspaceID + `','validate','Validate',1,'planned') ON CONFLICT DO NOTHING`,
 		`INSERT INTO lanes(workspace_id,id,name,state) VALUES ('` + DemoWorkspaceID + `','server','Server','active'),('` + DemoWorkspaceID + `','client','Client','active'),('` + DemoWorkspaceID + `','art','Art','active') ON CONFLICT DO NOTHING`,
 		`INSERT INTO tasks(workspace_id,id,public_id,lane_id,phase_id,title,description,status) VALUES ('` + DemoWorkspaceID + `','api',101,'server','build','API 구현','Pilot API 구현','implemented'),('` + DemoWorkspaceID + `','ui',104,'client','build','Pilot UI','Pilot UI 구현','implemented'),('` + DemoWorkspaceID + `','assets',106,'art','build','Asset 제작','Pilot asset 제작','implemented'),('` + DemoWorkspaceID + `','user-test',110,'client','validate','사용자 테스트','Gate 통과 후 사용자 테스트','pending') ON CONFLICT DO NOTHING`,
+		`INSERT INTO task_acceptance_assignments(workspace_id,id,task_id,assignment_version,requested_mode,effective_mode,policy_version,evidence_profile_id,reason)
+		 SELECT workspace_id,gen_random_uuid(),id,1,requested_acceptance_mode,effective_acceptance_mode,acceptance_policy_version,evidence_profile_id,'demo seed'
+		 FROM tasks
+		 WHERE workspace_id='` + DemoWorkspaceID + `'
+		   AND NOT EXISTS (
+		     SELECT 1 FROM task_acceptance_assignments assignment
+		     WHERE assignment.workspace_id=tasks.workspace_id AND assignment.task_id=tasks.id
+		   )`,
 		`INSERT INTO task_dependencies(workspace_id,from_task_id,to_task_id) VALUES ('` + DemoWorkspaceID + `','ui','user-test') ON CONFLICT DO NOTHING`,
-		`INSERT INTO gates(workspace_id,id,name,from_phase_id,to_phase_id) VALUES ('` + DemoWorkspaceID + `','pilot-ready','Pilot Ready','build','validate') ON CONFLICT DO NOTHING`,
+		`DO $seed$
+		 BEGIN
+		   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='gates' AND column_name='public_id') THEN
+		     INSERT INTO gates(workspace_id,id,public_id,alias,name,from_phase_id,to_phase_id)
+		       VALUES ('` + DemoWorkspaceID + `','pilot-ready',1,'pilot-ready','Pilot Ready','build','validate') ON CONFLICT DO NOTHING;
+		   ELSE
+		     INSERT INTO gates(workspace_id,id,name,from_phase_id,to_phase_id)
+		       VALUES ('` + DemoWorkspaceID + `','pilot-ready','Pilot Ready','build','validate') ON CONFLICT DO NOTHING;
+		   END IF;
+		 END $seed$`,
 		`INSERT INTO gate_tasks(workspace_id,id,gate_id,task_id) VALUES ('` + DemoWorkspaceID + `','gt-api','pilot-ready','api'),('` + DemoWorkspaceID + `','gt-ui','pilot-ready','ui'),('` + DemoWorkspaceID + `','gt-assets','pilot-ready','assets') ON CONFLICT DO NOTHING`,
-		`INSERT INTO workspace_counters(workspace_id,next_task_public_id) VALUES ('` + DemoWorkspaceID + `',111) ON CONFLICT DO NOTHING`,
+		`DO $seed$
+		 BEGIN
+		   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workspace_counters' AND column_name='next_gate_public_id') THEN
+		     INSERT INTO workspace_counters(workspace_id,next_task_public_id,next_gate_public_id)
+		       VALUES ('` + DemoWorkspaceID + `',111,2) ON CONFLICT DO NOTHING;
+		   ELSE
+		     INSERT INTO workspace_counters(workspace_id,next_task_public_id)
+		       VALUES ('` + DemoWorkspaceID + `',111) ON CONFLICT DO NOTHING;
+		   END IF;
+		 END $seed$`,
 	}
 	for _, statement := range statements {
 		if _, err = tx.Exec(ctx, statement); err != nil {

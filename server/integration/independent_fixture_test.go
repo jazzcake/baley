@@ -15,6 +15,7 @@ func TestIndependentFixtureGraphAndGateAgainstPostgres(t *testing.T) {
 	if url == "" {
 		t.Skip("BALEY_TEST_DATABASE_URL is not set")
 	}
+	requireDisposableDatabase(t, url)
 	ctx := context.Background()
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "independent-fixture-secret")
 	repo, err := postgres.Open(ctx, url)
@@ -22,7 +23,7 @@ func TestIndependentFixtureGraphAndGateAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	if _, err = repo.Pool.Exec(ctx, "TRUNCATE events,human_approval_attestations,commands,workspace_counters,run_git_observations,commit_references,task_record_indexes,repositories,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE"); err != nil {
+	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE events,human_approval_attestations,commands,workspace_counters,run_git_observations,commit_references,task_record_indexes,repositories,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE; SET session_replication_role='origin'"); err != nil {
 		t.Fatal(err)
 	}
 	const workspaceID = "fixture-independent"
@@ -32,9 +33,9 @@ func TestIndependentFixtureGraphAndGateAgainstPostgres(t *testing.T) {
 		`INSERT INTO phases(workspace_id,id,name,position,state) VALUES ('` + workspaceID + `','prepare','Prepare',0,'active'),('` + workspaceID + `','publish','Publish',1,'planned')`,
 		`INSERT INTO lanes(workspace_id,id,name,state) VALUES ('` + workspaceID + `','content','Content','active'),('` + workspaceID + `','legal','Legal','active')`,
 		`INSERT INTO tasks(workspace_id,id,public_id,lane_id,phase_id,title,status) VALUES ('` + workspaceID + `','article',201,'content','prepare','Final article','confirmed'),('` + workspaceID + `','approval',202,'legal','prepare','Legal approval','confirmed')`,
-		`INSERT INTO gates(workspace_id,id,name,from_phase_id,to_phase_id) VALUES ('` + workspaceID + `','publish-ready','Publish Ready','prepare','publish')`,
+		`INSERT INTO gates(workspace_id,id,public_id,alias,name,from_phase_id,to_phase_id) VALUES ('` + workspaceID + `','publish-ready',1,'publish-ready','Publish Ready','prepare','publish')`,
 		`INSERT INTO gate_tasks(workspace_id,id,gate_id,task_id) VALUES ('` + workspaceID + `','gt-article','publish-ready','article'),('` + workspaceID + `','gt-approval','publish-ready','approval')`,
-		`INSERT INTO workspace_counters(workspace_id,next_task_public_id) VALUES ('` + workspaceID + `',203)`,
+		`INSERT INTO workspace_counters(workspace_id,next_task_public_id,next_gate_public_id) VALUES ('` + workspaceID + `',203,2)`,
 	}
 	for _, statement := range statements {
 		if _, err = repo.Pool.Exec(ctx, statement); err != nil {

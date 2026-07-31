@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,16 +43,104 @@ type taskMutationArgs struct {
 	Reason         string `json:"reason,omitempty"`
 }
 type taskCreateArgs struct {
-	WorkspaceID        string `json:"workspaceId"`
-	TaskUUID           string `json:"taskUuid"`
-	LaneID             string `json:"laneId"`
-	PhaseID            string `json:"phaseId"`
-	ParentTaskID       int    `json:"parentTaskId,omitempty"`
-	Title              string `json:"title"`
-	Description        string `json:"description,omitempty"`
-	PredecessorTaskIDs []int  `json:"predecessorTaskIds,omitempty"`
-	SuccessorTaskIDs   []int  `json:"successorTaskIds,omitempty"`
-	TerminalReason     string `json:"terminalReason,omitempty"`
+	WorkspaceID             string `json:"workspaceId"`
+	TaskUUID                string `json:"taskUuid"`
+	LaneID                  string `json:"laneId"`
+	PhaseID                 string `json:"phaseId"`
+	ParentTaskID            int    `json:"parentTaskId,omitempty"`
+	Title                   string `json:"title"`
+	Description             string `json:"description,omitempty"`
+	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
+	TerminalReason          string `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string `json:"evidenceProfileId,omitempty"`
+}
+type backlogMutationArgs struct {
+	WorkspaceID             string  `json:"workspaceId"`
+	BacklogUUID             string  `json:"backlogUuid,omitempty"`
+	BacklogPublicID         int     `json:"backlogPublicId,omitempty"`
+	LaneID                  string  `json:"laneId,omitempty"`
+	TargetLaneID            string  `json:"targetLaneId,omitempty"`
+	Title                   *string `json:"title,omitempty"`
+	Description             *string `json:"description,omitempty"`
+	Reason                  string  `json:"reason,omitempty"`
+	OrderedBacklogPublicIDs []int   `json:"orderedBacklogPublicIds,omitempty"`
+	TaskUUID                string  `json:"taskUuid,omitempty"`
+	PhaseID                 string  `json:"phaseId,omitempty"`
+	ParentTaskID            int     `json:"parentTaskId,omitempty"`
+	PredecessorTaskIDs      []int   `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int   `json:"successorTaskIds,omitempty"`
+	TerminalReason          string  `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string  `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string  `json:"evidenceProfileId,omitempty"`
+}
+type backlogCreateArgs struct {
+	WorkspaceID string `json:"workspaceId"`
+	BacklogUUID string `json:"backlogUuid"`
+	LaneID      string `json:"laneId"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+}
+type backlogUpdateArgs struct {
+	WorkspaceID     string  `json:"workspaceId"`
+	BacklogPublicID int     `json:"backlogPublicId"`
+	Title           *string `json:"title,omitempty"`
+	Description     *string `json:"description,omitempty"`
+}
+type backlogMoveArgs struct {
+	WorkspaceID     string `json:"workspaceId"`
+	BacklogPublicID int    `json:"backlogPublicId"`
+	TargetLaneID    string `json:"targetLaneId"`
+}
+type backlogReorderArgs struct {
+	WorkspaceID             string `json:"workspaceId"`
+	LaneID                  string `json:"laneId"`
+	OrderedBacklogPublicIDs []int  `json:"orderedBacklogPublicIds"`
+}
+type backlogDiscardArgs struct {
+	WorkspaceID     string `json:"workspaceId"`
+	BacklogPublicID int    `json:"backlogPublicId"`
+	Reason          string `json:"reason"`
+}
+type backlogPromoteArgs struct {
+	WorkspaceID             string `json:"workspaceId"`
+	BacklogPublicID         int    `json:"backlogPublicId"`
+	TaskUUID                string `json:"taskUuid"`
+	PhaseID                 string `json:"phaseId"`
+	ParentTaskID            int    `json:"parentTaskId,omitempty"`
+	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
+	TerminalReason          string `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string `json:"evidenceProfileId,omitempty"`
+}
+type acceptancePolicyChangeArgs struct {
+	WorkspaceID       string `json:"workspaceId"`
+	PolicyVersion     string `json:"policyVersion"`
+	DefaultMode       string `json:"defaultMode"`
+	EvidenceProfileID string `json:"evidenceProfileId"`
+}
+type acceptanceModeEscalateArgs struct {
+	WorkspaceID       string `json:"workspaceId"`
+	TaskID            int    `json:"taskId"`
+	AssignmentID      string `json:"assignmentId"`
+	Reason            string `json:"reason"`
+	EvidenceReference string `json:"evidenceReference"`
+	PolicyVersion     string `json:"policyVersion"`
+}
+type taskEvidenceReportArgs struct {
+	WorkspaceID               string `json:"workspaceId"`
+	TaskID                    int    `json:"taskId"`
+	EvidenceID                string `json:"evidenceId"`
+	CompletionReportRecordID  string `json:"completionReportRecordId"`
+	VerificationVerdict       string `json:"verificationVerdict"`
+	VerificationReference     string `json:"verificationReference,omitempty"`
+	VerificationReferenceKind string `json:"verificationReferenceKind,omitempty"`
+	IndependentReviewRecordID string `json:"independentReviewRecordId"`
+	ReviewVerdict             string `json:"reviewVerdict"`
+	UnresolvedBlockingCount   int    `json:"unresolvedBlockingCount"`
+	CommitReferenceID         string `json:"commitReferenceId,omitempty"`
 }
 type phaseCreateArgs struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -84,12 +174,16 @@ type laneMutationArgs struct {
 type gateMutationArgs struct {
 	WorkspaceID   string `json:"workspaceId"`
 	GateID        string `json:"gateId"`
+	Alias         string `json:"alias,omitempty"`
 	Name          string `json:"name,omitempty"`
 	FromPhaseID   string `json:"fromPhaseId,omitempty"`
 	ToPhaseID     string `json:"toPhaseId,omitempty"`
 	TaskID        int    `json:"taskId,omitempty"`
 	ClearTerminal bool   `json:"clearTerminal,omitempty"`
 }
+
+func (v gateMutationArgs) TaskIDString() string { return fmt.Sprint(v.TaskID) }
+
 type gateTaskArgs struct {
 	WorkspaceID string `json:"workspaceId"`
 	GateTaskID  string `json:"gateTaskId"`
@@ -193,20 +287,114 @@ func (s *Service) Preview(ctx context.Context, request CommandRequest) (PreviewR
 	return result, err
 }
 
-func (s *Service) Execute(ctx context.Context, request CommandRequest) (ExecutionResult, error) {
-	wid, typed, err := decodeArguments(request.Name, request.Arguments)
+func (s *Service) Execute(ctx context.Context, request CommandRequest) (result ExecutionResult, err error) {
+	started := s.now()
+	attemptID := randomUUID()
+	request.Envelope.AttemptID = attemptID
+	wid := extractWorkspaceID(request.Arguments)
+	fingerprint := ""
+	defer func() {
+		recorder, ok := s.repo.(MutationAttemptRecorder)
+		if !ok || wid == "" || attemptID == "" || request.Principal != nil && !request.TenantAuditAuthorized {
+			return
+		}
+		outcome := "succeeded"
+		codes := []string{}
+		if result.Idempotent {
+			outcome = "idempotent"
+		} else if err != nil {
+			outcome = "failed"
+			if commandErr, isCommandErr := err.(*CommandError); isCommandErr {
+				outcome = "rejected"
+				codes = append(codes, commandErr.Code)
+			}
+		}
+		idempotencyHash := sha256.Sum256([]byte(request.Envelope.IdempotencyKey))
+		argumentHash := sha256.Sum256(request.Arguments)
+		entityType, entityID := extractAttemptTarget(request.Arguments)
+		attempt := MutationAttemptProjection{
+			ID: attemptID, WorkspaceID: wid, CommandName: request.Name, Source: "command_service",
+			Outcome: outcome, EntityType: entityType, EntityID: entityID,
+			InitiatedByActorID: request.Envelope.InitiatedByActorID,
+			ExecutedByActorID:  request.Envelope.ExecutedByActorID,
+			IdempotencyKeyHash: hex.EncodeToString(idempotencyHash[:]), ArgumentDigest: hex.EncodeToString(argumentHash[:]),
+			RequestFingerprint: fingerprint, CommandID: result.CommandID, EventIDs: result.EventIDs,
+			CommandHash:               result.CommandHash,
+			ExpectedWorkspaceRevision: request.Envelope.ExpectedWorkspaceRevision,
+			ObservedWorkspaceRevision: result.WorkspaceRevision, DiagnosticCodes: codes,
+			DurationMS: s.now().Sub(started).Milliseconds(), OccurredAt: s.now().UTC(),
+		}
+		if recordErr := recorder.RecordMutationAttempt(context.WithoutCancel(ctx), attempt); recordErr != nil {
+			fmt.Printf("mutation attempt audit failed: %v\n", recordErr)
+		}
+	}()
+	var typed any
+	wid, typed, err = decodeArguments(request.Name, request.Arguments)
 	if err != nil {
 		return ExecutionResult{}, err
+	}
+	if request.Principal != nil {
+		authenticatedActor := request.Principal.Subject.ActorID
+		if authenticatedActor == "" || request.Envelope.ExecutedByActorID != "" && request.Envelope.ExecutedByActorID != authenticatedActor {
+			return ExecutionResult{}, &CommandError{Code: "forbidden", Message: "command Actor does not match authenticated principal"}
+		}
+		request.Envelope.ExecutedByActorID = authenticatedActor
+		request.Envelope.InitiatedByActorID = authenticatedActor
 	}
 	workspaceRevisionRequired := request.Name != "run.heartbeat"
 	if strings.TrimSpace(request.Envelope.IdempotencyKey) == "" || strings.TrimSpace(request.Envelope.ExecutedByActorID) == "" || workspaceRevisionRequired && request.Envelope.ExpectedWorkspaceRevision == 0 {
 		return ExecutionResult{}, &CommandError{Code: "invalid_request", Message: "execute requires idempotencyKey, executedByActorId and expectedWorkspaceRevision"}
 	}
 	// Hash is finalized in the locked callback because Gate commands bind the current condition snapshot.
-	fingerprint := hashRequestFingerprint(request.Name, typed, request.Envelope.ExpectedWorkspaceRevision)
+	fingerprint = hashRequestFingerprint(request.Name, typed, request.Envelope.ExpectedWorkspaceRevision)
+	if request.Principal != nil {
+		securityDigest := sha256.Sum256([]byte(strings.Join([]string{
+			request.Principal.Subject.ActorID,
+			request.Principal.CredentialID,
+			request.Envelope.ApprovalGrantToken,
+			strings.Join(request.Envelope.AcknowledgedWarningCodes, "\x1f"),
+			strings.TrimSpace(request.Envelope.ProceedReason),
+		}, "\x00")))
+		fingerprint += ":" + hex.EncodeToString(securityDigest[:])
+	}
 	return s.repo.Execute(ctx, wid, request, fingerprint, func(snapshot Snapshot) (PreviewResult, MutationPlan, error) {
 		return s.evaluate(ctx, request, typed, snapshot, true)
 	})
+}
+
+func extractWorkspaceID(arguments json.RawMessage) string {
+	var value struct {
+		WorkspaceID string `json:"workspaceId"`
+	}
+	_ = json.Unmarshal(arguments, &value)
+	return strings.TrimSpace(value.WorkspaceID)
+}
+
+func extractAttemptTarget(arguments json.RawMessage) (string, string) {
+	var values map[string]any
+	if json.Unmarshal(arguments, &values) != nil {
+		return "", ""
+	}
+	for _, candidate := range []struct {
+		key, kind string
+	}{
+		{"taskUuid", "task"}, {"taskId", "task"}, {"backlogUuid", "backlog_item"},
+		{"backlogPublicId", "backlog_item"}, {"gateId", "gate"}, {"laneId", "lane"},
+		{"phaseId", "phase"}, {"runId", "run"}, {"recordId", "task_record"},
+		{"repositoryId", "repository"}, {"commitId", "commit"}, {"observationId", "git_observation"},
+	} {
+		if value, ok := values[candidate.key]; ok {
+			switch typed := value.(type) {
+			case string:
+				if strings.TrimSpace(typed) != "" {
+					return candidate.kind, strings.TrimSpace(typed)
+				}
+			case float64:
+				return candidate.kind, fmt.Sprintf("%.0f", typed)
+			}
+		}
+	}
+	return "", ""
 }
 
 // InterruptExpiredRuns performs one deterministic sweep. The command path is
@@ -364,7 +552,14 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		if domainPlan.Evaluation.HasErrors() {
 			break
 		}
+		assignment, assignmentErr := resolveTaskAcceptance(snapshot, task.ID, args.RequestedAcceptanceMode, args.EvidenceProfileID, executing)
+		if assignmentErr != nil {
+			result.Errors = append(result.Errors, Diagnostic{Code: violationCode(assignmentErr), EntityID: task.ID})
+			break
+		}
 		plan.TaskCreate, plan.ExpectedTaskPublicID, plan.DependencyAdd = &task, publicID, patch.Add
+		plan.AcceptanceAssignment = &assignment
+		result.ProjectedDiff = map[string]any{"task": domainPlan.ProjectedDiff, "acceptanceAssignment": assignment}
 		for _, event := range domainPlan.Events {
 			if len(domainPlan.Evaluation.Warnings) > 0 {
 				event.Payload["warnings"] = request.Envelope.AcknowledgedWarningCodes
@@ -373,16 +568,190 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			}
 			plan.Events = append(plan.Events, EventWrite{Type: event.Type, EntityType: event.EntityType, EntityID: event.EntityID, Payload: event.Payload})
 		}
+	case backlogMutationArgs:
+		result.RequiredCapability = "workspace:operate"
+		if snapshot.Workspace.State != string(domain.WorkspaceActive) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: snapshot.Workspace.ID})
+			break
+		}
+		item := findBacklogByPublicID(snapshot.BacklogItems, args.BacklogPublicID)
+		lane := findLane(snapshot.Lanes, args.LaneID)
+		if request.Name == "backlog.create" {
+			if !isUUID(args.BacklogUUID) || lane == nil || args.Title == nil || snapshot.NextBacklogPublicID <= 0 {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.BacklogUUID})
+				break
+			}
+			position := 1
+			for _, existing := range snapshot.BacklogItems {
+				if existing.Status == string(domain.BacklogActive) && existing.LaneID == args.LaneID && existing.Position != nil && *existing.Position >= position {
+					position = *existing.Position + 1
+				}
+			}
+			created, createErr := domain.NewBacklogItem(domain.BacklogItem{ID: args.BacklogUUID, WorkspaceID: args.WorkspaceID, PublicID: snapshot.NextBacklogPublicID, LaneID: args.LaneID, Title: *args.Title, Description: stringPointerValue(args.Description), Status: domain.BacklogActive}, domainLane(*lane, args.WorkspaceID), position)
+			if createErr != nil {
+				result.Errors = append(result.Errors, Diagnostic{Code: violationCode(createErr), EntityID: args.BacklogUUID})
+				break
+			}
+			plan.EntityType, plan.EntityID = "backlog_item", fmt.Sprint(created.PublicID)
+			plan.BacklogCreate, plan.ExpectedBacklogPublicID = &created, created.PublicID
+			result.ProjectedDiff = backlogProjection(created)
+			plan.Events = []EventWrite{{Type: "backlog.created", EntityType: "backlog_item", EntityID: plan.EntityID, Payload: map[string]any{"backlogPublicId": created.PublicID, "laneId": created.LaneID, "position": position}}}
+			break
+		}
+		if request.Name == "backlog.reorder" {
+			lane = findLane(snapshot.Lanes, args.LaneID)
+			if lane == nil {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: args.LaneID})
+				break
+			}
+			values, reorderErr := domain.ReorderBacklog(domainBacklogItems(snapshot.BacklogItems, args.WorkspaceID), args.LaneID, args.OrderedBacklogPublicIDs)
+			if reorderErr != nil {
+				result.Errors = append(result.Errors, Diagnostic{Code: violationCode(reorderErr), EntityID: args.LaneID})
+				break
+			}
+			plan.EntityType, plan.EntityID, plan.BacklogPositions = "backlog_item", args.LaneID, values
+			result.ProjectedDiff = map[string]any{"laneId": args.LaneID, "orderedBacklogPublicIds": args.OrderedBacklogPublicIDs}
+			plan.Events = []EventWrite{{Type: "backlog.reordered", EntityType: "backlog_item", EntityID: args.LaneID, Payload: result.ProjectedDiff}}
+			break
+		}
+		if item == nil {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: fmt.Sprint(args.BacklogPublicID)})
+			break
+		}
+		current := domainBacklog(*item, args.WorkspaceID)
+		plan.EntityType, plan.EntityID = "backlog_item", fmt.Sprint(item.PublicID)
+		switch request.Name {
+		case "backlog.update":
+			next, updateErr := current.Update(args.Title, args.Description)
+			if updateErr != nil {
+				result.Errors = append(result.Errors, Diagnostic{Code: violationCode(updateErr), EntityID: plan.EntityID})
+				break
+			}
+			plan.BacklogUpdate = &next
+			result.ProjectedDiff = map[string]any{"before": item, "after": backlogProjection(next)}
+			plan.Events = []EventWrite{{Type: "backlog.updated", EntityType: "backlog_item", EntityID: plan.EntityID, Payload: map[string]any{"backlogPublicId": item.PublicID}}}
+		case "backlog.move":
+			target := findLane(snapshot.Lanes, args.TargetLaneID)
+			if current.Status != domain.BacklogActive || target == nil || target.State != string(domain.LaneActive) {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: plan.EntityID})
+				break
+			}
+			if current.LaneID == args.TargetLaneID {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeBacklogLaneUnchanged, EntityID: plan.EntityID})
+				break
+			}
+			source := current.LaneID
+			nextPosition := 1
+			for _, existing := range snapshot.BacklogItems {
+				if existing.Status == string(domain.BacklogActive) && existing.LaneID == args.TargetLaneID && existing.Position != nil && *existing.Position >= nextPosition {
+					nextPosition = *existing.Position + 1
+				}
+			}
+			current.LaneID = args.TargetLaneID
+			current.Position = &nextPosition
+			values := replaceDomainBacklog(snapshot.BacklogItems, current, args.WorkspaceID)
+			values = domain.CompactBacklog(values, source)
+			plan.BacklogUpdate, plan.BacklogPositions = &current, values
+			result.ProjectedDiff = map[string]any{"backlogPublicId": current.PublicID, "sourceLaneId": source, "targetLaneId": current.LaneID, "position": nextPosition}
+			plan.Events = []EventWrite{{Type: "backlog.moved", EntityType: "backlog_item", EntityID: plan.EntityID, Payload: result.ProjectedDiff}}
+		case "backlog.discard":
+			next, discardErr := current.Discard(args.Reason)
+			if discardErr != nil {
+				result.Errors = append(result.Errors, Diagnostic{Code: violationCode(discardErr), EntityID: plan.EntityID})
+				break
+			}
+			values := replaceDomainBacklog(snapshot.BacklogItems, next, args.WorkspaceID)
+			values = domain.CompactBacklog(values, current.LaneID)
+			plan.BacklogUpdate, plan.BacklogPositions = &next, values
+			result.ProjectedDiff = map[string]any{"backlogPublicId": item.PublicID, "reason": next.DiscardReason}
+			plan.Events = []EventWrite{{Type: "backlog.discarded", EntityType: "backlog_item", EntityID: plan.EntityID, Payload: result.ProjectedDiff}}
+		case "backlog.promote":
+			phase := findPhase(snapshot.Phases, args.PhaseID)
+			lane = findLane(snapshot.Lanes, current.LaneID)
+			if !isUUID(args.TaskUUID) || phase == nil || lane == nil || current.Status != domain.BacklogActive {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: plan.EntityID})
+				break
+			}
+			parentID := ""
+			if args.ParentTaskID != 0 {
+				parent := findTaskByPublicID(snapshot.Tasks, args.ParentTaskID)
+				if parent == nil {
+					result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: fmt.Sprint(args.ParentTaskID)})
+					break
+				}
+				parentID = parent.ID
+			}
+			task := domain.Task{ID: args.TaskUUID, PublicID: snapshot.NextTaskPublicID, WorkspaceID: args.WorkspaceID, LaneID: current.LaneID, PhaseID: args.PhaseID, ParentTaskID: parentID, Title: current.Title, Description: current.Description, Status: domain.TaskPending, TerminalReason: strings.TrimSpace(args.TerminalReason), PhasePosition: phase.Position}
+			graph, graphEvaluation := workspaceGraph(snapshot)
+			result.Errors = append(result.Errors, graphEvaluation.Errors...)
+			patch := domain.DependencyPatch{}
+			for _, publicID := range args.PredecessorTaskIDs {
+				predecessor := findTaskByPublicID(snapshot.Tasks, publicID)
+				if predecessor == nil {
+					result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: fmt.Sprint(publicID)})
+					break
+				}
+				patch.Add = append(patch.Add, domain.Dependency{FromTaskID: predecessor.ID, ToTaskID: task.ID})
+			}
+			for _, publicID := range args.SuccessorTaskIDs {
+				successor := findTaskByPublicID(snapshot.Tasks, publicID)
+				if successor == nil {
+					result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: fmt.Sprint(publicID)})
+					break
+				}
+				patch.Add = append(patch.Add, domain.Dependency{FromTaskID: task.ID, ToTaskID: successor.ID})
+			}
+			if len(result.Errors) > 0 {
+				break
+			}
+			taskPlan := domain.PlanTaskCreate(domainWorkspace(snapshot), domainLane(*lane, args.WorkspaceID), domainPhase(*phase, args.WorkspaceID), graph, task, patch)
+			result.Errors = append(result.Errors, taskPlan.Evaluation.Errors...)
+			result.Warnings = append(result.Warnings, taskPlan.Evaluation.Warnings...)
+			if executing && !taskPlan.Evaluation.HasErrors() && !sameDiagnosticCodes(taskPlan.Evaluation.Warnings, request.Envelope.AcknowledgedWarningCodes) {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: "warnings"})
+			}
+			if len(result.Errors) > 0 {
+				break
+			}
+			assignment, assignmentErr := resolveTaskAcceptance(snapshot, task.ID, args.RequestedAcceptanceMode, args.EvidenceProfileID, executing)
+			if assignmentErr != nil {
+				result.Errors = append(result.Errors, Diagnostic{Code: violationCode(assignmentErr), EntityID: task.ID})
+				break
+			}
+			promoted, promoteErr := current.Promote(task.ID)
+			if promoteErr != nil {
+				result.Errors = append(result.Errors, Diagnostic{Code: violationCode(promoteErr), EntityID: plan.EntityID})
+				break
+			}
+			values := domain.CompactBacklog(replaceDomainBacklog(snapshot.BacklogItems, promoted, args.WorkspaceID), current.LaneID)
+			plan.TaskCreate, plan.ExpectedTaskPublicID, plan.DependencyAdd = &task, task.PublicID, patch.Add
+			plan.AcceptanceAssignment = &assignment
+			plan.BacklogUpdate, plan.BacklogPositions = &promoted, values
+			result.ProjectedDiff = map[string]any{"backlogPublicId": current.PublicID, "laneId": current.LaneID, "phaseId": args.PhaseID, "taskId": task.ID, "taskPublicId": task.PublicID, "relations": taskPlan.ProjectedDiff, "acceptanceAssignment": assignment}
+			payload := result.ProjectedDiff.(map[string]any)
+			if len(taskPlan.Evaluation.Warnings) > 0 {
+				payload["warnings"], payload["acknowledgedWarningCodes"], payload["proceedReason"] = request.Envelope.AcknowledgedWarningCodes, request.Envelope.AcknowledgedWarningCodes, strings.TrimSpace(request.Envelope.ProceedReason)
+			}
+			plan.Events = []EventWrite{
+				{Type: "backlog.promoted", EntityType: "backlog_item", EntityID: plan.EntityID, Payload: payload},
+				{Type: "task.created", EntityType: "task", EntityID: task.ID, Payload: map[string]any{"task": task, "relations": taskPlan.ProjectedDiff}},
+			}
+		}
 	case gateMutationArgs:
 		plan.EntityType, plan.EntityID = "gate", args.GateID
 		if request.Name == "gate.create" {
 			result.RequiredCapability = "workspace:operate"
 			from, to := findPhase(snapshot.Phases, args.FromPhaseID), findPhase(snapshot.Phases, args.ToPhaseID)
-			if from == nil || to == nil || findGate(snapshot.Gates, args.GateID) != nil || strings.TrimSpace(args.Name) == "" {
+			alias, aliasErr := domain.NormalizeGateAlias(args.Alias)
+			if from == nil || to == nil {
 				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: args.GateID})
 				break
 			}
-			gate := domain.Gate{ID: args.GateID, WorkspaceID: args.WorkspaceID, FromPhaseID: from.ID, ToPhaseID: to.ID}
+			if snapshot.NextGatePublicID <= 0 || domain.IsReservedGatePublicReference(args.GateID) || FindGateByReference(snapshot.Gates, args.GateID) != nil || strings.TrimSpace(args.Name) == "" || aliasErr != nil {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.GateID})
+				break
+			}
+			gate := domain.Gate{ID: args.GateID, PublicID: snapshot.NextGatePublicID, Alias: alias, WorkspaceID: args.WorkspaceID, FromPhaseID: from.ID, ToPhaseID: to.ID}
 			existing := make([]domain.Gate, 0, len(snapshot.Gates))
 			for _, value := range snapshot.Gates {
 				existing = append(existing, domainGate(value, args.WorkspaceID))
@@ -393,21 +762,54 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			if domainPlan.Evaluation.HasErrors() {
 				break
 			}
-			plan.GateCreate, plan.GateName = &gate, strings.TrimSpace(args.Name)
+			plan.GateCreate, plan.ExpectedGatePublicID, plan.GateName = &gate, gate.PublicID, strings.TrimSpace(args.Name)
 			for _, event := range domainPlan.Events {
 				plan.Events = append(plan.Events, EventWrite{Type: event.Type, EntityType: event.EntityType, EntityID: event.EntityID, Payload: event.Payload})
 			}
 			break
 		}
-		gate := findGate(snapshot.Gates, args.GateID)
+		gate := FindGateByReference(snapshot.Gates, args.GateID)
 		task := findTaskByPublicID(snapshot.Tasks, args.TaskID)
 		if gate == nil || task == nil {
 			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: args.GateID})
 			break
 		}
+		plan.EntityID = gate.ID
 		from := findPhase(snapshot.Phases, gate.FromPhaseID)
-		if from == nil {
+		to := findPhase(snapshot.Phases, gate.ToPhaseID)
+		if from == nil || to == nil {
 			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: gate.FromPhaseID})
+			break
+		}
+		if request.Name == "gate.attach_entry_task" || request.Name == "gate.detach_entry_task" {
+			if task.PhaseID != gate.ToPhaseID || gate.PassedAt != nil {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.TaskIDString()})
+				break
+			}
+			attached := false
+			for _, entry := range gate.EntryTasks {
+				attached = attached || (entry.TaskID == task.ID && entry.SelectionSource == "explicit")
+			}
+			attach := request.Name == "gate.attach_entry_task"
+			if attach == attached {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: task.ID})
+				break
+			}
+			result.RequiredCapability = "workspace:operate"
+			plan.GateID = gate.ID
+			plan.GateCriteriaRevision = gate.CriteriaRevision + 1
+			entry := domain.GateEntryTask{WorkspaceID: args.WorkspaceID, GateID: gate.ID, TaskID: task.ID, SelectionSource: "explicit"}
+			if attach {
+				plan.GateEntryTaskCreate = &entry
+			} else {
+				plan.GateEntryTaskDelete = &entry
+			}
+			action := "attached"
+			if !attach {
+				action = "detached"
+			}
+			result.ProjectedDiff = map[string]any{"gateId": gate.ID, "entryTaskId": task.ID, "after": action, "criteriaRevisionAfter": plan.GateCriteriaRevision}
+			plan.Events = []EventWrite{{Type: "gate.entry_task_" + action, Payload: map[string]any{"gateId": gate.ID, "taskId": task.ID, "selectionSource": "explicit", "criteriaRevisionAfter": plan.GateCriteriaRevision}}}
 			break
 		}
 		conditions := make([]domain.GateTaskCondition, 0, len(gate.Conditions))
@@ -479,6 +881,11 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			} else {
 				result.RequiredCapability = "lane:approve"
 				lane, domainPlan = domain.PlanLaneTermination(domainWorkspace(snapshot), request.Name, lane, args.Reason)
+				for _, backlog := range snapshot.BacklogItems {
+					if backlog.Status == string(domain.BacklogActive) && backlog.LaneID == args.LaneID {
+						domainPlan.Evaluation.Errors = append(domainPlan.Evaluation.Errors, Diagnostic{Code: domain.CodeLaneHasActiveBacklog, EntityID: fmt.Sprint(backlog.PublicID)})
+					}
+				}
 			}
 		}
 		result.Errors = append(result.Errors, domainPlan.Evaluation.Errors...)
@@ -691,6 +1098,126 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			}
 			plan.Events = []EventWrite{{Type: "task.confirmed", EntityType: "task", EntityID: task.ID, Payload: payload}}
 		}
+	case acceptancePolicyChangeArgs:
+		result.RequiredCapability = "task:approve"
+		plan.EntityType, plan.EntityID = "acceptance_policy", args.WorkspaceID
+		mode := domain.AcceptanceMode(args.DefaultMode)
+		foundProfile := false
+		for _, profile := range snapshot.EvidenceProfiles {
+			if profile.ID == args.EvidenceProfileID {
+				foundProfile = true
+				break
+			}
+		}
+		if strings.TrimSpace(args.PolicyVersion) == "" || !foundProfile || (mode != domain.AcceptanceDelegated && mode != domain.AcceptanceHumanRequired) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.WorkspaceID})
+			break
+		}
+		if args.PolicyVersion == snapshot.AcceptancePolicy.PolicyVersion {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeIdempotencyConflict, EntityID: args.WorkspaceID})
+			break
+		}
+		next := domain.AcceptancePolicy{WorkspaceID: args.WorkspaceID, PolicyVersion: strings.TrimSpace(args.PolicyVersion), DefaultMode: mode, EvidenceProfileID: args.EvidenceProfileID}
+		plan.AcceptancePolicy = &next
+		result.ProjectedDiff = map[string]any{"before": snapshot.AcceptancePolicy, "after": next, "existingTaskAssignmentsChanged": false}
+		plan.Events = []EventWrite{{Type: "task.acceptance_policy_changed", EntityType: "acceptance_policy", EntityID: args.WorkspaceID, Payload: map[string]any{"workspaceId": args.WorkspaceID, "policy": next, "existingTaskAssignmentsChanged": false}}}
+	case acceptanceModeEscalateArgs:
+		result.RequiredCapability = "task:approve"
+		plan.EntityType = "task"
+		task := findTaskByPublicID(snapshot.Tasks, args.TaskID)
+		if task == nil || !isUUID(args.AssignmentID) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: fmt.Sprint(args.TaskID)})
+			break
+		}
+		plan.EntityID, plan.TaskID = task.ID, task.ID
+		current := latestAcceptanceAssignment(snapshot.AcceptanceAssignments, task.ID)
+		if current == nil {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: task.ID})
+			break
+		}
+		approvedBy := "preview-human"
+		if executing && request.Envelope.HumanApprovalAttestation != nil {
+			approvedBy = request.Envelope.HumanApprovalAttestation.ApprovedByActorID
+		}
+		next, escalationErr := domain.EscalateAcceptance(domainTask(*task, args.WorkspaceID), *current, args.AssignmentID, args.Reason, args.EvidenceReference, args.PolicyVersion, approvedBy)
+		if escalationErr != nil {
+			result.Errors = append(result.Errors, Diagnostic{Code: violationCode(escalationErr), EntityID: task.ID})
+			break
+		}
+		plan.AcceptanceAssignment = &next
+		result.ProjectedDiff = map[string]any{"taskId": args.TaskID, "before": current, "after": next}
+		plan.Events = []EventWrite{{Type: "task.acceptance_mode_escalated", EntityType: "task", EntityID: task.ID, Payload: map[string]any{"taskId": task.ID, "assignment": next}}}
+	case taskEvidenceReportArgs:
+		result.RequiredCapability = "workspace:operate"
+		plan.EntityType = "task"
+		task := findTaskByPublicID(snapshot.Tasks, args.TaskID)
+		if task == nil || !isUUID(args.EvidenceID) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: fmt.Sprint(args.TaskID)})
+			break
+		}
+		plan.EntityID, plan.TaskID = task.ID, task.ID
+		if task.Status != string(domain.TaskImplemented) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: task.ID})
+			break
+		}
+		for _, existing := range snapshot.AcceptanceEvidence {
+			if existing.ID == args.EvidenceID {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeIdempotencyConflict, EntityID: args.EvidenceID})
+				break
+			}
+		}
+		if len(result.Errors) > 0 {
+			break
+		}
+		completion := findRecord(snapshot.Records, args.CompletionReportRecordID)
+		review := findRecord(snapshot.Records, args.IndependentReviewRecordID)
+		if completion == nil || review == nil || completion.TaskID != task.ID || review.TaskID != task.ID ||
+			completion.Type != string(domain.RecordCompletionReport) || review.Type != string(domain.RecordIndependentReview) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.EvidenceID})
+			break
+		}
+		if args.CommitReferenceID != "" {
+			commit := findCommit(snapshot.Commits, args.CommitReferenceID)
+			if commit == nil || commit.TaskID != task.ID {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.CommitReferenceID})
+				break
+			}
+		}
+		version := 1
+		for _, existing := range snapshot.AcceptanceEvidence {
+			if existing.TaskID == task.ID && existing.Version >= version {
+				version = existing.Version + 1
+			}
+		}
+		evidence := domain.TaskAcceptanceEvidence{
+			ID: args.EvidenceID, WorkspaceID: args.WorkspaceID, TaskID: task.ID, Version: version,
+			CompletionReportRecordID: args.CompletionReportRecordID,
+			VerificationVerdict:      domain.EvidenceVerdict(args.VerificationVerdict),
+			VerificationReference:    args.VerificationReference, VerificationReferenceKind: args.VerificationReferenceKind,
+			IndependentReviewRecordID: args.IndependentReviewRecordID,
+			ReviewVerdict:             domain.ReviewVerdict(args.ReviewVerdict), UnresolvedBlockingCount: args.UnresolvedBlockingCount,
+			CommitReferenceID: args.CommitReferenceID, ReportedByActorID: request.Envelope.ExecutedByActorID,
+		}
+		if evidence.VerificationReference != "" &&
+			!validVerificationReference(snapshot, task.ID, evidence.VerificationReferenceKind, evidence.VerificationReference) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.EvidenceID})
+			break
+		}
+		profile := findEvidenceProfile(snapshot.EvidenceProfiles, task.EvidenceProfileID)
+		if profile == nil || args.UnresolvedBlockingCount < 0 ||
+			(evidence.VerificationVerdict != domain.EvidencePassed && evidence.VerificationVerdict != domain.EvidenceFailed && evidence.VerificationVerdict != domain.EvidenceUnavailable) ||
+			(evidence.ReviewVerdict != domain.ReviewPass && evidence.ReviewVerdict != domain.ReviewFail && evidence.ReviewVerdict != domain.ReviewUnavailable) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.EvidenceID})
+			break
+		}
+		evaluation := domain.EvaluateAcceptance(*profile, evidence)
+		autoConfirm := task.EffectiveAcceptanceMode == string(domain.AcceptanceDelegated) && evaluation.Eligible
+		plan.AcceptanceEvidence, plan.AutoConfirmTask = &evidence, autoConfirm
+		result.ProjectedDiff = map[string]any{"taskId": args.TaskID, "evidence": evidence, "evaluation": evaluation, "autoConfirmed": autoConfirm}
+		plan.Events = []EventWrite{{Type: "task.acceptance_evidence_reported", EntityType: "task", EntityID: task.ID, Payload: map[string]any{"taskId": task.ID, "evidenceId": evidence.ID, "evaluation": evaluation}}}
+		if autoConfirm {
+			plan.Events = append(plan.Events, EventWrite{Type: "task.auto_confirmed", EntityType: "task", EntityID: task.ID, Payload: map[string]any{"taskId": task.ID, "policyVersion": task.AcceptancePolicyVersion, "evidenceProfileId": task.EvidenceProfileID, "evidenceId": evidence.ID}})
+		}
 	case gateTaskArgs:
 		result.RequiredCapability = "gate:approve"
 		plan.EntityType = "gate_task"
@@ -734,11 +1261,12 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		result.RequiredCapability = "gate:approve"
 		plan.EntityType = "gate"
 		plan.EntityID = args.GateID
-		gate := findGate(snapshot.Gates, args.GateID)
+		gate := FindGateByReference(snapshot.Gates, args.GateID)
 		if gate == nil {
 			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: args.GateID})
 			break
 		}
+		plan.EntityID = gate.ID
 		decisionHash = hashDecision(snapshot, *gate)
 		conditions := make([]domain.GateTaskCondition, 0, len(gate.Conditions))
 		for _, c := range gate.Conditions {
@@ -776,8 +1304,15 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			}
 			evidence = append(evidence, domain.GatePassConditionEvidence{LinkID: c.ID, TaskID: c.TaskID, TaskStatus: domain.TaskStatus(status), Passed: c.PassedAt != nil, PassReason: passReason})
 		}
-		plan.Events = []EventWrite{{Type: "gate.passed", Payload: map[string]any{"gateId": gate.ID, "conditions": evidence}}, {Type: "phase.completed", Payload: map[string]any{"phaseId": from.ID}}, {Type: "phase.activated", Payload: map[string]any{"phaseId": to.ID}}}
-		result.ProjectedDiff = map[string]any{"gate": map[string]string{"id": gate.ID, "after": "passed"}, "phases": []map[string]string{{"id": from.ID, "after": "completed"}, {"id": to.ID, "after": "active"}}}
+		entries := append([]GateEntryTaskProjection(nil), gate.EntryTasks...)
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].TaskID == entries[j].TaskID {
+				return entries[i].SelectionSource < entries[j].SelectionSource
+			}
+			return entries[i].TaskID < entries[j].TaskID
+		})
+		plan.Events = []EventWrite{{Type: "gate.passed", Payload: map[string]any{"gateId": gate.ID, "conditions": evidence, "entryTasks": entries}}, {Type: "phase.completed", Payload: map[string]any{"phaseId": from.ID}}, {Type: "phase.activated", Payload: map[string]any{"phaseId": to.ID}}}
+		result.ProjectedDiff = map[string]any{"gate": map[string]string{"id": gate.ID, "after": "passed"}, "phases": []map[string]string{{"id": from.ID, "after": "completed"}, {"id": to.ID, "after": "active"}}, "entryTasks": entries}
 	case runStartArgs:
 		result.RequiredCapability = "run:operate"
 		plan.EntityType = "run"
@@ -1086,7 +1621,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		for _, existing := range snapshot.Commits {
 			if existing.ID == args.CommitID {
 				requested := CommitReferenceProjection{ID: args.CommitID, TaskID: task.ID, RunID: args.RunID, RepositoryID: args.RepositoryID, CommitSHA: strings.ToLower(strings.TrimSpace(args.CommitSHA)), Relation: string(args.Relation), VerificationState: string(domain.CommitReported)}
-				if existing == requested {
+				if equalCommitReference(existing, requested) {
 					plan.NoWorkspaceRevision, plan.IdempotentNoMutation = true, true
 					result.ProjectedDiff = map[string]any{"commit": existing, "outcome": domain.RunTransitionIdempotent}
 				} else {
@@ -1153,15 +1688,16 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		return result, plan, &CommandError{Code: "invalid_request", Message: "unsupported command"}
 	}
 	result.DecisionSnapshotHash = decisionHash
+	result.EntityType, result.EntityID = plan.EntityType, plan.EntityID
 	result.CommandHash = hashCommand(request.Name, typed, request.Envelope.ExpectedWorkspaceRevision, decisionHash)
 	requiresHumanApproval := requiresHumanApproval(request.Name) || plan.ForceHumanApproval
-	if executing && !requiresHumanApproval && request.Envelope.HumanApprovalAttestation != nil {
+	if executing && !requiresHumanApproval && (request.Envelope.HumanApprovalAttestation != nil || request.Envelope.ApprovalGrantToken != "") {
 		result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeHumanApprovalMismatch, EntityID: plan.EntityID})
 	}
-	if requiresHumanApproval && (!executing || request.Envelope.HumanApprovalAttestation == nil) {
+	if requiresHumanApproval && (!executing || request.Envelope.HumanApprovalAttestation == nil && request.Envelope.ApprovalGrantToken == "") {
 		result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeHumanApprovalRequired, EntityID: plan.EntityID})
 	}
-	if executing && requiresHumanApproval {
+	if executing && requiresHumanApproval && request.Envelope.ApprovalGrantToken == "" {
 		att := request.Envelope.HumanApprovalAttestation
 		valid := att != nil && att.ApprovedCommandHash == result.CommandHash && (decisionHash == "" || att.DecisionSnapshotHash == decisionHash)
 		if valid {
@@ -1186,7 +1722,19 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 		target = &phaseCreateArgs{}
 	case "task.create":
 		target = &taskCreateArgs{}
-	case "gate.create", "gate.attach_task", "gate.detach_task":
+	case "backlog.create":
+		target = &backlogCreateArgs{}
+	case "backlog.update":
+		target = &backlogUpdateArgs{}
+	case "backlog.move":
+		target = &backlogMoveArgs{}
+	case "backlog.reorder":
+		target = &backlogReorderArgs{}
+	case "backlog.discard":
+		target = &backlogDiscardArgs{}
+	case "backlog.promote":
+		target = &backlogPromoteArgs{}
+	case "gate.create", "gate.attach_task", "gate.detach_task", "gate.attach_entry_task", "gate.detach_entry_task":
 		target = &gateMutationArgs{}
 	case "lane.create", "lane.update", "lane.close_out", "lane.discard":
 		target = &laneMutationArgs{}
@@ -1198,6 +1746,12 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 		target = &taskReportImplementedArgs{}
 	case "task.confirm":
 		target = &taskConfirmArgs{}
+	case "task.acceptance_policy.change":
+		target = &acceptancePolicyChangeArgs{}
+	case "task.acceptance_mode.escalate":
+		target = &acceptanceModeEscalateArgs{}
+	case "task.evidence.report":
+		target = &taskEvidenceReportArgs{}
 	case "gate.pass_task", "gate.revoke_task_pass":
 		target = &gateTaskArgs{}
 	case "gate.pass":
@@ -1228,11 +1782,49 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 	if err := decoder.Decode(target); err != nil {
 		return "", nil, &CommandError{Code: "invalid_request", Message: err.Error()}
 	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("arguments must contain exactly one JSON value")
+		}
+		return "", nil, &CommandError{Code: "invalid_request", Message: err.Error()}
+	}
 	switch v := target.(type) {
 	case *phaseCreateArgs:
 		return v.WorkspaceID, *v, nil
 	case *taskCreateArgs:
 		return v.WorkspaceID, *v, nil
+	case *backlogCreateArgs:
+		title, description := v.Title, v.Description
+		return v.WorkspaceID, backlogMutationArgs{
+			WorkspaceID: v.WorkspaceID, BacklogUUID: v.BacklogUUID, LaneID: v.LaneID,
+			Title: &title, Description: &description,
+		}, nil
+	case *backlogUpdateArgs:
+		return v.WorkspaceID, backlogMutationArgs{
+			WorkspaceID: v.WorkspaceID, BacklogPublicID: v.BacklogPublicID,
+			Title: v.Title, Description: v.Description,
+		}, nil
+	case *backlogMoveArgs:
+		return v.WorkspaceID, backlogMutationArgs{
+			WorkspaceID: v.WorkspaceID, BacklogPublicID: v.BacklogPublicID, TargetLaneID: v.TargetLaneID,
+		}, nil
+	case *backlogReorderArgs:
+		return v.WorkspaceID, backlogMutationArgs{
+			WorkspaceID: v.WorkspaceID, LaneID: v.LaneID, OrderedBacklogPublicIDs: v.OrderedBacklogPublicIDs,
+		}, nil
+	case *backlogDiscardArgs:
+		return v.WorkspaceID, backlogMutationArgs{
+			WorkspaceID: v.WorkspaceID, BacklogPublicID: v.BacklogPublicID, Reason: v.Reason,
+		}, nil
+	case *backlogPromoteArgs:
+		return v.WorkspaceID, backlogMutationArgs{
+			WorkspaceID: v.WorkspaceID, BacklogPublicID: v.BacklogPublicID,
+			TaskUUID: v.TaskUUID, PhaseID: v.PhaseID, ParentTaskID: v.ParentTaskID,
+			PredecessorTaskIDs: v.PredecessorTaskIDs, SuccessorTaskIDs: v.SuccessorTaskIDs,
+			TerminalReason: v.TerminalReason, RequestedAcceptanceMode: v.RequestedAcceptanceMode,
+			EvidenceProfileID: v.EvidenceProfileID,
+		}, nil
 	case *gateMutationArgs:
 		return v.WorkspaceID, *v, nil
 	case *laneMutationArgs:
@@ -1244,6 +1836,12 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 	case *taskReportImplementedArgs:
 		return v.WorkspaceID, *v, nil
 	case *taskConfirmArgs:
+		return v.WorkspaceID, *v, nil
+	case *acceptancePolicyChangeArgs:
+		return v.WorkspaceID, *v, nil
+	case *acceptanceModeEscalateArgs:
+		return v.WorkspaceID, *v, nil
+	case *taskEvidenceReportArgs:
 		return v.WorkspaceID, *v, nil
 	case *gateTaskArgs:
 		return v.WorkspaceID, *v, nil
@@ -1273,7 +1871,7 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 
 func requiresHumanApproval(name string) bool {
 	switch name {
-	case "task.confirm", "task.discard", "lane.close_out", "lane.discard", "gate.pass_task", "gate.revoke_task_pass", "gate.pass":
+	case "task.confirm", "task.discard", "task.acceptance_policy.change", "task.acceptance_mode.escalate", "lane.close_out", "lane.discard", "gate.pass_task", "gate.revoke_task_pass", "gate.pass":
 		return true
 	default:
 		return false
@@ -1320,6 +1918,96 @@ func findRecord(values []TaskRecordProjection, id string) *TaskRecordProjection 
 	}
 	return nil
 }
+func findCommit(values []CommitReferenceProjection, id string) *CommitReferenceProjection {
+	for index := range values {
+		if values[index].ID == id {
+			return &values[index]
+		}
+	}
+	return nil
+}
+
+func validVerificationReference(snapshot Snapshot, taskID, kind, reference string) bool {
+	reference = strings.TrimSpace(reference)
+	switch kind {
+	case "task_record":
+		record := findRecord(snapshot.Records, reference)
+		return record != nil && record.TaskID == taskID
+	case "run":
+		run := findRun(snapshot.Runs, reference)
+		return run != nil && run.TaskID == taskID && run.Status == string(domain.RunSucceeded)
+	case "commit_reference":
+		commit := findCommit(snapshot.Commits, reference)
+		return commit != nil && commit.TaskID == taskID
+	case "artifact":
+		parts := strings.SplitN(reference, "#", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+			return false
+		}
+		binding := strings.SplitN(parts[0], ":", 2)
+		if len(binding) != 2 {
+			return false
+		}
+		switch binding[0] {
+		case "record":
+			record := findRecord(snapshot.Records, binding[1])
+			return record != nil && record.TaskID == taskID
+		case "run":
+			run := findRun(snapshot.Runs, binding[1])
+			return run != nil && run.TaskID == taskID && run.Status == string(domain.RunSucceeded)
+		}
+	}
+	return false
+}
+func latestAcceptanceAssignment(values []domain.TaskAcceptanceAssignment, taskID string) *domain.TaskAcceptanceAssignment {
+	var latest *domain.TaskAcceptanceAssignment
+	for index := range values {
+		value := &values[index]
+		if value.TaskID == taskID && (latest == nil || value.Version > latest.Version) {
+			latest = value
+		}
+	}
+	return latest
+}
+func findEvidenceProfile(values []domain.EvidenceProfile, id string) *domain.EvidenceProfile {
+	for index := range values {
+		if values[index].ID == id {
+			return &values[index]
+		}
+	}
+	return nil
+}
+
+func resolveTaskAcceptance(snapshot Snapshot, taskID, requestedMode, profileID string, executing bool) (domain.TaskAcceptanceAssignment, error) {
+	policy := snapshot.AcceptancePolicy
+	if policy.WorkspaceID == "" {
+		policy = domain.AcceptancePolicy{WorkspaceID: snapshot.Workspace.ID, PolicyVersion: "migration-v1", DefaultMode: domain.AcceptanceHumanRequired, EvidenceProfileID: "technical-v1"}
+	}
+	assignment, err := domain.ResolveAcceptance(policy, domain.AcceptanceMode(requestedMode), profileID)
+	if err != nil {
+		return domain.TaskAcceptanceAssignment{}, err
+	}
+	foundProfile := false
+	for _, profile := range snapshot.EvidenceProfiles {
+		if profile.ID == assignment.EvidenceProfileID {
+			foundProfile = true
+			break
+		}
+	}
+	if !foundProfile && len(snapshot.EvidenceProfiles) > 0 {
+		return domain.TaskAcceptanceAssignment{}, &domain.Violation{Code: domain.CodeNotFound}
+	}
+	assignment.ID = "preview-acceptance-assignment"
+	if executing {
+		assignment.ID = randomUUID()
+		if assignment.ID == "" {
+			return domain.TaskAcceptanceAssignment{}, fmt.Errorf("secure acceptance assignment identity generation failed")
+		}
+	}
+	assignment.WorkspaceID = snapshot.Workspace.ID
+	assignment.TaskID = taskID
+	return assignment, nil
+}
 
 func domainRepository(value RepositoryProjection, workspaceID string) domain.Repository {
 	return domain.Repository{ID: value.ID, WorkspaceID: workspaceID, Name: value.Name, RemoteURL: value.RemoteURL, DefaultBranch: value.DefaultBranch, IsRecordRepository: value.IsRecordRepository, TaskRecordsRoot: value.TaskRecordsRoot}
@@ -1353,6 +2041,16 @@ func equalGitObservation(left, right GitObservationProjection) bool {
 		return left.Dirty == nil && right.Dirty == nil
 	}
 	return *left.Dirty == *right.Dirty
+}
+
+func equalCommitReference(left, right CommitReferenceProjection) bool {
+	return left.ID == right.ID &&
+		left.TaskID == right.TaskID &&
+		left.RunID == right.RunID &&
+		left.RepositoryID == right.RepositoryID &&
+		left.CommitSHA == right.CommitSHA &&
+		left.Relation == right.Relation &&
+		left.VerificationState == right.VerificationState
 }
 
 func isUUID(value string) bool {
@@ -1400,7 +2098,18 @@ func hashDecision(snapshot Snapshot, gate GateProjection) string {
 		}
 		rows = append(rows, []any{c.ID, c.TaskID, status, c.PassedAt != nil, c.PassReason != nil})
 	}
-	payload, _ := json.Marshal([]any{gate.ID, gate.CriteriaRevision, gate.FromPhaseID, gate.ToPhaseID, rows, snapshot.Workspace.Revision})
+	entries := append([]GateEntryTaskProjection(nil), gate.EntryTasks...)
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].TaskID == entries[j].TaskID {
+			return entries[i].SelectionSource < entries[j].SelectionSource
+		}
+		return entries[i].TaskID < entries[j].TaskID
+	})
+	entryRows := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		entryRows = append(entryRows, []any{entry.TaskID, entry.SelectionSource})
+	}
+	payload, _ := json.Marshal([]any{gate.ID, gate.CriteriaRevision, gate.FromPhaseID, gate.ToPhaseID, rows, entryRows, snapshot.Workspace.Revision})
 	return sha(payload)
 }
 
@@ -1428,6 +2137,67 @@ func findTaskByPublicID(v []TaskProjection, id int) *TaskProjection {
 	}
 	return nil
 }
+func findBacklogByPublicID(values []BacklogItemProjection, id int) *BacklogItemProjection {
+	for i := range values {
+		if values[i].PublicID == id {
+			return &values[i]
+		}
+	}
+	return nil
+}
+func findLane(values []LaneProjection, id string) *LaneProjection {
+	for i := range values {
+		if values[i].ID == id {
+			return &values[i]
+		}
+	}
+	return nil
+}
+func domainLane(value LaneProjection, workspaceID string) domain.Lane {
+	return domain.Lane{ID: value.ID, WorkspaceID: workspaceID, Name: value.Name, Goal: value.Goal, Summary: value.Summary, State: domain.LaneState(value.State)}
+}
+func domainBacklog(value BacklogItemProjection, workspaceID string) domain.BacklogItem {
+	item := domain.BacklogItem{ID: value.ID, WorkspaceID: workspaceID, PublicID: value.PublicID, LaneID: value.LaneID, Title: value.Title, Description: value.Description, Status: domain.BacklogItemStatus(value.Status), Position: value.Position}
+	if value.PromotedTaskID != nil {
+		item.PromotedTaskID = *value.PromotedTaskID
+	}
+	if value.DiscardReason != nil {
+		item.DiscardReason = *value.DiscardReason
+	}
+	return item
+}
+func domainBacklogItems(values []BacklogItemProjection, workspaceID string) []domain.BacklogItem {
+	out := make([]domain.BacklogItem, 0, len(values))
+	for _, value := range values {
+		out = append(out, domainBacklog(value, workspaceID))
+	}
+	return out
+}
+func replaceDomainBacklog(values []BacklogItemProjection, replacement domain.BacklogItem, workspaceID string) []domain.BacklogItem {
+	out := domainBacklogItems(values, workspaceID)
+	for i := range out {
+		if out[i].ID == replacement.ID {
+			out[i] = replacement
+		}
+	}
+	return out
+}
+func backlogProjection(value domain.BacklogItem) BacklogItemProjection {
+	projected := BacklogItemProjection{ID: value.ID, PublicID: value.PublicID, LaneID: value.LaneID, Title: value.Title, Description: value.Description, Status: string(value.Status), Position: value.Position}
+	if value.PromotedTaskID != "" {
+		projected.PromotedTaskID = &value.PromotedTaskID
+	}
+	if value.DiscardReason != "" {
+		projected.DiscardReason = &value.DiscardReason
+	}
+	return projected
+}
+func stringPointerValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
 func findTask(v []TaskProjection, id string) *TaskProjection {
 	for i := range v {
 		if v[i].ID == id {
@@ -1440,6 +2210,27 @@ func findGate(v []GateProjection, id string) *GateProjection {
 	for i := range v {
 		if v[i].ID == id {
 			return &v[i]
+		}
+	}
+	return nil
+}
+func FindGateByReference(values []GateProjection, reference string) *GateProjection {
+	trimmed := strings.TrimSpace(reference)
+	if domain.IsReservedGatePublicReference(trimmed) {
+		publicID, _ := strconv.Atoi(trimmed[2:])
+		for index := range values {
+			if values[index].PublicID == publicID {
+				return &values[index]
+			}
+		}
+		return nil
+	}
+	if exact := findGate(values, reference); exact != nil {
+		return exact
+	}
+	for index := range values {
+		if values[index].Alias != "" && strings.EqualFold(values[index].Alias, trimmed) {
+			return &values[index]
 		}
 	}
 	return nil
@@ -1495,7 +2286,7 @@ func domainPhase(value PhaseProjection, workspaceID string) domain.Phase {
 }
 
 func domainGate(value GateProjection, workspaceID string) domain.Gate {
-	return domain.Gate{ID: value.ID, WorkspaceID: workspaceID, FromPhaseID: value.FromPhaseID, ToPhaseID: value.ToPhaseID, PassedAt: value.PassedAt, CriteriaRevision: value.CriteriaRevision}
+	return domain.Gate{ID: value.ID, PublicID: value.PublicID, Alias: value.Alias, WorkspaceID: workspaceID, FromPhaseID: value.FromPhaseID, ToPhaseID: value.ToPhaseID, PassedAt: value.PassedAt, CriteriaRevision: value.CriteriaRevision}
 }
 
 func stringValue(value *string) string {

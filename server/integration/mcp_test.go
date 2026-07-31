@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 	if testDatabaseURL == "" {
 		t.Fatal("BALEY_TEST_DATABASE_URL is required when BALEY_MCP_E2E is set")
 	}
+	requireDisposableDatabase(t, testDatabaseURL)
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "mcp-stdio-e2e-audit-secret")
 	auditRepo, err := postgres.Open(ctx, testDatabaseURL)
 	if err != nil {
@@ -48,29 +50,52 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 39 {
+	if len(tools.Tools) != 65 {
 		t.Fatalf("tool count=%d", len(tools.Tools))
 	}
 	want := map[string]bool{
 		"baley_workspace_get": true, "baley_workspace_graph": true, "baley_task_get": true,
-		"baley_gate_status": true, "baley_decision_list": true, "baley_event_list": true,
-		"baley_run_list": true, "baley_record_list": true,
+		"baley_lane_brief":                            true,
+		"baley_task_acceptance_get":                   true,
+		"baley_task_evidence_report":                  true,
+		"baley_task_acceptance_policy_change_preview": true,
+		"baley_task_acceptance_policy_change_execute": true,
+		"baley_task_acceptance_mode_escalate_preview": true,
+		"baley_task_acceptance_mode_escalate_execute": true,
+		"baley_gate_status":                           true, "baley_decision_list": true, "baley_event_list": true,
+		"baley_mutation_attempt_list": true,
+		"baley_run_list":              true, "baley_record_list": true,
 		"baley_run_start": true, "baley_run_heartbeat": true, "baley_run_succeed": true,
 		"baley_run_fail": true, "baley_run_cancel": true, "baley_run_interrupt": true,
 		"baley_run_correct": true, "baley_repository_register": true, "baley_record_register": true,
 		"baley_record_attach_commit": true, "baley_commit_attach": true, "baley_git_observe": true,
 		"baley_task_report_implemented": true,
 		"baley_task_create_preview":     true, "baley_task_create_execute": true,
+		"baley_backlog_list": true, "baley_backlog_get": true,
+		"baley_backlog_create_preview": true, "baley_backlog_create_execute": true,
+		"baley_backlog_update_preview": true, "baley_backlog_update_execute": true,
+		"baley_backlog_move_preview": true, "baley_backlog_move_execute": true,
+		"baley_backlog_reorder_preview": true, "baley_backlog_reorder_execute": true,
+		"baley_backlog_discard_preview": true, "baley_backlog_discard_execute": true,
+		"baley_backlog_promote_preview": true, "baley_backlog_promote_execute": true,
 		"baley_phase_create_preview": true, "baley_phase_create_execute": true,
 		"baley_lane_create_preview": true, "baley_lane_create_execute": true,
 		"baley_gate_create_preview": true, "baley_gate_create_execute": true,
 		"baley_gate_attach_task_preview": true, "baley_gate_attach_task_execute": true,
+		"baley_gate_attach_entry_task_preview": true, "baley_gate_attach_entry_task_execute": true,
+		"baley_gate_detach_entry_task_preview": true, "baley_gate_detach_entry_task_execute": true,
 		"baley_task_confirm_preview": true, "baley_task_confirm_execute": true,
 		"baley_gate_pass_task_preview": true, "baley_gate_pass_task_execute": true,
 		"baley_gate_revoke_task_pass_preview": true, "baley_gate_revoke_task_pass_execute": true,
 		"baley_gate_pass_preview": true, "baley_gate_pass_execute": true,
 	}
 	for _, tool := range tools.Tools {
+		if tool.Name == "baley_backlog_promote_execute" {
+			schema, marshalErr := json.Marshal(tool.InputSchema)
+			if marshalErr != nil || !strings.Contains(string(schema), `"acknowledgedWarningCodes"`) {
+				t.Fatalf("backlog promote execute warning acknowledgement missing: %s %v", schema, marshalErr)
+			}
+		}
 		if tool.Name == "baley_task_confirm_execute" {
 			schema, marshalErr := json.Marshal(tool.InputSchema)
 			if marshalErr != nil || !strings.Contains(string(schema), `"acknowledgedWarningCodes"`) || !strings.Contains(string(schema), `"proceedReason"`) {
@@ -85,6 +110,22 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 			assertTaskCreateSchema(t, tool.Name, schema, tool.Name == "baley_task_create_execute")
 		}
 		if fields, ok := structuralToolRequiredFields(tool.Name); ok {
+			schema, marshalErr := json.Marshal(tool.InputSchema)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			assertStructuralCreateSchema(t, tool.Name, schema, fields)
+			if strings.HasPrefix(tool.Name, "baley_gate_create_") {
+				var decoded struct {
+					Properties map[string]json.RawMessage `json:"properties"`
+					Required   []string                   `json:"required"`
+				}
+				if json.Unmarshal(schema, &decoded) != nil || decoded.Properties["alias"] == nil || slices.Contains(decoded.Required, "alias") {
+					t.Fatalf("%s Gate alias schema boundary is invalid: %s", tool.Name, schema)
+				}
+			}
+		}
+		if fields, ok := backlogToolRequiredFields(tool.Name); ok {
 			schema, marshalErr := json.Marshal(tool.InputSchema)
 			if marshalErr != nil {
 				t.Fatal(marshalErr)
@@ -270,14 +311,16 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 		CommandHash   string `json:"commandHash"`
 		ProjectedDiff struct {
 			Task struct {
-				PublicID int `json:"PublicID"`
+				Task struct {
+					PublicID int `json:"PublicID"`
+				} `json:"task"`
 			} `json:"task"`
 		} `json:"projectedDiff"`
 		Warnings []struct {
 			Code string `json:"code"`
 		} `json:"warnings"`
 	}
-	if json.Unmarshal(raw, &createPreview) != nil || createPreview.CommandHash == "" || createPreview.ProjectedDiff.Task.PublicID != 111 || len(createPreview.Warnings) != 1 || createPreview.Warnings[0].Code != "phase_order_inversion" {
+	if json.Unmarshal(raw, &createPreview) != nil || createPreview.CommandHash == "" || createPreview.ProjectedDiff.Task.Task.PublicID != 111 || len(createPreview.Warnings) != 1 || createPreview.Warnings[0].Code != "phase_order_inversion" {
 		t.Fatalf("task.create preview projection invalid: %#v", result.StructuredContent)
 	}
 	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_workspace_graph", Arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID}})
@@ -399,7 +442,7 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 		{
 			previewTool: "baley_gate_create_preview", executeTool: "baley_gate_create_execute",
 			eventType: "gate.created", entityID: gateID,
-			arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID, "gateId": gateID, "name": "Embedding Entry", "fromPhaseId": "validate", "toPhaseId": phaseID},
+			arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID, "gateId": gateID, "alias": "embedding-entry-" + structuralSuffix, "name": "Embedding Entry", "fromPhaseId": "validate", "toPhaseId": phaseID},
 		},
 		{
 			previewTool: "baley_gate_attach_task_preview", executeTool: "baley_gate_attach_task_execute",
@@ -486,6 +529,16 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 		}
 		structuralRevision = executeResult.WorkspaceRevision
 	}
+	for _, gateReference := range []string{"G#2", "embedding-entry-" + structuralSuffix} {
+		result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_gate_status", Arguments: map[string]any{
+			"workspaceId": postgresDemoWorkspaceID,
+			"gateId":      gateReference,
+		}})
+		raw, _ = json.Marshal(result.StructuredContent)
+		if err != nil || result.IsError || !strings.Contains(string(raw), `"publicId":2`) || !strings.Contains(string(raw), gateID) {
+			t.Fatalf("Gate reference %s did not resolve through typed MCP: %s %v", gateReference, raw, err)
+		}
+	}
 
 	activeGateTaskUUID := testMCPUUID(t)
 	activeGateTaskKey := testMCPUUID(t)
@@ -505,18 +558,20 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 		WorkspaceRevision int64 `json:"workspaceRevision"`
 		Projection        struct {
 			Task struct {
-				PublicID int `json:"PublicID"`
+				Task struct {
+					PublicID int `json:"PublicID"`
+				} `json:"task"`
 			} `json:"task"`
 		} `json:"projection"`
 	}
-	if err != nil || result.IsError || json.Unmarshal(raw, &activeGateTaskResult) != nil || activeGateTaskResult.WorkspaceRevision != structuralRevision+1 || activeGateTaskResult.Projection.Task.PublicID == 0 {
+	if err != nil || result.IsError || json.Unmarshal(raw, &activeGateTaskResult) != nil || activeGateTaskResult.WorkspaceRevision != structuralRevision+1 || activeGateTaskResult.Projection.Task.Task.PublicID == 0 {
 		t.Fatalf("active Gate fixture Task execute failed: %s %v", raw, err)
 	}
 	structuralRevision = activeGateTaskResult.WorkspaceRevision
 
 	activeAttachPreviewKey := testMCPUUID(t)
 	activeAttachPreviewArguments := map[string]any{
-		"workspaceId": postgresDemoWorkspaceID, "gateId": "pilot-ready", "taskId": activeGateTaskResult.Projection.Task.PublicID,
+		"workspaceId": postgresDemoWorkspaceID, "gateId": "pilot-ready", "taskId": activeGateTaskResult.Projection.Task.Task.PublicID,
 		"expectedWorkspaceRevision": structuralRevision, "idempotencyKey": activeAttachPreviewKey,
 		"executedByActorId": "00000000-0000-4000-8000-000000000003", "initiatedByActorId": "00000000-0000-4000-8000-000000000002",
 	}
@@ -584,6 +639,71 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 		if !strings.Contains(string(raw), `"eventType":"`+mutation.eventType+`"`) {
 			t.Fatalf("missing %s Event evidence: %s", mutation.eventType, raw)
 		}
+	}
+
+	backlogUUID, backlogKey := testMCPUUID(t), testMCPUUID(t)
+	backlogCreate := map[string]any{
+		"workspaceId": postgresDemoWorkspaceID, "backlogUuid": backlogUUID, "laneId": "client",
+		"title": "MCP backlog candidate", "description": "Phase-free typed intake.",
+		"expectedWorkspaceRevision": activeAttachResult.WorkspaceRevision, "idempotencyKey": backlogKey,
+		"executedByActorId": "00000000-0000-4000-8000-000000000003",
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_backlog_create_preview", Arguments: backlogCreate})
+	if err != nil || result.IsError {
+		t.Fatalf("backlog.create preview failed: %#v %v", result.StructuredContent, err)
+	}
+	var backlogRowsBefore int
+	if err = auditRepo.Pool.QueryRow(ctx, "SELECT count(*) FROM backlog_items WHERE workspace_id=$1", postgresDemoWorkspaceID).Scan(&backlogRowsBefore); err != nil || backlogRowsBefore != 0 {
+		t.Fatalf("backlog preview wrote state: %d %v", backlogRowsBefore, err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_backlog_create_execute", Arguments: backlogCreate})
+	raw, _ = json.Marshal(result.StructuredContent)
+	var backlogCreated struct {
+		WorkspaceRevision int64 `json:"workspaceRevision"`
+		Projection        struct {
+			PublicID int `json:"publicId"`
+		} `json:"projection"`
+	}
+	if err != nil || result.IsError || json.Unmarshal(raw, &backlogCreated) != nil || backlogCreated.Projection.PublicID != 1 || backlogCreated.WorkspaceRevision != activeAttachResult.WorkspaceRevision+1 {
+		t.Fatalf("backlog.create execute failed: %s %v", raw, err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_backlog_list", Arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID, "laneId": "client", "status": "active"}})
+	raw, _ = json.Marshal(result.StructuredContent)
+	if err != nil || result.IsError || !strings.Contains(string(raw), `"publicId":1`) {
+		t.Fatalf("backlog.list failed: %s %v", raw, err)
+	}
+
+	promoteKey, promotedTaskUUID := testMCPUUID(t), testMCPUUID(t)
+	backlogPromote := map[string]any{
+		"workspaceId": postgresDemoWorkspaceID, "backlogPublicId": 1, "taskUuid": promotedTaskUUID,
+		"phaseId": "validate", "terminalReason": "MCP backlog promotion E2E leaf",
+		"expectedWorkspaceRevision": backlogCreated.WorkspaceRevision, "idempotencyKey": promoteKey,
+		"executedByActorId": "00000000-0000-4000-8000-000000000003",
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_backlog_promote_preview", Arguments: backlogPromote})
+	if err != nil || result.IsError {
+		t.Fatalf("backlog.promote preview failed: %#v %v", result.StructuredContent, err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_backlog_promote_execute", Arguments: backlogPromote})
+	raw, _ = json.Marshal(result.StructuredContent)
+	var backlogPromoted struct {
+		WorkspaceRevision int64 `json:"workspaceRevision"`
+		Projection        struct {
+			TaskPublicID int `json:"taskPublicId"`
+		} `json:"projection"`
+	}
+	if err != nil || result.IsError || json.Unmarshal(raw, &backlogPromoted) != nil || backlogPromoted.Projection.TaskPublicID == 0 || backlogPromoted.WorkspaceRevision != backlogCreated.WorkspaceRevision+1 {
+		t.Fatalf("backlog.promote execute failed: %s %v", raw, err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_backlog_get", Arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID, "backlogPublicId": 1}})
+	raw, _ = json.Marshal(result.StructuredContent)
+	if err != nil || result.IsError || !strings.Contains(string(raw), `"status":"promoted"`) || !strings.Contains(string(raw), promotedTaskUUID) {
+		t.Fatalf("backlog promoted provenance missing: %s %v", raw, err)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "baley_workspace_graph", Arguments: map[string]any{"workspaceId": postgresDemoWorkspaceID}})
+	raw, _ = json.Marshal(result.StructuredContent)
+	if err != nil || result.IsError || strings.Contains(string(raw), `"publicId":1,"laneId":"client","title":"MCP backlog candidate"`) {
+		t.Fatalf("promoted backlog remained in active graph: %s %v", raw, err)
 	}
 }
 
@@ -654,6 +774,28 @@ func structuralToolRequiredFields(name string) ([]string, bool) {
 		fields = []string{"gateId", "name", "fromPhaseId", "toPhaseId"}
 	case strings.HasPrefix(name, "baley_gate_attach_task_"):
 		fields = []string{"gateId", "taskId"}
+	default:
+		return nil, false
+	}
+	return append(common, fields...), true
+}
+
+func backlogToolRequiredFields(name string) ([]string, bool) {
+	common := []string{"workspaceId", "expectedWorkspaceRevision", "idempotencyKey", "executedByActorId"}
+	var fields []string
+	switch {
+	case strings.HasPrefix(name, "baley_backlog_create_"):
+		fields = []string{"backlogUuid", "laneId", "title"}
+	case strings.HasPrefix(name, "baley_backlog_update_"):
+		fields = []string{"backlogPublicId"}
+	case strings.HasPrefix(name, "baley_backlog_move_"):
+		fields = []string{"backlogPublicId", "targetLaneId"}
+	case strings.HasPrefix(name, "baley_backlog_reorder_"):
+		fields = []string{"laneId", "orderedBacklogPublicIds"}
+	case strings.HasPrefix(name, "baley_backlog_discard_"):
+		fields = []string{"backlogPublicId", "reason"}
+	case strings.HasPrefix(name, "baley_backlog_promote_"):
+		fields = []string{"backlogPublicId", "taskUuid", "phaseId"}
 	default:
 		return nil, false
 	}

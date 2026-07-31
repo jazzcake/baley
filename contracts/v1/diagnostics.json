@@ -25,7 +25,13 @@
     "run_lease_mismatch",
     "idempotency_conflict",
     "invalid_record_path",
-    "record_hash_conflict"
+    "record_hash_conflict",
+    "invalid_backlog_patch",
+    "backlog_lane_unchanged",
+    "backlog_order_mismatch",
+    "backlog_order_unchanged",
+    "invalid_backlog_filter",
+    "lane_has_active_backlog"
   ],
   "warnings": [
     "missing_detailed_plan_record",
@@ -37,7 +43,8 @@
     "workspace_close_residual_task",
     "workspace_close_active_lane",
     "stale_branch_observation",
-    "record_hash_changed"
+    "record_hash_changed",
+    "workspace_close_residual_backlog"
   ],
   "advisories": [
     "residual_risk_reported",

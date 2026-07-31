@@ -73,15 +73,20 @@ var queryNames = map[string]bool{
 	"task.get": true, "task.list": true, "task.context": true,
 	"gate.status": true, "run.list": true, "record.list": true,
 	"event.list": true, "decision.list": true,
+	"backlog.list": true, "backlog.get": true,
+	"mutation-attempt.list": true,
 }
 
 var primaryArgument = map[string]string{
 	"lane.brief": "laneId",
 	"task.get":   "taskId", "task.context": "taskId",
-	"gate.status": "gateId",
+	"gate.status":    "gateId",
+	"backlog.get":    "backlogPublicId",
+	"backlog.update": "backlogPublicId", "backlog.move": "backlogPublicId", "backlog.discard": "backlogPublicId", "backlog.promote": "backlogPublicId",
 	"lane.update": "laneId", "lane.close_out": "laneId", "lane.discard": "laneId",
 	"task.update": "taskId", "task.set_terminal": "taskId", "task.clear_terminal": "taskId", "task.block": "taskId", "task.unblock": "taskId", "task.report_implemented": "taskId", "task.confirm": "taskId", "task.discard": "taskId", "task.rework": "taskId",
-	"gate.attach_task": "gateId", "gate.detach_task": "gateId", "gate.pass": "gateId",
+	"task.evidence.report": "taskId", "task.acceptance_mode.escalate": "taskId",
+	"gate.attach_task": "gateId", "gate.detach_task": "gateId", "gate.attach_entry_task": "gateId", "gate.detach_entry_task": "gateId", "gate.pass": "gateId",
 	"gate.pass_task": "gateTaskId", "gate.revoke_task_pass": "gateTaskId",
 	"run.start": "taskId", "run.heartbeat": "runId", "run.succeed": "runId", "run.fail": "runId", "run.cancel": "runId", "run.interrupt": "runId", "run.correct": "runId",
 	"record.register": "recordId", "record.attach_commit": "recordId",

@@ -1,46 +1,151 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Background, Panel, ReactFlow, ViewportPortal, useStore, useStoreApi, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ChevronRight, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, RotateCcw } from "lucide-react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { fetchGraph } from "./api/client";
+import { APIError } from "./api/http";
+import { AuthProvider, useAuth } from "./auth/AuthProvider";
+import type { Account, WorkspaceMembership } from "./auth/model";
 import { canvasKey, connectedTaskIds, defaultGateFocusId, laneFocusTaskIds, visibleTaskIds, type ViewSpec } from "./graph/projection";
 import { laneBandRect, laneLabelTop, layoutGraph, type GraphLayout } from "./graph/layout";
 import { fitViewportToCanvas, zoomViewportAtCenter } from "./graph/viewport";
 import { INSPECTOR_DEFAULT_WIDTH, INSPECTOR_MAX_WIDTH, INSPECTOR_MIN_WIDTH, inspectorWidthFromKey, inspectorWidthFromPointer } from "./layout/inspector";
 import { TaskNode } from "./components/TaskNode";
 import { GateNode } from "./components/GateNode";
+import { BacklogList, BacklogRail } from "./components/BacklogRail";
+import { LaneAnchorColumn } from "./components/LaneAnchorColumn";
+import { laneColorMap } from "./components/lane-palette";
+import { LoginScreen, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
+import { traceViewer } from "./debug/viewer-trace";
 import type { GateLinkKind, Task, WorkspaceFixture } from "./domain/model";
 
 const nodeTypes = { task: TaskNode, gate: GateNode };
 const MIN_ZOOM = 0.55;
 const MAX_ZOOM = 1.55;
+let graphRequestGeneration = 0;
 
 function traceCanvas(event: string, details: Record<string, unknown>) {
   if (import.meta.env.DEV) console.info(`[Baley canvas] ${event}`, details);
 }
-const laneColors: Record<string, string> = {
-  server: "#00a887",
-  client: "#579bfc",
-  art: "#fdab3d",
-  research: "#a25ddc",
-};
+function viewFromLocation(pathname: string): ViewSpec {
+  const lane = pathname.match(/\/lanes\/([^/]+)$/)?.[1];
+  const gate = pathname.match(/\/gates\/([^/]+)$/)?.[1];
+  const decode = (value: string) => {
+    try { return decodeURIComponent(value); } catch { return value; }
+  };
+  return lane ? { kind: "lane", id: decode(lane) } : gate ? { kind: "gate", id: decode(gate) } : { kind: "multi" };
+}
 
-function viewFromLocation(): ViewSpec {
-  const lane = location.pathname.match(/^\/lanes\/([^/]+)/)?.[1];
-  const gate = location.pathname.match(/^\/gates\/([^/]+)/)?.[1];
-  return lane ? { kind: "lane", id: lane } : gate ? { kind: "gate", id: gate } : { kind: "multi" };
+export function resolveGateReference(gates: WorkspaceFixture["gates"], reference: string) {
+  const publicMatch = reference.match(/^G#([1-9]\d*)$/i);
+  if (publicMatch) {
+    const publicId = Number(publicMatch[1]);
+    const gate = gates.find((item) => item.publicId === publicId);
+    if (gate) return gate;
+    return undefined;
+  }
+  const exact = gates.find((gate) => gate.id === reference);
+  if (exact) return exact;
+  return gates.find((gate) => gate.alias?.toLowerCase() === reference.trim().toLowerCase());
 }
 
 export default function App() {
+  return <BrowserRouter><AuthProvider><AppRoutes /></AuthProvider></BrowserRouter>;
+}
+
+function AppRoutes() {
+  const auth = useAuth();
+  if (auth.state.status === "booting") {
+    return <main className="server-state" data-auth-state="booting"><h1>Baley</h1><p>계정과 Workspace를 확인하는 중입니다…</p></main>;
+  }
+  if (auth.state.status === "unavailable") {
+    return <main className="server-state error" data-auth-state="unavailable">
+      <h1>Authentication unavailable</h1><p>{auth.state.message}</p>
+      <button className="primary-button server-retry" type="button" onClick={auth.retryBootstrap}>다시 시도</button>
+    </main>;
+  }
+  if (auth.state.status === "anonymous") {
+    return <Routes>
+      <Route path="/login" element={<LoginScreen onLogin={auth.login} />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
+    </Routes>;
+  }
+  return <Routes>
+    <Route path="/login" element={<Navigate to="/workspaces" replace />} />
+    <Route path="/workspaces" element={<WorkspaceChooser account={auth.state.account} memberships={auth.state.memberships} />} />
+    <Route path="/workspaces/:workspaceId/*" element={<WorkspaceRoute />} />
+    <Route path="*" element={<Navigate to={auth.state.memberships.length === 1 ? `/workspaces/${encodeURIComponent(auth.state.memberships[0]!.id)}` : "/workspaces"} replace />} />
+  </Routes>;
+}
+
+function WorkspaceRoute() {
+  const { workspaceId = "" } = useParams();
+  const auth = useAuth();
+  if (auth.state.status !== "authenticated") return null;
+  const membership = auth.state.memberships.find((item) => item.id === workspaceId);
+  if (!membership) {
+    return <main className="server-state error" data-auth-state="authenticated">
+      <h1>Workspace access unavailable</h1>
+      <p>이 계정이 참여 중인 Workspace가 아닙니다.</p>
+      <a href="/workspaces">Workspace 목록으로 돌아가기</a>
+    </main>;
+  }
+  return <WorkspaceViewer
+    key={workspaceId}
+    workspaceId={workspaceId}
+    membership={membership}
+    memberships={auth.state.memberships}
+    account={auth.state.account}
+    csrfToken={auth.state.csrfToken}
+    onLogout={auth.logout}
+    onMembershipsChanged={auth.refreshWorkspaces}
+    onSessionExpired={auth.expireSession}
+  />;
+}
+
+function WorkspaceViewer({
+  workspaceId,
+  membership,
+  memberships,
+  account,
+  csrfToken,
+  onLogout,
+  onMembershipsChanged,
+  onSessionExpired,
+}: {
+  workspaceId: string;
+  membership: WorkspaceMembership;
+  memberships: WorkspaceMembership[];
+  account: Account;
+  csrfToken: string;
+  onLogout: () => Promise<void>;
+  onMembershipsChanged: () => Promise<void>;
+  onSessionExpired: () => void;
+}) {
+  const location = useLocation();
+  const routeNavigate = useNavigate();
   const [fixture, setFixture] = useState<WorkspaceFixture | undefined>();
   const [loadError, setLoadError] = useState<string>();
-  const graph: WorkspaceFixture = fixture ?? { workspace: { id: "", name: "Baley", revision: 0 }, phases: [], lanes: [], tasks: [], dependencies: [], gates: [], gateLinks: [], decisions: [] };
-  const [view, setView] = useState<ViewSpec>(viewFromLocation);
-  const [selectedId, setSelectedId] = useState<string | undefined>(() => new URLSearchParams(location.search).get("task") ?? undefined);
+  const graph: WorkspaceFixture = fixture ?? { workspace: { id: "", name: "Baley", revision: 0 }, phases: [], lanes: [], tasks: [], backlogItems: [], dependencies: [], gates: [], gateLinks: [], decisions: [] };
+  const routeView = useMemo(() => viewFromLocation(location.pathname), [location.pathname]);
+  const view = useMemo<ViewSpec>(() => {
+    if (routeView.kind !== "gate") return routeView;
+    const gate = resolveGateReference(graph.gates, routeView.id);
+    return gate ? { kind: "gate", id: gate.id } : routeView;
+  }, [graph.gates, routeView]);
+  const selectedId = useMemo(() => new URLSearchParams(location.search).get("task") ?? undefined, [location.search]);
   const [layout, setLayout] = useState<GraphLayout | undefined>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
+  const [backlogListOpen, setBacklogListOpen] = useState(false);
+  const backlogExpandButtonRef = useRef<HTMLButtonElement | null>(null);
+  const graphStageRef = useRef<HTMLDivElement>(null);
+  const requestGenerationRef = useRef(0);
+  const routeNavigateRef = useRef(routeNavigate);
+  routeNavigateRef.current = routeNavigate;
   const visible = useMemo(() => visibleTaskIds(graph, view), [graph, view]);
+  const laneColors = useMemo(() => laneColorMap(graph.lanes), [graph.lanes]);
   const laneFocus = useMemo(
     () => view.kind === "lane" ? laneFocusTaskIds(graph, view.id) : undefined,
     [graph, view],
@@ -49,26 +154,97 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    void layoutGraph(graph, visible).then((nextLayout) => { if (active) setLayout(nextLayout); });
+    void layoutGraph(graph, visible, view.kind !== "gate").then((nextLayout) => { if (active) setLayout(nextLayout); });
     return () => { active = false; };
-  }, [graph, visible]);
+  }, [graph, visible, view.kind]);
   useEffect(() => {
     let active = true;
-    const refresh = () => void fetchGraph().then((next) => {
-      if (!active) return;
-      setFixture((current) => current && JSON.stringify(current) === JSON.stringify(next) ? current : next);
-      setLoadError(undefined);
-    }).catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Server unavailable"); });
+    let controller: AbortController | undefined;
+    setFixture(undefined);
+    setLayout(undefined);
+    setBacklogListOpen(false);
+    const refresh = () => {
+      controller?.abort();
+      controller = new AbortController();
+      const generation = ++graphRequestGeneration;
+      requestGenerationRef.current = generation;
+      const requestId = `${workspaceId}:${generation}:${Date.now()}`;
+      traceViewer("graph:request", {
+        event: "refresh",
+        targetWorkspaceId: workspaceId,
+        authState: "authenticated",
+        route: location.pathname,
+        requestGeneration: generation,
+        requestId,
+        controllerState: "active",
+      });
+      void fetchGraph(workspaceId, controller.signal).then((next) => {
+        if (!active || requestGenerationRef.current !== generation || next.workspace.id !== workspaceId) {
+          traceViewer("graph:response-ignored", {
+            targetWorkspaceId: workspaceId,
+            responseWorkspaceId: next.workspace.id,
+            requestGeneration: generation,
+            currentGeneration: requestGenerationRef.current,
+          });
+          return;
+        }
+        setFixture((current) => current && JSON.stringify(current) === JSON.stringify(next) ? current : next);
+        setLoadError(undefined);
+        traceViewer("graph:store-committed", {
+          targetWorkspaceId: workspaceId,
+          committedGraphWorkspaceId: next.workspace.id,
+          requestGeneration: generation,
+          revision: next.workspace.revision,
+        });
+        window.requestAnimationFrame(() => {
+          const rendered = document.querySelector<HTMLElement>("[data-workspace-id]");
+          traceViewer("graph:dom-rendered", {
+            targetWorkspaceId: workspaceId,
+            committedGraphWorkspaceId: next.workspace.id,
+            renderedWorkspaceId: rendered?.dataset.workspaceId,
+            requestGeneration: generation,
+          });
+        });
+      }).catch((error: unknown) => {
+        if (!active || controller?.signal.aborted) return;
+        if (error instanceof APIError && error.status === 401) {
+          onSessionExpired();
+          return;
+        }
+        if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
+          setFixture(undefined);
+          traceViewer("workspace-access:revoked", {
+            targetWorkspaceId: workspaceId,
+            status: error.status,
+            requestGeneration: generation,
+          });
+          void onMembershipsChanged().finally(() => routeNavigateRef.current("/workspaces", { replace: true }));
+          return;
+        }
+        setLoadError(error instanceof Error ? error.message : "Server unavailable");
+      });
+    };
     refresh();
     const timer = window.setInterval(refresh, 2000);
     window.addEventListener("focus", refresh);
-    return () => { active = false; window.clearInterval(timer); window.removeEventListener("focus", refresh); };
-  }, []);
+    return () => {
+      active = false;
+      controller?.abort();
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      traceViewer("graph:request-aborted", {
+        targetWorkspaceId: workspaceId,
+        requestGeneration: requestGenerationRef.current,
+        controllerState: "aborted",
+      });
+    };
+  }, [workspaceId, onSessionExpired, onMembershipsChanged]);
   useEffect(() => {
-    const path = view.kind === "multi" ? "/" : view.kind === "lane" ? `/lanes/${view.id}` : `/gates/${view.id}`;
-    const query = selectedId ? `?task=${selectedId}` : "";
-    window.history.replaceState({}, "", path + query);
-  }, [view, selectedId]);
+    const stage = graphStageRef.current;
+    if (!stage) return;
+    if (backlogListOpen) stage.setAttribute("inert", "");
+    else stage.removeAttribute("inert");
+  }, [backlogListOpen]);
   const nodes = useMemo<Node[]>(() => {
     const taskNodes: Node[] = graph.tasks.filter((task) => visible.has(task.id)).map((task) => ({
       id: task.id, type: "task", position: layout?.taskPositions.get(task.id) ?? { x: 0, y: 0 }, selected: task.id === selectedId,
@@ -92,7 +268,7 @@ export default function App() {
     ).map((gate) => {
       const required = graph.gateLinks.filter((link) => link.gateId === gate.id && link.kind === "required");
       const done = required.filter((link) => link.satisfied).length;
-      return { id: gate.id, type: "gate", position: layout?.gatePositions.get(gate.id) ?? { x: 0, y: 0 }, selected: gate.id === selectedId, data: { title: gate.name, status: gate.status, summary: `${done}/${required.length} conditions satisfied`, dimmed: Boolean(selectedId && selectedId !== gate.id && !graph.gateLinks.some((link) => link.gateId === gate.id && link.taskId === selectedId)) } };
+      return { id: gate.id, type: "gate", position: layout?.gatePositions.get(gate.id) ?? { x: 0, y: 0 }, selected: gate.id === selectedId, data: { title: gate.name, publicId: gate.publicId, alias: gate.alias, gateId: gate.id, status: gate.status, summary: `${done}/${required.length} conditions satisfied`, dimmed: Boolean(selectedId && selectedId !== gate.id && !graph.gateLinks.some((link) => link.gateId === gate.id && link.taskId === selectedId)) } };
     });
     return [...taskNodes, ...gateNodes];
   }, [graph, visible, layout, selectedId, connected, laneFocus, view]);
@@ -129,12 +305,44 @@ export default function App() {
   const selectedGate = graph.gates.find((gate) => gate.id === selectedId);
   const defaultLaneId = graph.lanes.find((lane) => lane.name === "Client")?.id ?? graph.lanes[0]?.id;
   const defaultGateId = defaultGateFocusId(graph);
-  const navigate = (next: ViewSpec) => { setView(next); setSelectedId(undefined); };
+  const workspaceBase = `/workspaces/${encodeURIComponent(workspaceId)}`;
+  const workspaceContextLabel = backlogListOpen
+    ? "Lane backlog"
+    : view.kind === "lane"
+      ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane`
+      : view.kind === "gate"
+        ? (() => {
+            const gate = graph.gates.find((item) => item.id === view.id);
+            return gate ? `G#${gate.publicId} ${gate.name} gate` : "Unknown gate";
+          })()
+        : undefined;
+  const setSelectedId = (nextSelectedId: string | undefined) => {
+    routeNavigate({
+      pathname: location.pathname,
+      search: nextSelectedId ? `?task=${encodeURIComponent(nextSelectedId)}` : "",
+    }, { replace: true });
+  };
+  const navigate = (next: ViewSpec) => {
+    const path = next.kind === "multi"
+      ? workspaceBase
+      : next.kind === "lane"
+        ? `${workspaceBase}/lanes/${encodeURIComponent(next.id)}`
+        : (() => {
+            const gate = graph.gates.find((item) => item.id === next.id);
+            return `${workspaceBase}/gates/${encodeURIComponent(gate ? `G#${gate.publicId}` : next.id)}`;
+          })();
+    routeNavigate(path);
+    setBacklogListOpen(false);
+  };
+  const closeBacklogList = () => {
+    setBacklogListOpen(false);
+    window.setTimeout(() => backlogExpandButtonRef.current?.focus(), 0);
+  };
 
-  if (!fixture && !loadError) return <main className="server-state"><h1>Baley</h1><p>Workspace graph를 불러오는 중입니다…</p></main>;
+  if (!fixture && !loadError) return <main className="server-state" data-workspace-target={workspaceId}><h1>Baley</h1><p>Workspace graph를 불러오는 중입니다…</p></main>;
   if (!fixture && loadError) return <main className="server-state error"><h1>Server unavailable</h1><p>{loadError}</p><small>Viewer는 fixture로 대체 표시하지 않습니다.</small></main>;
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-workspace-id={graph.workspace.id} data-auth-state="authenticated" data-role={membership.role}>
       <header className="topbar">
         <button type="button" className="brand" aria-label="Go to Home" onClick={() => navigate({ kind: "multi" })}><div className="brand-mark">B</div><div><strong>Baley</strong><span>Visual MVP</span></div></button>
         <nav className="view-tabs" aria-label="Graph views">
@@ -142,18 +350,30 @@ export default function App() {
           <button className={view.kind === "lane" ? "active" : ""} disabled={!defaultLaneId} onClick={() => defaultLaneId && navigate({ kind: "lane", id: view.kind === "lane" ? view.id : defaultLaneId })}>Lane focus</button>
           <button className={view.kind === "gate" ? "active" : ""} disabled={!defaultGateId} onClick={() => defaultGateId && navigate({ kind: "gate", id: view.kind === "gate" ? view.id : defaultGateId })}>Gate focus</button>
         </nav>
-        <button className="icon-button" aria-label="Toggle inspector" onClick={() => setInspectorOpen((open) => !open)}>{inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
+        <div className="topbar-actions">
+          <WorkspaceAccessControls
+            account={account}
+            membership={membership}
+            csrfToken={csrfToken}
+            onLogout={onLogout}
+            onMembershipsChanged={onMembershipsChanged}
+          />
+          <button className="icon-button" aria-label="Toggle inspector" onClick={() => setInspectorOpen((open) => !open)}>{inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
+        </div>
       </header>
 
       <section className={`workspace ${inspectorOpen ? "with-inspector" : ""}`} style={{ "--inspector-width": `${inspectorWidth}px` } as React.CSSProperties}>
         <div className="graph-wrap">
-          <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1>{view.kind === "multi" ? graph.workspace.name : view.kind === "lane" ? `${graph.lanes.find((lane) => lane.id === view.id)?.name} lane` : `${graph.gates.find((gate) => gate.id === view.id)?.name ?? "Unknown"} gate`}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
+          <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1 className="workspace-context-title"><WorkspaceContextSwitcher membership={membership} memberships={memberships} currentWorkspaceName={graph.workspace.name} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} />{workspaceContextLabel && <span className="workspace-view-context">/ {workspaceContextLabel}</span>}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas">
-            <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} onMoveEnd={(_, nextViewport) => traceCanvas("move:end", nextViewport)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
-              <Background color="#d8d6ce" gap={24} size={1} />
-              <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} /></ViewportPortal>
-              <CanvasControls layout={layout} />
-            </ReactFlow>
+            <div ref={graphStageRef} className="graph-stage" aria-hidden={backlogListOpen || undefined}>
+              <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} onMoveEnd={(_, nextViewport) => traceCanvas("move:end", nextViewport)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
+                <Background color="#d8d6ce" gap={24} size={1} />
+                <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} laneColors={laneColors} onOpenBacklog={() => setBacklogListOpen(true)} setBacklogExpandButton={(node) => { backlogExpandButtonRef.current = node; }} /></ViewportPortal>
+                <CanvasControls layout={layout} />
+              </ReactFlow>
+            </div>
+            {backlogListOpen && <BacklogList lanes={graph.lanes} items={graph.backlogItems} laneColors={laneColors} onClose={closeBacklogList} />}
           </div>
         </div>
         {inspectorOpen && <div className="inspector-panel">
@@ -206,7 +426,7 @@ function Inspector({ fixture, task, gateId, onLane, onGate }: { fixture: Workspa
   if (gateId) {
     const gate = fixture.gates.find((item) => item.id === gateId)!;
     const links = fixture.gateLinks.filter((link) => link.gateId === gateId);
-    return <aside className="inspector"><div className="inspector-kicker">GATE INSPECTOR</div><h2>{gate.name}</h2><span className={`status-pill status-${gate.status}`}>{gate.status}</span><p>Build Phase를 완료하고 Validate Phase로 진입하기 위한 동기화 지점입니다.</p><Section title="Conditions">{links.map((link) => <div className="relation-row" key={`${link.taskId}-${link.kind}`}><span>{link.satisfied ? link.satisfactionReason : link.kind}</span><strong>{fixture.tasks.find((task) => task.id === link.taskId)?.title}</strong></div>)}</Section><button className="primary-button" onClick={() => onGate(gate.id)}>Open gate focus</button></aside>;
+    return <aside className="inspector"><div className="inspector-kicker">GATE INSPECTOR</div><div className="inspector-id">GATE G#{gate.publicId}</div><h2>{gate.name}</h2><span className={`status-pill status-${gate.status}`}>{gate.status}</span><p>Build Phase를 완료하고 Validate Phase로 진입하기 위한 동기화 지점입니다.</p><Section title="Identity"><span className="meta-value">{gate.alias ? `Alias · ${gate.alias}` : "No alias"}</span><code>{gate.id}</code></Section><Section title="Conditions">{links.map((link) => <div className="relation-row" key={`${link.taskId}-${link.kind}`}><span>{link.satisfied ? link.satisfactionReason : link.kind}</span><strong>{fixture.tasks.find((task) => task.id === link.taskId)?.title}</strong></div>)}</Section><button className="primary-button" onClick={() => onGate(gate.id)}>Open gate focus</button></aside>;
   }
   if (!task) return <aside className="inspector empty"><div className="empty-symbol">↗</div><h2>Follow the work</h2><p>Task 또는 Gate를 선택하면 현재 상태와 연결 관계를 확인할 수 있습니다.</p><div className="legend"><span><i className="dot done" />Done</span><span><i className="dot running" />Running</span><span><i className="dot blocked" />Blocked</span><span><i className="dot ready" />Ready</span></div></aside>;
   const lane = fixture.lanes.find((item) => item.id === task.laneId)!;
@@ -215,8 +435,19 @@ function Inspector({ fixture, task, gateId, onLane, onGate }: { fixture: Workspa
   const upstream = fixture.dependencies.filter((edge) => edge.toTaskId === task.id);
   const downstream = fixture.dependencies.filter((edge) => edge.fromTaskId === task.id);
   const runs = (fixture.runs ?? []).filter((run) => run.taskId === task.id);
-  const records = (fixture.records ?? []).filter((record) => record.taskId === task.id);
-  return <aside className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><div className="inspector-id">TASK #{task.publicId}</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span><p>{task.description}</p><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.currentSummary && <Section title="Current summary"><span className="evidence-copy">{task.currentSummary}</span></Section>}{task.nextAction && <Section title="Next action"><span className="evidence-copy">{task.nextAction}</span></Section>}{task.implementedAssessment && <Section title="Implementation assessment"><span className="evidence-copy">{task.implementedAssessment}</span></Section>}{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((edge) => <div className="relation-row" key={edge.id}><span>from</span><strong>#{fixture.tasks.find((item) => item.id === edge.fromTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title}</strong></div>)}{downstream.map((edge) => <div className="relation-row" key={edge.id}><span>to</span><strong>#{fixture.tasks.find((item) => item.id === edge.toTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.toTaskId)?.title}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">Independent path</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>{fixture.gates.find((gate) => gate.id === link.gateId)?.name}</strong></button>)}</Section>}<Section title="Runs">{runs.map((run) => <div className="evidence-row" key={run.id}><div><strong>{run.kind.replaceAll("_", " ")}</strong><span>{run.status}</span></div>{(run.resultSummary || run.errorSummary) && <p>{run.resultSummary || run.errorSummary}</p>}</div>)}{runs.length === 0 && <span className="muted">No Runs recorded</span>}</Section><Section title="Task Records">{records.map((record) => <div className="evidence-row" key={record.id}><div><strong>{record.recordType}</strong><span>{record.state}</span></div><code>{record.relativePath}</code><p>{record.shortSummary}</p></div>)}{records.length === 0 && <span className="muted">No Task Records indexed</span>}</Section><section className="command-hint"><strong>LLM command only</strong><p>Use Baley Skill commands to update task #{task.publicId}.</p></section></aside>;
+  const acceptanceEvidence = (fixture.acceptanceEvidence ?? []).filter((evidence) => evidence.taskId === task.id);
+  const records = [
+    ...(fixture.records ?? []).filter((record) => record.taskId === task.id),
+    ...acceptanceEvidence.map((evidence) => ({
+      id: evidence.id,
+      taskId: evidence.taskId,
+      recordType: `acceptance-evidence-v${evidence.version}`,
+      state: `${evidence.verificationVerdict}/review:${evidence.reviewVerdict}`,
+      relativePath: `${evidence.verificationReferenceKind ?? "reference"}:${evidence.verificationReference ?? "none"}`,
+      shortSummary: `completion=${evidence.completionReportRecordId}; review=${evidence.independentReviewRecordId}; blockers=${evidence.unresolvedBlockingCount}`,
+    })),
+  ];
+  return <aside className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><div className="inspector-id">TASK #{task.publicId}</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span><p>{task.description}</p><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.currentSummary && <Section title="Current summary"><span className="evidence-copy">{task.currentSummary}</span></Section>}{task.nextAction && <Section title="Next action"><span className="evidence-copy">{task.nextAction}</span></Section>}{task.implementedAssessment && <Section title="Implementation assessment"><span className="evidence-copy">{task.implementedAssessment}</span></Section>}{task.effectiveAcceptanceMode && <Section title="Acceptance"><span className="meta-value">{task.effectiveAcceptanceMode}</span><span className="evidence-copy">Policy {task.acceptancePolicyVersion} · Profile {task.evidenceProfileId}</span>{task.acceptanceEvaluation && <span className="evidence-copy">{task.acceptanceEvaluation.eligible ? "Evidence eligible" : `Evidence pending: ${task.acceptanceEvaluation.reasons.join(", ")}`}</span>}</Section>}{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((edge) => <div className="relation-row" key={edge.id}><span>from</span><strong>#{fixture.tasks.find((item) => item.id === edge.fromTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title}</strong></div>)}{downstream.map((edge) => <div className="relation-row" key={edge.id}><span>to</span><strong>#{fixture.tasks.find((item) => item.id === edge.toTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.toTaskId)?.title}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">Independent path</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => { const linkedGate = fixture.gates.find((gate) => gate.id === link.gateId); return <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>{linkedGate ? `G#${linkedGate.publicId} ${linkedGate.name}` : link.gateId}</strong></button>; })}</Section>}<Section title="Runs">{runs.map((run) => <div className="evidence-row" key={run.id}><div><strong>{run.kind.replaceAll("_", " ")}</strong><span>{run.status}</span></div>{(run.resultSummary || run.errorSummary) && <p>{run.resultSummary || run.errorSummary}</p>}</div>)}{runs.length === 0 && <span className="muted">No Runs recorded</span>}</Section><Section title="Task Records">{records.map((record) => <div className="evidence-row" key={record.id}><div><strong>{record.recordType}</strong><span>{record.state}</span></div><code>{record.relativePath}</code><p>{record.shortSummary}</p></div>)}{records.length === 0 && <span className="muted">No Task Records indexed</span>}</Section><section className="command-hint"><strong>LLM command only</strong><p>Use Baley Skill commands to update task #{task.publicId}.</p></section></aside>;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) { return <section className="inspector-section"><h3>{title}</h3>{children}</section>; }
@@ -296,7 +527,7 @@ function CanvasControls({ layout }: { layout?: GraphLayout }) {
   </Panel>;
 }
 
-function CanvasOverlay({ graph, layout, view, navigate }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void }) {
+function CanvasOverlay({ graph, layout, view, navigate, laneColors, onOpenBacklog, setBacklogExpandButton }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void; laneColors: Record<string, string>; onOpenBacklog: () => void; setBacklogExpandButton: React.RefCallback<HTMLButtonElement> }) {
   const focusedLaneId = view.kind === "lane" ? view.id : undefined;
   const band = focusedLaneId && layout ? laneBandRect(layout, focusedLaneId) : undefined;
   return <div className="graph-overlay" style={{ width: layout?.width, height: layout?.height }}>
@@ -312,9 +543,11 @@ function CanvasOverlay({ graph, layout, view, navigate }: { graph: WorkspaceFixt
       if (!position || !nextPhase || !previousPhase) return null;
       return <div key={`${gate.id}-corridor`} className="gate-corridor" style={{ left: previousPhase.x + previousPhase.width, top: 0, width: nextPhase.x - (previousPhase.x + previousPhase.width), height: layout.height }} />;
     })}
+    {layout && view.kind !== "gate" && <LaneAnchorColumn lanes={graph.lanes} layout={layout} />}
+    {layout && view.kind !== "gate" && <BacklogRail lanes={graph.lanes} items={graph.backlogItems} layout={layout} focusedLaneId={focusedLaneId} laneColors={laneColors} onExpand={onOpenBacklog} expandButtonRef={setBacklogExpandButton} />}
     {view.kind !== "gate" && graph.lanes.map((lane, index) => {
       const focused = view.kind === "lane" && lane.id === view.id;
-      return <div key={lane.id} className={`lane-label ${focused ? "focused" : ""} ${view.kind === "lane" && !focused ? "dimmed" : ""}`} aria-current={focused ? "true" : undefined} style={{ top: layout ? laneLabelTop(layout, lane.id) : 0, "--lane-color": laneColors[lane.id] } as React.CSSProperties} onClick={() => navigate({ kind: "lane", id: lane.id })}><span>{String(index + 1).padStart(2, "0")}</span><strong>{lane.name}</strong><small>{lane.lifecycle}</small><ChevronRight size={14} /></div>;
+      return <button type="button" key={lane.id} className={`lane-label ${focused ? "focused" : ""} ${view.kind === "lane" && !focused ? "dimmed" : ""}`} aria-label={`Open ${lane.name} lane`} aria-current={focused ? "true" : undefined} style={{ top: layout ? laneLabelTop(layout, lane.id) : 0, "--lane-color": laneColors[lane.id] } as React.CSSProperties} onClick={() => navigate({ kind: "lane", id: lane.id })}><span>LANE {String(index + 1).padStart(2, "0")}</span><strong>{lane.name}</strong><small>{lane.lifecycle}</small><ChevronRight size={15} /></button>;
     })}
   </div>;
 }

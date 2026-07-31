@@ -6,3 +6,5 @@ playwright-report/
 test-results/
 .vite-dev.log
 .vite-dev.err.log
+.tmp/
+server/.tmp/

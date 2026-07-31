@@ -32,13 +32,25 @@ var MutationPolicies = []MutationPolicy{
 	{Name: "lane.close_out", Capability: "lane:approve", HumanApproval: ApprovalAlways, EventType: "lane.closed_out"}, {Name: "lane.discard", Capability: "lane:approve", HumanApproval: ApprovalAlways, EventType: "lane.discarded"},
 	{Name: "gate.create", Capability: "workspace:operate", EventType: "gate.created"},
 	{Name: "task.create", Capability: "workspace:operate", EventType: "task.created"}, {Name: "task.update", Capability: "workspace:operate", EventType: "task.updated"},
+	{Name: "backlog.create", Capability: "workspace:operate", EventType: "backlog.created"},
+	{Name: "backlog.update", Capability: "workspace:operate", EventType: "backlog.updated"},
+	{Name: "backlog.move", Capability: "workspace:operate", EventType: "backlog.moved"},
+	{Name: "backlog.reorder", Capability: "workspace:operate", EventType: "backlog.reordered"},
+	{Name: "backlog.discard", Capability: "workspace:operate", EventType: "backlog.discarded"},
+	{Name: "backlog.promote", Capability: "workspace:operate", EventType: "backlog.promoted"},
 	{Name: "task.set_terminal", Capability: "workspace:operate", EventType: "task.terminal_set"}, {Name: "task.clear_terminal", Capability: "workspace:operate", EventType: "task.terminal_cleared"},
 	{Name: "task.block", Capability: "workspace:operate", EventType: "task.blocked"}, {Name: "task.unblock", Capability: "workspace:operate", EventType: "task.unblocked"},
 	{Name: "task.report_implemented", Capability: "workspace:operate", EventType: "task.implemented_reported"}, {Name: "task.confirm", Capability: "task:approve", HumanApproval: ApprovalAlways, EventType: "task.confirmed"},
+	{Name: "task.acceptance_policy.change", Capability: "task:approve", HumanApproval: ApprovalAlways, EventType: "task.acceptance_policy_changed"},
+	{Name: "task.acceptance_mode.escalate", Capability: "task:approve", HumanApproval: ApprovalAlways, EventType: "task.acceptance_mode_escalated"},
+	{Name: "task.evidence.report", Capability: "workspace:operate", EventType: "task.acceptance_evidence_reported"},
 	{Name: "task.discard", Capability: "task:approve", HumanApproval: ApprovalAlways, EventType: "task.discarded"}, {Name: "task.rework", Capability: "workspace:operate", EventType: "task.rework_started"},
 	{Name: "dependency.connect", Capability: "workspace:operate", EventType: "dependency.connected"}, {Name: "dependency.disconnect", Capability: "workspace:operate", EventType: "dependency.disconnected"}, {Name: "dependency.patch", Capability: "workspace:operate", EventType: "dependency.patched"},
 	{Name: "gate.attach_task", Capability: "workspace:operate", ActiveCapability: "gate:approve", HumanApproval: ApprovalWhenFromPhaseActive, EventType: "gate.task_attached"},
-	{Name: "gate.detach_task", Capability: "workspace:operate", EventType: "gate.task_detached"}, {Name: "gate.pass_task", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.task_passed"}, {Name: "gate.revoke_task_pass", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.task_pass_revoked"}, {Name: "gate.pass", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.passed"},
+	{Name: "gate.detach_task", Capability: "workspace:operate", EventType: "gate.task_detached"},
+	{Name: "gate.attach_entry_task", Capability: "workspace:operate", EventType: "gate.entry_task_attached"},
+	{Name: "gate.detach_entry_task", Capability: "workspace:operate", EventType: "gate.entry_task_detached"},
+	{Name: "gate.pass_task", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.task_passed"}, {Name: "gate.revoke_task_pass", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.task_pass_revoked"}, {Name: "gate.pass", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.passed"},
 	{Name: "run.start", Capability: "run:operate", EventType: "run.started"}, {Name: "run.heartbeat", Capability: "run:operate", OperationalNoEvent: true}, {Name: "run.succeed", Capability: "run:operate", EventType: "run.succeeded"}, {Name: "run.fail", Capability: "run:operate", EventType: "run.failed"}, {Name: "run.cancel", Capability: "run:operate", EventType: "run.cancelled"}, {Name: "run.interrupt", Capability: "run:operate", EventType: "run.interrupted"}, {Name: "run.correct", Capability: "run:operate", EventType: "run.corrected"},
 	{Name: "record.register", Capability: "record:operate", EventType: "record.registered"}, {Name: "record.attach_commit", Capability: "record:operate", EventType: "record.commit_attached"}, {Name: "commit.attach", Capability: "record:operate", EventType: "commit.attached"}, {Name: "git.observe", Capability: "record:operate", EventType: "git.observed"},
 }
@@ -158,18 +170,21 @@ func PlanTaskUpdate(workspace Workspace, task Task, title, description, summary,
 
 func PlanGateCreate(workspace Workspace, gate Gate, from, to Phase, existing []Gate) DomainMutationPlan {
 	plan := newDomainPlan("gate.create", false)
-	if workspace.State == WorkspaceClosed || gate.ID == "" || gate.WorkspaceID != workspace.ID || gate.CriteriaRevision != 0 || gate.PassedAt != nil || from.WorkspaceID != workspace.ID || to.WorkspaceID != workspace.ID || gate.FromPhaseID != from.ID || gate.ToPhaseID != to.ID || to.Position != from.Position+1 {
+	normalizedAlias, aliasErr := NormalizeGateAlias(gate.Alias)
+	if workspace.State == WorkspaceClosed || gate.ID == "" || IsReservedGatePublicReference(gate.ID) || gate.PublicID <= 0 || gate.WorkspaceID != workspace.ID || gate.CriteriaRevision != 0 || gate.PassedAt != nil || aliasErr != nil || gate.Alias != normalizedAlias || from.WorkspaceID != workspace.ID || to.WorkspaceID != workspace.ID || gate.FromPhaseID != from.ID || gate.ToPhaseID != to.ID || to.Position != from.Position+1 {
 		plan.Evaluation.Errors = []Diagnostic{{Code: CodeInvalidStateTransition, EntityID: gate.ID}}
 		return plan
 	}
 	for _, item := range existing {
-		if item.FromPhaseID == from.ID || item.ToPhaseID == to.ID {
+		if item.FromPhaseID == from.ID || item.ToPhaseID == to.ID || item.PublicID == gate.PublicID ||
+			gate.Alias != "" && (strings.EqualFold(item.Alias, gate.Alias) || strings.EqualFold(item.ID, gate.Alias)) ||
+			item.Alias != "" && strings.EqualFold(item.Alias, gate.ID) {
 			plan.Evaluation.Errors = []Diagnostic{{Code: CodeInvalidStateTransition, EntityID: gate.ID}}
 			return plan
 		}
 	}
 	plan.ProjectedDiff = gate
-	plan.Events = []PlannedEvent{{Type: "gate.created", EntityType: "gate", EntityID: gate.ID, Payload: map[string]any{"gateId": gate.ID, "fromPhaseId": from.ID, "toPhaseId": to.ID}}}
+	plan.Events = []PlannedEvent{{Type: "gate.created", EntityType: "gate", EntityID: gate.ID, Payload: map[string]any{"gateId": gate.ID, "publicId": gate.PublicID, "alias": gate.Alias, "fromPhaseId": from.ID, "toPhaseId": to.ID}}}
 	return plan
 }
 

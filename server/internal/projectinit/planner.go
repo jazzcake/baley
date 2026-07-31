@@ -97,7 +97,11 @@ type recoveryState struct {
 
 func Build(input Input) (Plan, error) {
 	if recovered, ok := parseRecoveryState(input.ExistingFiles[recoveryStatePath]); ok {
-		input = hydrateInput(input, recovered)
+		var consistent bool
+		input, consistent = hydrateInput(input, recovered)
+		if !consistent {
+			return Plan{}, ErrInvalidInput
+		}
 	}
 	clientProjectID := strings.ToLower(strings.TrimSpace(input.ClientProjectID))
 	if !validUUID(clientProjectID) || strings.TrimSpace(input.WorkspaceName) == "" || strings.TrimSpace(input.RepositoryName) == "" || strings.TrimSpace(input.ExecutedByActorID) == "" {
@@ -204,7 +208,7 @@ func Build(input Input) (Plan, error) {
 		plan.Recovery = append(plan.Recovery, RecoveryStep{Action: "persist_retry_identity", Paths: []string{recoveryStatePath}})
 	}
 	if !input.BootstrapCompleted {
-		plan.Recovery = append(plan.Recovery, RecoveryStep{Action: "execute_or_retry_project_bootstrap"})
+		plan.Recovery = append(plan.Recovery, RecoveryStep{Action: "create_workspace_owner_and_register_repository"})
 	}
 	if len(pending) != 0 {
 		plan.Recovery = append(plan.Recovery, RecoveryStep{Action: "apply_non_conflicting_files", Paths: pending})
@@ -236,8 +240,47 @@ func desiredFiles(root, configContent string) map[string]string {
 	for _, template := range templates {
 		files[path.Join(root, "_templates", template.name)] = fmt.Sprintf("---\nbaley_record: 1\nrecord_id: \"{{record_id}}\"\ntask_id: {{task_id}}\nrecord_type: %s\nrun_id: {{run_id}}\ncreated_at: \"{{created_at}}\"\ncreated_by: \"{{created_by}}\"\nsupersedes: null\n---\n\n# %s\n", template.recordType, template.title)
 	}
+	files[path.Join(root, "_templates", "pilot-measurement.md")] = pilotMeasurementTemplate
 	return files
 }
+
+const pilotMeasurementTemplate = `---
+baley_record: 1
+record_id: "{{record_id}}"
+task_id: {{task_id}}
+record_type: pilot-measurement
+run_id: {{run_id}}
+created_at: "{{created_at}}"
+created_by: "{{created_by}}"
+supersedes: null
+---
+
+# Pilot Measurement
+
+` + "```json" + `
+{
+  "measurement_id": "{{record_id}}",
+  "workspace_id": "{{workspace_id}}",
+  "lane_id": "",
+  "session_id": "",
+  "sample_id": "",
+  "started_at": "",
+  "ended_at": "",
+  "workspace_revision": 0,
+  "actor_id": "",
+  "candidate_ids": [],
+  "accepted_candidate_ids": [],
+  "rejection_reasons": [],
+  "evidence_reference_ids": [],
+  "mismatch_keys": [],
+  "correction_event_ids": [],
+  "gate_id": "",
+  "conversation_ref": "",
+  "human_decision_turn_count": 0,
+  "baseline_or_treatment": "treatment"
+}
+` + "```" + `
+`
 
 func appendIgnoreRule(existing, rule string) (string, bool) {
 	for _, line := range strings.Split(strings.ReplaceAll(existing, "\r\n", "\n"), "\n") {
@@ -329,11 +372,14 @@ func recoveryFingerprint(request BootstrapRequest, server, recordRepositoryID st
 	return contentSHA(string(payload))
 }
 
-func hydrateInput(input Input, state recoveryState) Input {
+func hydrateInput(input Input, state recoveryState) (Input, bool) {
 	arguments, envelope := state.Bootstrap.Arguments, state.Bootstrap.Envelope
+	consistent := true
 	fill := func(target *string, recovered string) {
 		if strings.TrimSpace(*target) == "" {
 			*target = recovered
+		} else if *target != recovered {
+			consistent = false
 		}
 	}
 	fill(&input.ClientProjectID, arguments.ClientProjectID)
@@ -347,5 +393,5 @@ func hydrateInput(input Input, state recoveryState) Input {
 	fill(&input.TaskRecordsRoot, arguments.TaskRecordsRoot)
 	fill(&input.InitiatedByActorID, envelope.InitiatedByActorID)
 	fill(&input.ExecutedByActorID, envelope.ExecutedByActorID)
-	return input
+	return input, consistent
 }

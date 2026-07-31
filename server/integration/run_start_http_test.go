@@ -19,6 +19,7 @@ func TestRunStartHTTPContract(t *testing.T) {
 	if url == "" {
 		t.Skip("BALEY_TEST_DATABASE_URL is not set")
 	}
+	requireDisposableDatabase(t, url)
 	ctx := context.Background()
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "run-start-http-integration-secret")
 	repo, err := postgres.Open(ctx, url)
@@ -26,7 +27,7 @@ func TestRunStartHTTPContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	if _, err = repo.Pool.Exec(ctx, "TRUNCATE events,human_approval_attestations,commands,workspace_counters,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE"); err != nil {
+	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE events,human_approval_attestations,commands,workspace_counters,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE; SET session_replication_role='origin'"); err != nil {
 		t.Fatal(err)
 	}
 	if err = repo.SeedDemo(ctx); err != nil {

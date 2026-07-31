@@ -3,7 +3,10 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/jazzcake/baley/server/internal/application"
 )
 
 func TestCORSAllowsConfiguredViewerOrigins(t *testing.T) {
@@ -27,6 +30,14 @@ func TestCORSAllowsConfiguredViewerOrigins(t *testing.T) {
 				t.Fatalf("Access-Control-Allow-Origin=%q, want %q", got, origin)
 			}
 		})
+	}
+}
+
+func TestDecodeStrictRejectsTrailingJSON(t *testing.T) {
+	var request application.CommandRequest
+	raw := `{"name":"task.update","arguments":{"workspaceId":"w","taskId":1},"envelope":{"idempotencyKey":"k","executedByActorId":"a"}} {}`
+	if err := decodeStrict([]byte(raw), &request); err == nil || !strings.Contains(err.Error(), "exactly one JSON value") {
+		t.Fatalf("trailing JSON accepted: %v", err)
 	}
 }
 

@@ -27,8 +27,8 @@ describe("graph projection", () => {
       ...pilotReadyFixture,
       workspace: { ...pilotReadyFixture.workspace, activePhaseId: "validate" },
       gates: [
-        { id: "release-ready", name: "Release Ready", fromPhaseId: "release", toPhaseId: "ship", status: "open" as const },
-        { id: "validate-ready", name: "Validate Ready", fromPhaseId: "validate", toPhaseId: "release", status: "open" as const },
+        { id: "release-ready", publicId: 3, name: "Release Ready", fromPhaseId: "release", toPhaseId: "ship", status: "open" as const },
+        { id: "validate-ready", publicId: 2, name: "Validate Ready", fromPhaseId: "validate", toPhaseId: "release", status: "open" as const },
       ],
     };
     expect(defaultGateFocusId(fixture)).toBe("validate-ready");

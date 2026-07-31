@@ -32,8 +32,10 @@ func buildEventEvidenceRules() []EventEvidenceRule {
 		"phase.created": {"phaseId"}, "phase.activated": {"phaseId"}, "phase.completed": {"phaseId"},
 		"lane.created": {"laneId"}, "lane.updated": {"laneId"}, "lane.closed_out": {"laneId", "reason"}, "lane.discarded": {"laneId", "reason"},
 		"task.created": {"task"}, "task.updated": {"taskId"}, "task.terminal_set": {"taskId", "reason"}, "task.terminal_cleared": {"taskId"}, "task.started": {"taskId", "clientRunId"}, "task.implemented_reported": {"taskId", "assessment", "warnings", "acknowledgedWarningCodes"}, "task.confirmed": {"taskId"}, "task.discarded": {"taskId", "reason"}, "task.rework_started": {"taskId", "reason"}, "task.blocked": {"taskId", "reason"}, "task.unblocked": {"taskId", "reason"},
+		"task.acceptance_policy_changed": {"workspaceId", "policy"}, "task.acceptance_mode_escalated": {"taskId", "assignment"}, "task.acceptance_evidence_reported": {"taskId", "evidenceId", "evaluation"}, "task.auto_confirmed": {"taskId", "policyVersion", "evidenceProfileId", "evidenceId"},
+		"backlog.created": {"backlogPublicId", "laneId", "position"}, "backlog.updated": {"backlogPublicId"}, "backlog.moved": {"backlogPublicId", "sourceLaneId", "targetLaneId"}, "backlog.reordered": {"laneId", "orderedBacklogPublicIds"}, "backlog.discarded": {"backlogPublicId", "reason"}, "backlog.promoted": {"backlogPublicId", "taskId", "taskPublicId", "laneId", "phaseId"},
 		"dependency.connected": {"diff"}, "dependency.disconnected": {"diff"}, "dependency.patched": {"diff"},
-		"gate.created": {"gateId", "fromPhaseId", "toPhaseId"}, "gate.task_attached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.task_detached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.task_passed": {"gateTaskId", "reason"}, "gate.task_pass_revoked": {"gateTaskId", "reason"}, "gate.passed": {"gateId", "conditions", "humanApprovalAttestationId", "workspaceRevision", "decisionSnapshotHash"},
+		"gate.created": {"gateId", "publicId", "fromPhaseId", "toPhaseId"}, "gate.task_attached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.task_detached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.entry_task_attached": {"gateId", "taskId", "selectionSource"}, "gate.entry_task_detached": {"gateId", "taskId", "selectionSource"}, "gate.task_passed": {"gateTaskId", "reason"}, "gate.task_pass_revoked": {"gateTaskId", "reason"}, "gate.passed": {"gateId", "conditions", "entryTasks", "humanApprovalAttestationId", "workspaceRevision", "decisionSnapshotHash"},
 		"run.started": {"runId", "taskId", "clientRunId", "kind"}, "run.succeeded": {"runId", "resultSummary"}, "run.failed": {"runId", "errorSummary"}, "run.cancelled": {"runId", "errorSummary"}, "run.interrupted": {"runId", "errorSummary"}, "run.corrected": {"runId", "previousStatus", "previousResultSummary", "previousErrorSummary", "previousEndedAt", "newStatus", "newResultSummary", "newErrorSummary", "newEndedAt", "reason"},
 		"record.registered": {"recordId", "taskId", "repositoryId", "relativePath"}, "record.commit_attached": {"recordId", "commitSha", "blobSha"}, "commit.attached": {"commitId", "taskId", "repositoryId", "commitSha", "relation"}, "git.observed": {"observationId", "runId", "repositoryId", "observedAt"},
 		"human_approval_attestation.recorded": {"action", "entityType", "entityId", "workspaceRevision", "approvedByActorId", "approvedCommandHash"},
@@ -96,6 +98,11 @@ func ValidateEventEvidence(event PlannedEvent) Evaluation {
 }
 
 func eventEvidenceValuePresent(eventType, key string, value any) bool {
+	if eventType == "gate.passed" && key == "entryTasks" {
+		// A target Phase may legitimately have no Tasks yet. The snapshot key is
+		// still mandatory so absence is distinguishable from an empty resolution.
+		return value != nil
+	}
 	if eventType == "run.corrected" {
 		switch key {
 		case "previousResultSummary", "previousErrorSummary", "newResultSummary", "newErrorSummary":
@@ -216,13 +223,28 @@ func projectGatePassConditions(gateID string, conditions []GateTaskCondition) ([
 }
 
 func GateDecisionSnapshotHash(workspace Workspace, gate Gate, conditions []GateTaskCondition) string {
+	return GateDecisionSnapshotHashWithEntries(workspace, gate, conditions, nil)
+}
+
+func GateDecisionSnapshotHashWithEntries(workspace Workspace, gate Gate, conditions []GateTaskCondition, entries []GateEntryTask) string {
 	ordered := append([]GateTaskCondition(nil), conditions...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].LinkID < ordered[j].LinkID })
 	rows := make([]any, 0, len(ordered))
 	for _, condition := range ordered {
 		rows = append(rows, []any{condition.LinkID, condition.TaskID, condition.TaskStatus, condition.Passed, strings.TrimSpace(condition.PassReason)})
 	}
-	payload, _ := json.Marshal([]any{gate.ID, gate.CriteriaRevision, gate.FromPhaseID, gate.ToPhaseID, rows, workspace.Revision})
+	orderedEntries := append([]GateEntryTask(nil), entries...)
+	sort.Slice(orderedEntries, func(i, j int) bool {
+		if orderedEntries[i].TaskID == orderedEntries[j].TaskID {
+			return orderedEntries[i].SelectionSource < orderedEntries[j].SelectionSource
+		}
+		return orderedEntries[i].TaskID < orderedEntries[j].TaskID
+	})
+	entryRows := make([]any, 0, len(orderedEntries))
+	for _, entry := range orderedEntries {
+		entryRows = append(entryRows, []any{entry.TaskID, entry.SelectionSource})
+	}
+	payload, _ := json.Marshal([]any{gate.ID, gate.CriteriaRevision, gate.FromPhaseID, gate.ToPhaseID, rows, entryRows, workspace.Revision})
 	digest := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
@@ -253,7 +275,9 @@ func eventEntityPayloadKey(eventType string) string {
 		"phase.created": "phaseId", "phase.activated": "phaseId", "phase.completed": "phaseId",
 		"lane.created": "laneId", "lane.updated": "laneId", "lane.closed_out": "laneId", "lane.discarded": "laneId",
 		"task.updated": "taskId", "task.terminal_set": "taskId", "task.terminal_cleared": "taskId", "task.started": "taskId", "task.implemented_reported": "taskId", "task.confirmed": "taskId", "task.discarded": "taskId", "task.rework_started": "taskId", "task.blocked": "taskId", "task.unblocked": "taskId",
-		"gate.created": "gateId", "gate.task_attached": "gateId", "gate.task_detached": "gateId", "gate.task_passed": "gateTaskId", "gate.task_pass_revoked": "gateTaskId", "gate.passed": "gateId",
+		"task.acceptance_policy_changed": "workspaceId", "task.acceptance_mode_escalated": "taskId", "task.acceptance_evidence_reported": "taskId", "task.auto_confirmed": "taskId",
+		"backlog.created": "backlogPublicId", "backlog.updated": "backlogPublicId", "backlog.moved": "backlogPublicId", "backlog.discarded": "backlogPublicId", "backlog.promoted": "backlogPublicId", "backlog.reordered": "laneId",
+		"gate.created": "gateId", "gate.task_attached": "gateId", "gate.task_detached": "gateId", "gate.entry_task_attached": "gateId", "gate.entry_task_detached": "gateId", "gate.task_passed": "gateTaskId", "gate.task_pass_revoked": "gateTaskId", "gate.passed": "gateId",
 		"run.started": "runId", "run.succeeded": "runId", "run.failed": "runId", "run.cancelled": "runId", "run.interrupted": "runId", "run.corrected": "runId",
 		"record.registered": "recordId", "record.commit_attached": "recordId", "commit.attached": "commitId", "git.observed": "observationId",
 	}

@@ -13,9 +13,10 @@ const (
 	RecordIndependentReview RecordType = "independent-agent-review"
 	RecordReviewResponse    RecordType = "review-response"
 	RecordCompletionReport  RecordType = "completion-report"
+	RecordPilotMeasurement  RecordType = "pilot-measurement"
 )
 
-var RecordTypes = []RecordType{RecordDetailedPlan, RecordHandoff, RecordIndependentReview, RecordReviewResponse, RecordCompletionReport}
+var RecordTypes = []RecordType{RecordDetailedPlan, RecordHandoff, RecordIndependentReview, RecordReviewResponse, RecordCompletionReport, RecordPilotMeasurement}
 
 type RecordState string
 

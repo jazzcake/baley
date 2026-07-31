@@ -17,6 +17,7 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 	if url == "" {
 		t.Skip("BALEY_TEST_DATABASE_URL is not set")
 	}
+	requireDisposableDatabase(t, url)
 	ctx := context.Background()
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "gate-transition-integration-secret")
 	repo, err := postgres.Open(ctx, url)
@@ -24,7 +25,7 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	if _, err = repo.Pool.Exec(ctx, "TRUNCATE events,human_approval_attestations,commands,workspace_counters,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE"); err != nil {
+	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE events,human_approval_attestations,commands,workspace_counters,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE; SET session_replication_role='origin'"); err != nil {
 		t.Fatal(err)
 	}
 	if err = repo.SeedDemo(ctx); err != nil {
@@ -33,7 +34,7 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 	service := application.NewService(repo)
 	for _, statement := range []string{
 		"INSERT INTO phases(workspace_id,id,name,position,state) VALUES($1,'release','Release',2,'planned')",
-		"INSERT INTO gates(workspace_id,id,name,from_phase_id,to_phase_id) VALUES($1,'validate-ready','Validate Ready','validate','release')",
+		"INSERT INTO gates(workspace_id,id,public_id,alias,name,from_phase_id,to_phase_id) VALUES($1,'validate-ready',2,'validate-ready','Validate Ready','validate','release')",
 		"INSERT INTO gate_tasks(workspace_id,id,gate_id,task_id) VALUES($1,'gt-user-test','validate-ready','user-test')",
 	} {
 		if _, err = repo.Pool.Exec(ctx, statement, postgres.DemoWorkspaceID); err != nil {
@@ -131,8 +132,12 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 				Conditions []struct {
 					TaskStatus string `json:"taskStatus"`
 				} `json:"conditions"`
+				EntryTasks []struct {
+					TaskID          string `json:"taskId"`
+					SelectionSource string `json:"selectionSource"`
+				} `json:"entryTasks"`
 			}
-			if json.Unmarshal(event.Payload, &payload) != nil || len(payload.Conditions) != 3 || payload.Conditions[0].TaskStatus == "" {
+			if json.Unmarshal(event.Payload, &payload) != nil || len(payload.Conditions) != 3 || payload.Conditions[0].TaskStatus == "" || len(payload.EntryTasks) == 0 || payload.EntryTasks[0].TaskID == "" || payload.EntryTasks[0].SelectionSource == "" {
 				t.Fatalf("gate evidence incomplete: %s", event.Payload)
 			}
 			foundEvidence = true

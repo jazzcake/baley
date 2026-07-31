@@ -53,7 +53,7 @@ Operator가 정상 workflow에서 수행:
 
 Run 상태 갱신과 Record 등록을 매번 사람에게 확인하지 않는다. manual correction은 예외이며 사유와 Event를 요구한다.
 
-V1에는 인증된 사람 채널이 없으므로 승인 command는 LLM이 전달한 `humanApprovalAttestation`을 포함한다. 서버는 action, 대상, Workspace revision, canonical command hash, 선택적 decision snapshot hash와 발화 hash/reference를 실행 command와 1:1로 기록한다. 이는 보안상 신원 증명이 아니라 단일 사용자 환경의 protocol audit다.
+V1에는 인증된 사람 채널이 없으므로 승인 command는 LLM이 전달한 `humanApprovalAttestation`을 포함한다. 서버는 action, 대상, Workspace revision, canonical command hash, 선택적 decision snapshot hash와 발화 hash/reference를 실행 command와 1:1로 기록한다. 하나의 명시적 사람 발화가 열거된 여러 `task.confirm` outcome을 승인할 수 있지만, LLM은 각 command마다 fresh preview와 별도 attestation을 만들고 동일하며 비어 있지 않은 statement hash/reference로 승인 묶음을 연관시킨다. 서버는 개별 command 결속만 강제하며 묶음의 baseline 동등성과 revision 연속성은 Skill/Operator가 강제한다. 이는 보안상 신원 증명이 아니라 단일 사용자 환경의 protocol audit다.
 
 ## 3. Skill, MCP와 로컬 filesystem
 
@@ -92,9 +92,23 @@ task 104
 
 Dependency와 Gate 조건은 별도 관계다. Cross-Phase dependency는 그 자체로 중간 Gate의 조건이 아니며, Gate readiness에는 해당 Gate에 명시적으로 attach된 Task만 반영한다.
 
+Gate는 Workspace별 public number `G#<n>`를 가지며 내부 `gateId`는 안정 식별자로
+유지한다. 선택적 alias를 둘 수 있고, Gate를 받는 HTTP/CLI/MCP 명령은 `gateId`,
+`G#<n>`, alias를 같은 reference 입력으로 해석한다. Viewer는 `G#<n>`을 우선 표시하고
+Inspector에서 alias와 내부 gateId를 함께 보여준다.
+정규형 `G#[1-9][0-9]*`은 public reference 전용 namespace다. 새 내부 `gateId`로
+사용할 수 없고, 존재하지 않는 `G#<n>`은 내부 ID나 alias로 fallback하지 않는다.
+
 새 Task는 `task.create`의 `predecessorTaskIds`와 `successorTaskIds`로 초기 관계까지 같은 transaction에서 만든다. Task를 먼저 만들고 나중에 연결하다 실패하는 부분 성공을 피한다.
 
 후행 Task와 Gate 조건이 없는 경로는 `task.set_terminal`의 사유가 없으면 `dangling_path` warning이다. Operator는 후행 연결, Gate 합류 또는 intentional leaf 중 하나를 선택한다.
+
+Lane Backlog는 Task와 분리된 Phase 미정 planning intake다. `backlog.create`,
+`update`, `move`, `reorder`, `discard`는 active item을 lane 범위에서 운용한다.
+`backlog.promote`만 명시적인 target Phase와 Task 관계 의도를 받아 기존
+`task.create` planner를 재사용하고 pending Task 생성, dependency, Backlog terminal
+전이, counter, Event와 Workspace revision을 한 transaction에서 처리한다. 승격은
+Gate 조건 또는 Gate entry Task를 자동 변경하지 않는다.
 
 `task.block`은 상태 전이가 아니라 blocker metadata 변경이다. 새 implementation/review-response Run과 구현완료 보고를 막지만, 상세계획·독립 Agent 리뷰·완료보고 Run은 허용하고 이미 실행 중인 Run은 자동 중단하지 않는다. 해제는 `task.unblock`으로 명시한다.
 
@@ -106,8 +120,14 @@ Dependency와 Gate 조건은 별도 관계다. Cross-Phase dependency는 그 자
 - 미래 Gate 조건은 Operator가 attach/detach한다.
 - active Gate는 detach할 수 없고 조건 면제는 `gate.pass_task`로 기록한다.
 - active Gate 조건 추가는 사람 승인 진술이 필요하다.
+- Gate entry binding은 `toPhase` Task만 explicit attach/detach하며 Gate readiness나 dependency를 바꾸지 않는다.
+- explicit entry가 없으면 `toPhase`의 same-Phase incoming dependency가 없는 DAG root를 public ID 순으로 read-only 투영한다.
 
-Query는 action, target, expected Workspace revision과 condition snapshot hash를 반환한다. Skill은 사람 전용 action에서 멈춰 snapshot을 보여주고, 승인 후 같은 revision과 command hash에 결속된 `humanApprovalAttestation`을 포함해 mutation을 실행한다. 승인 진술은 실행 command와 1:1이며 별도 ApprovalRequest는 V1에 두지 않는다.
+Query는 action, target, expected Workspace revision과 condition snapshot hash를 반환한다. Skill은 사람 전용 action에서 fresh preview를 만든 뒤, raw transport 필드 대신 결과·검증·리뷰·의사결정에 영향을 주는 잔여 위험을 요약해 승인 여부를 묻는다. revision, command hash와 snapshot hash는 내부 audit 결속 정보로 유지하고, 사람이 승인하면 각 실행의 정확한 preview에 결속된 `humanApprovalAttestation`을 포함한다. Attestation은 실행 command와 1:1이지만, 하나의 승인 진술은 같은 승인 종류로 명시적으로 열거된 여러 outcome을 승인할 수 있다. 별도 ApprovalRequest는 V1에 두지 않는다.
+
+Task 완료 확인의 기본 질문은 `#<id>은 <구현 결과>, <test/build 검증>, <독립 리뷰 결과>를 완료했습니다. 완료로 확인할까요?` 형식이다. 여러 Task가 이미 `implemented`이면 LLM이 같은 시작 revision에서 대상별 write-free `task.confirm` baseline preview를 확보하고 각 outcome을 열거해 한 번에 확인할 수 있다. V1 공동 승인은 이 동일 action 묶음에만 적용한다. 내부 루프의 첫 fresh preview revision은 group baseline revision과 같아야 하고, 이후 preview revision은 직전 성공 execute 결과 revision과 같아야 한다. 이 진행 조건을 통과한 뒤 expected revision과 command hash만 제외한 action·target·projected diff·capability·errors/warnings/advisories 전체·선택적 decision snapshot이 baseline과 같으면 다시 묻지 않는다. revision 진행이나 비교 필드가 하나라도 달라지면 해당 지점에서 갱신된 요약으로 다시 승인받는다. `dangling_path` 같은 topology warning은 구현 품질 실패나 terminal 승인으로 표현하지 않으며, 완료 판단을 바꿀 때만 사람용 요약에 노출한다.
+
+주 Task 구현이 다른 Task에도 영향을 주면 LLM이 관련 열린 Task를 분류한다. 이미 `implemented`여도 assessment와 commit·test/build·독립 리뷰 증거가 acceptance를 실제로 충족하는지 다시 확인한 뒤 공동 확인 대상에 넣는다. 부족하면 Agent가 `task.rework`로 되돌린다. 같은 증거가 `pending` 또는 `in_progress` Task의 범위를 완전히 충족하면 공유 증거 assessment를 남기고 정상 workflow로 먼저 `implemented` 보고한 뒤 공동 확인한다. 실제 구현이 아니라 필요성이 사라진 Task는 완료가 아니라 `task.discard`로 제안하고, 대체된 경우 사유에 `superseded by #<id>`를 기록한다. 부분 충족 또는 불확실한 Task는 열린 상태를 유지하며, 이미 confirmed/discarded인 terminal Task에 새 일이 생기면 follow-up Task를 생성한다. 사람 승인은 이 분류나 상태 머신을 우회하지 않는다.
 
 ### 5.3 API capability 경계
 
@@ -131,7 +151,7 @@ POST /v1/commands/preview  → write 없이 diff와 진단 계산
 POST /v1/commands/execute  → revision과 command hash를 재검증하고 실행
 ```
 
-Preview는 command hash, expected Workspace revision, required capability, projected diff, error/warning/advisory와 선택적 decision snapshot hash를 반환한다. 사람 승인 command는 이 preview를 통해 `human_approval_required`와 결속 정보를 얻는다. Run heartbeat와 자동 Record 등록은 사용자에게 매번 preview를 보여주지 않지만 같은 서버 계약과 검증을 사용한다.
+Preview는 command hash, expected Workspace revision, required capability, projected diff, error/warning/advisory와 선택적 decision snapshot hash를 반환한다. 사람 승인 command는 이 preview를 통해 `human_approval_required`와 결속 정보를 얻는다. 이 필드는 기본적으로 Agent가 audit 결속에 사용하며, 사람에게는 판단 가능한 outcome-first brief를 제공한다. Run heartbeat와 자동 Record 등록은 사용자에게 매번 preview를 보여주지 않지만 같은 서버 계약과 검증을 사용한다.
 
 ## 6. 자동 Run 예시
 

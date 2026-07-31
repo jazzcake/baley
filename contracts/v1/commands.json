@@ -39,7 +39,19 @@
       "executedCommandId",
       "recordedAt"
     ],
-    "reusableAcrossCommands": false
+    "reusableAcrossCommands": false,
+    "eachCommandRequiresFreshPreviewAndAttestation": true,
+    "groupedTaskConfirm": {
+      "supported": true,
+      "enforcedBy": "operator",
+      "requiredSharedFields": ["statementHash", "conversationRef"],
+      "requestBaselineFields": ["name", "arguments.workspaceId", "arguments.taskId"],
+      "previewBaselineFields": ["projectedDiff", "requiredCapability", "errors", "warnings", "advisories", "decisionSnapshotHash"],
+      "allowedChangingFields": ["expectedWorkspaceRevision", "commandHash"],
+      "firstFreshPreview": "groupBaselineRevision",
+      "subsequentFreshPreview": "previousSuccessfulResultRevision",
+      "mismatch": "requiresReapproval"
+    }
   },
   "previewResult": [
     "commandHash",
@@ -62,7 +74,10 @@
     "run.list",
     "record.list",
     "event.list",
-    "decision.list"
+    "decision.list",
+    "backlog.list",
+    "backlog.get",
+    "mutation-attempt.list"
   ],
   "mutations": {
     "project.bootstrap": { "capability": "workspace:operate", "humanApproval": "none" },
@@ -77,12 +92,21 @@
     "lane.discard": { "capability": "lane:approve", "humanApproval": "always" },
     "gate.create": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.create": { "capability": "workspace:operate", "humanApproval": "none" },
+    "backlog.create": { "capability": "workspace:operate", "humanApproval": "none" },
+    "backlog.update": { "capability": "workspace:operate", "humanApproval": "none" },
+    "backlog.move": { "capability": "workspace:operate", "humanApproval": "none" },
+    "backlog.reorder": { "capability": "workspace:operate", "humanApproval": "none" },
+    "backlog.discard": { "capability": "workspace:operate", "humanApproval": "none" },
+    "backlog.promote": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.update": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.set_terminal": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.clear_terminal": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.block": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.unblock": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.report_implemented": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.evidence.report": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.acceptance_policy.change": { "capability": "task:approve", "humanApproval": "always" },
+    "task.acceptance_mode.escalate": { "capability": "task:approve", "humanApproval": "always" },
     "task.confirm": { "capability": "task:approve", "humanApproval": "always" },
     "task.discard": { "capability": "task:approve", "humanApproval": "always" },
     "task.rework": { "capability": "workspace:operate", "humanApproval": "none" },
@@ -91,6 +115,8 @@
     "dependency.patch": { "capability": "workspace:operate", "humanApproval": "none" },
     "gate.attach_task": { "capability": "workspace:operate", "humanApproval": "when_from_phase_active", "activeCapability": "gate:approve" },
     "gate.detach_task": { "capability": "workspace:operate", "humanApproval": "none", "forbiddenWhen": "from_phase_active_or_gate_passed" },
+    "gate.attach_entry_task": { "capability": "workspace:operate", "humanApproval": "none", "forbiddenWhen": "gate_passed" },
+    "gate.detach_entry_task": { "capability": "workspace:operate", "humanApproval": "none", "forbiddenWhen": "gate_passed_or_binding_not_explicit" },
     "gate.pass_task": { "capability": "gate:approve", "humanApproval": "always" },
     "gate.revoke_task_pass": { "capability": "gate:approve", "humanApproval": "always" },
     "gate.pass": { "capability": "gate:approve", "humanApproval": "always" },

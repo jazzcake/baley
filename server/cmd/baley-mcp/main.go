@@ -17,8 +17,9 @@ import (
 )
 
 type client struct {
-	base string
-	http *http.Client
+	base       string
+	http       *http.Client
+	agentToken string
 }
 type workspaceInput struct {
 	WorkspaceID string `json:"workspaceId" jsonschema:"Baley workspace ID"`
@@ -26,6 +27,10 @@ type workspaceInput struct {
 type taskInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	TaskID      int    `json:"taskId"`
+}
+type laneBriefInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	LaneID      string `json:"laneId"`
 }
 type taskReportImplementedInput struct {
 	WorkspaceID              string   `json:"workspaceId"`
@@ -36,16 +41,18 @@ type taskReportImplementedInput struct {
 	automaticEnvelope
 }
 type taskCreateFields struct {
-	WorkspaceID        string `json:"workspaceId"`
-	TaskUUID           string `json:"taskUuid"`
-	LaneID             string `json:"laneId"`
-	PhaseID            string `json:"phaseId"`
-	ParentTaskID       int    `json:"parentTaskId,omitempty"`
-	Title              string `json:"title"`
-	Description        string `json:"description,omitempty"`
-	PredecessorTaskIDs []int  `json:"predecessorTaskIds,omitempty"`
-	SuccessorTaskIDs   []int  `json:"successorTaskIds,omitempty"`
-	TerminalReason     string `json:"terminalReason,omitempty"`
+	WorkspaceID             string `json:"workspaceId"`
+	TaskUUID                string `json:"taskUuid"`
+	LaneID                  string `json:"laneId"`
+	PhaseID                 string `json:"phaseId"`
+	ParentTaskID            int    `json:"parentTaskId,omitempty"`
+	Title                   string `json:"title"`
+	Description             string `json:"description,omitempty"`
+	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
+	TerminalReason          string `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string `json:"evidenceProfileId,omitempty"`
 }
 type taskCreatePreviewInput struct {
 	taskCreateFields
@@ -56,6 +63,176 @@ type taskCreateExecuteInput struct {
 	AcknowledgedWarningCodes []string `json:"acknowledgedWarningCodes,omitempty"`
 	ProceedReason            string   `json:"proceedReason,omitempty"`
 	automaticEnvelope
+}
+type backlogInput struct {
+	WorkspaceID     string `json:"workspaceId"`
+	BacklogPublicID int    `json:"backlogPublicId"`
+}
+type backlogListInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	LaneID      string `json:"laneId,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Cursor      int    `json:"cursor,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+}
+type mutationAttemptListInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	Outcome     string `json:"outcome,omitempty"`
+	CommandName string `json:"commandName,omitempty"`
+	After       string `json:"after,omitempty" jsonschema:"RFC3339 timestamp cursor"`
+	AfterID     string `json:"afterId,omitempty" jsonschema:"ID tie-breaker returned with the timestamp cursor"`
+	Limit       int    `json:"limit,omitempty"`
+}
+type backlogMutationFields struct {
+	WorkspaceID             string  `json:"workspaceId"`
+	BacklogUUID             string  `json:"backlogUuid,omitempty"`
+	BacklogPublicID         int     `json:"backlogPublicId,omitempty"`
+	LaneID                  string  `json:"laneId,omitempty"`
+	TargetLaneID            string  `json:"targetLaneId,omitempty"`
+	Title                   *string `json:"title,omitempty"`
+	Description             *string `json:"description,omitempty"`
+	Reason                  string  `json:"reason,omitempty"`
+	OrderedBacklogPublicIDs []int   `json:"orderedBacklogPublicIds,omitempty"`
+	TaskUUID                string  `json:"taskUuid,omitempty"`
+	PhaseID                 string  `json:"phaseId,omitempty"`
+	ParentTaskID            int     `json:"parentTaskId,omitempty"`
+	PredecessorTaskIDs      []int   `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int   `json:"successorTaskIds,omitempty"`
+	TerminalReason          string  `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string  `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string  `json:"evidenceProfileId,omitempty"`
+}
+type backlogCreateFields struct {
+	WorkspaceID string  `json:"workspaceId"`
+	BacklogUUID string  `json:"backlogUuid"`
+	LaneID      string  `json:"laneId"`
+	Title       string  `json:"title"`
+	Description *string `json:"description,omitempty"`
+}
+type backlogUpdateFields struct {
+	WorkspaceID     string  `json:"workspaceId"`
+	BacklogPublicID int     `json:"backlogPublicId"`
+	Title           *string `json:"title,omitempty"`
+	Description     *string `json:"description,omitempty"`
+}
+type backlogMoveFields struct {
+	WorkspaceID     string `json:"workspaceId"`
+	BacklogPublicID int    `json:"backlogPublicId"`
+	TargetLaneID    string `json:"targetLaneId"`
+}
+type backlogReorderFields struct {
+	WorkspaceID             string `json:"workspaceId"`
+	LaneID                  string `json:"laneId"`
+	OrderedBacklogPublicIDs []int  `json:"orderedBacklogPublicIds"`
+}
+type backlogDiscardFields struct {
+	WorkspaceID     string `json:"workspaceId"`
+	BacklogPublicID int    `json:"backlogPublicId"`
+	Reason          string `json:"reason"`
+}
+type backlogPromoteFields struct {
+	WorkspaceID             string `json:"workspaceId"`
+	BacklogPublicID         int    `json:"backlogPublicId"`
+	TaskUUID                string `json:"taskUuid"`
+	PhaseID                 string `json:"phaseId"`
+	ParentTaskID            int    `json:"parentTaskId,omitempty"`
+	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
+	TerminalReason          string `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string `json:"evidenceProfileId,omitempty"`
+}
+type acceptancePolicyFields struct {
+	WorkspaceID       string `json:"workspaceId"`
+	PolicyVersion     string `json:"policyVersion"`
+	DefaultMode       string `json:"defaultMode"`
+	EvidenceProfileID string `json:"evidenceProfileId"`
+}
+type acceptancePolicyPreviewInput struct {
+	acceptancePolicyFields
+	previewEnvelope
+}
+type acceptancePolicyExecuteInput struct {
+	acceptancePolicyFields
+	executeEnvelope
+}
+type acceptanceEscalateFields struct {
+	WorkspaceID       string `json:"workspaceId"`
+	TaskID            int    `json:"taskId"`
+	AssignmentID      string `json:"assignmentId"`
+	Reason            string `json:"reason"`
+	EvidenceReference string `json:"evidenceReference"`
+	PolicyVersion     string `json:"policyVersion"`
+}
+type acceptanceEscalatePreviewInput struct {
+	acceptanceEscalateFields
+	previewEnvelope
+}
+type acceptanceEscalateExecuteInput struct {
+	acceptanceEscalateFields
+	executeEnvelope
+}
+type evidenceReportInput struct {
+	WorkspaceID               string `json:"workspaceId"`
+	TaskID                    int    `json:"taskId"`
+	EvidenceID                string `json:"evidenceId"`
+	CompletionReportRecordID  string `json:"completionReportRecordId"`
+	VerificationVerdict       string `json:"verificationVerdict"`
+	VerificationReference     string `json:"verificationReference,omitempty"`
+	VerificationReferenceKind string `json:"verificationReferenceKind,omitempty"`
+	IndependentReviewRecordID string `json:"independentReviewRecordId"`
+	ReviewVerdict             string `json:"reviewVerdict"`
+	UnresolvedBlockingCount   int    `json:"unresolvedBlockingCount"`
+	CommitReferenceID         string `json:"commitReferenceId,omitempty"`
+	automaticEnvelope
+}
+type backlogCreatePreviewInput struct {
+	backlogCreateFields
+	previewEnvelope
+}
+type backlogCreateExecuteInput struct {
+	backlogCreateFields
+	mutationExecuteEnvelope
+}
+type backlogUpdatePreviewInput struct {
+	backlogUpdateFields
+	previewEnvelope
+}
+type backlogUpdateExecuteInput struct {
+	backlogUpdateFields
+	mutationExecuteEnvelope
+}
+type backlogMovePreviewInput struct {
+	backlogMoveFields
+	previewEnvelope
+}
+type backlogMoveExecuteInput struct {
+	backlogMoveFields
+	mutationExecuteEnvelope
+}
+type backlogReorderPreviewInput struct {
+	backlogReorderFields
+	previewEnvelope
+}
+type backlogReorderExecuteInput struct {
+	backlogReorderFields
+	mutationExecuteEnvelope
+}
+type backlogDiscardPreviewInput struct {
+	backlogDiscardFields
+	previewEnvelope
+}
+type backlogDiscardExecuteInput struct {
+	backlogDiscardFields
+	mutationExecuteEnvelope
+}
+type backlogPromotePreviewInput struct {
+	backlogPromoteFields
+	previewEnvelope
+}
+type backlogPromoteExecuteInput struct {
+	backlogPromoteFields
+	mutationExecuteEnvelope
 }
 type phaseCreateFields struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -88,6 +265,7 @@ type laneCreateExecuteInput struct {
 type gateCreateFields struct {
 	WorkspaceID string `json:"workspaceId"`
 	GateID      string `json:"gateId"`
+	Alias       string `json:"alias,omitempty"`
 	Name        string `json:"name"`
 	FromPhaseID string `json:"fromPhaseId"`
 	ToPhaseID   string `json:"toPhaseId"`
@@ -114,6 +292,19 @@ type gateAttachTaskExecuteInput struct {
 	gateAttachTaskFields
 	conditionalExecuteEnvelope
 }
+type gateEntryTaskFields struct {
+	WorkspaceID string `json:"workspaceId"`
+	GateID      string `json:"gateId"`
+	TaskID      int    `json:"taskId"`
+}
+type gateEntryTaskPreviewInput struct {
+	gateEntryTaskFields
+	previewEnvelope
+}
+type gateEntryTaskExecuteInput struct {
+	gateEntryTaskFields
+	automaticEnvelope
+}
 type gateInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	GateID      string `json:"gateId"`
@@ -137,6 +328,7 @@ type executeEnvelope struct {
 	StatementHash             string     `json:"statementHash,omitempty"`
 	ConversationRef           string     `json:"conversationRef,omitempty"`
 	ApprovedAt                *time.Time `json:"approvedAt,omitempty"`
+	ApprovalGrantToken        string     `json:"approvalGrantToken,omitempty"`
 }
 type automaticEnvelope struct {
 	ExpectedWorkspaceRevision int64  `json:"expectedWorkspaceRevision"`
@@ -157,6 +349,7 @@ type conditionalExecuteEnvelope struct {
 	StatementHash        string     `json:"statementHash,omitempty"`
 	ConversationRef      string     `json:"conversationRef,omitempty"`
 	ApprovedAt           *time.Time `json:"approvedAt,omitempty"`
+	ApprovalGrantToken   string     `json:"approvalGrantToken,omitempty"`
 }
 type runStartInput struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -287,14 +480,23 @@ func main() {
 	if err != nil || parsed.Scheme != "http" || !(parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1") {
 		log.Fatal("BALEY_SERVER_URL must be a loopback http URL")
 	}
-	c := &client{base: strings.TrimRight(base, "/"), http: &http.Client{Timeout: 15 * time.Second}}
+	c := &client{
+		base:       strings.TrimRight(base, "/"),
+		http:       &http.Client{Timeout: 15 * time.Second},
+		agentToken: strings.TrimSpace(os.Getenv("BALEY_AGENT_TOKEN")),
+	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "baley", Version: "0.1.0"}, nil)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_workspace_get", Description: "Read Workspace metadata"}, c.workspaceGet)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_workspace_graph", Description: "Read the current Workspace graph"}, c.workspaceGraph)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_get", Description: "Read one Task by public ID"}, c.taskGet)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_get", Description: "Read a Task acceptance binding, policy/profile, assignments, and typed evidence"}, c.taskAcceptanceGet)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_lane_brief", Description: "Build a read-only active-Run-first lane recovery brief with evidence mismatch classification"}, c.laneBrief)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_list", Description: "List lane Backlog items with optional lane/status filters"}, c.backlogList)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_get", Description: "Read one Backlog item by B# public ID"}, c.backlogGet)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_status", Description: "Read Gate status and conditions"}, c.gateStatus)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_decision_list", Description: "List human decisions currently available"}, c.decisionList)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_event_list", Description: "List Workspace Events"}, c.eventList)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_mutation_attempt_list", Description: "List append-only Workspace mutation attempts"}, c.mutationAttemptList)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_list", Description: "List Workspace Runs"}, c.runList)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_record_list", Description: "List Task Record indexes without loading document bodies"}, c.recordList)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_start", Description: "Start a Run and automatically start a pending Task"}, c.runStart)
@@ -310,8 +512,25 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_commit_attach", Description: "Attach a Git commit reference to a Task"}, c.commitAttach)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_git_observe", Description: "Record non-authoritative Run Git metadata"}, c.gitObserve)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_report_implemented", Description: "Report implementation complete with assessment and explicit warning acknowledgement"}, c.taskReportImplemented)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_evidence_report", Description: "Append typed acceptance evidence and atomically auto-confirm an eligible delegated Task"}, c.taskEvidenceReport)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_policy_change_preview", Description: "Preview a human-approved future-Task acceptance policy change"}, c.acceptancePolicyChangePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_policy_change_execute", Description: "Execute an approved future-Task acceptance policy change"}, c.acceptancePolicyChangeExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_mode_escalate_preview", Description: "Preview monotonic delegated to human-required escalation"}, c.acceptanceModeEscalatePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_mode_escalate_execute", Description: "Execute an approved monotonic acceptance escalation"}, c.acceptanceModeEscalateExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_preview", Description: "Preview atomic Task creation and initial relationships without writing"}, c.taskCreatePreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_execute", Description: "Create a Task and its initial relationships after reviewing the preview"}, c.taskCreateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_create_preview", Description: "Preview creating a phase-free lane Backlog item"}, c.backlogCreatePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_create_execute", Description: "Create a phase-free lane Backlog item"}, c.backlogCreateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_update_preview", Description: "Preview updating an active Backlog item"}, c.backlogUpdatePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_update_execute", Description: "Update an active Backlog item"}, c.backlogUpdateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_move_preview", Description: "Preview moving an active Backlog item to another lane"}, c.backlogMovePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_move_execute", Description: "Move an active Backlog item to another lane"}, c.backlogMoveExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_reorder_preview", Description: "Preview replacing one lane's complete active Backlog order"}, c.backlogReorderPreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_reorder_execute", Description: "Replace one lane's complete active Backlog order"}, c.backlogReorderExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_discard_preview", Description: "Preview audited soft-discard of a Backlog item"}, c.backlogDiscardPreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_discard_execute", Description: "Soft-discard an active Backlog item"}, c.backlogDiscardExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_promote_preview", Description: "Preview atomic Backlog promotion into a phase-targeted pending Task"}, c.backlogPromotePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_promote_execute", Description: "Atomically promote Backlog into a pending Task with exact warning acknowledgement"}, c.backlogPromoteExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_phase_create_preview", Description: "Preview appending a Phase without writing"}, c.phaseCreatePreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_phase_create_execute", Description: "Append a Phase after reviewing the preview"}, c.phaseCreateExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_lane_create_preview", Description: "Preview creating a Lane without writing"}, c.laneCreatePreview)
@@ -320,6 +539,10 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_create_execute", Description: "Create a Phase Gate after reviewing the preview"}, c.gateCreateExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_task_preview", Description: "Preview attaching a Task as a Gate condition without writing"}, c.gateAttachTaskPreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_task_execute", Description: "Attach a Task to a Gate; active Gates require fields from an explicitly approved fresh preview"}, c.gateAttachTaskExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_entry_task_preview", Description: "Preview binding a to-Phase Task as work unlocked by a Gate"}, c.gateAttachEntryTaskPreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_entry_task_execute", Description: "Bind a to-Phase Task as work unlocked by a Gate"}, c.gateAttachEntryTaskExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_detach_entry_task_preview", Description: "Preview removing an explicit Gate entry Task binding"}, c.gateDetachEntryTaskPreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_detach_entry_task_execute", Description: "Remove an explicit Gate entry Task binding and restore automatic root selection when none remain"}, c.gateDetachEntryTaskExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_preview", Description: "Preview Task confirmation without writing"}, c.taskConfirmPreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_execute", Description: "Execute an explicitly approved Task confirmation with exact warning acknowledgement when preview returned warnings"}, c.taskConfirmExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_task_preview", Description: "Preview explicit Gate Task pass without writing"}, c.gatePassTaskPreview)
@@ -351,6 +574,9 @@ func (c *client) call(ctx context.Context, method, path string, payload any) (*m
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.agentToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.agentToken)
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -387,6 +613,9 @@ func executeEnv(v executeEnvelope) map[string]any {
 		envelope["initiatedByActorId"] = v.InitiatedByActorID
 	}
 	envelope["humanApprovalAttestation"] = approvalAttestation(v.ApprovedByActorID, v.ApprovedCommandHash, v.DecisionSnapshotHash, v.StatementHash, v.ConversationRef, v.ApprovedAt)
+	if v.ApprovalGrantToken != "" {
+		envelope["approvalGrantToken"] = v.ApprovalGrantToken
+	}
 	return envelope
 }
 func automaticEnv(v automaticEnvelope) map[string]any {
@@ -410,6 +639,9 @@ func conditionalExecuteEnv(v conditionalExecuteEnvelope) map[string]any {
 	envelope := mutationExecuteEnv(v.mutationExecuteEnvelope)
 	if v.ApprovedByActorID != "" || v.ApprovedCommandHash != "" || v.DecisionSnapshotHash != "" || v.StatementHash != "" || v.ConversationRef != "" || v.ApprovedAt != nil {
 		envelope["humanApprovalAttestation"] = approvalAttestation(v.ApprovedByActorID, v.ApprovedCommandHash, v.DecisionSnapshotHash, v.StatementHash, v.ConversationRef, v.ApprovedAt)
+	}
+	if v.ApprovalGrantToken != "" {
+		envelope["approvalGrantToken"] = v.ApprovalGrantToken
 	}
 	return envelope
 }
@@ -435,6 +667,35 @@ func (c *client) workspaceGet(ctx context.Context, _ *mcp.CallToolRequest, in wo
 func (c *client) taskGet(ctx context.Context, _ *mcp.CallToolRequest, in taskInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, fmt.Sprintf("/v1/workspaces/%s/tasks/%d", url.PathEscape(in.WorkspaceID), in.TaskID))
 }
+func (c *client) taskAcceptanceGet(ctx context.Context, _ *mcp.CallToolRequest, in taskInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, fmt.Sprintf("/v1/workspaces/%s/tasks/%d/acceptance", url.PathEscape(in.WorkspaceID), in.TaskID))
+}
+func (c *client) laneBrief(ctx context.Context, _ *mcp.CallToolRequest, in laneBriefInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/lanes/"+url.PathEscape(in.LaneID)+"/brief")
+}
+func (c *client) backlogGet(ctx context.Context, _ *mcp.CallToolRequest, in backlogInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, fmt.Sprintf("/v1/workspaces/%s/backlog/%d", url.PathEscape(in.WorkspaceID), in.BacklogPublicID))
+}
+func (c *client) backlogList(ctx context.Context, _ *mcp.CallToolRequest, in backlogListInput) (*mcp.CallToolResult, any, error) {
+	values := url.Values{}
+	if in.LaneID != "" {
+		values.Set("laneId", in.LaneID)
+	}
+	if in.Status != "" {
+		values.Set("status", in.Status)
+	}
+	if in.Cursor > 0 {
+		values.Set("cursor", fmt.Sprint(in.Cursor))
+	}
+	if in.Limit > 0 {
+		values.Set("limit", fmt.Sprint(in.Limit))
+	}
+	path := "/v1/workspaces/" + url.PathEscape(in.WorkspaceID) + "/backlog"
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return c.get(ctx, path)
+}
 func (c *client) gateStatus(ctx context.Context, _ *mcp.CallToolRequest, in gateInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/gates/"+url.PathEscape(in.GateID)+"/status")
 }
@@ -443,6 +704,27 @@ func (c *client) decisionList(ctx context.Context, _ *mcp.CallToolRequest, in wo
 }
 func (c *client) eventList(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/events")
+}
+func (c *client) mutationAttemptList(ctx context.Context, _ *mcp.CallToolRequest, in mutationAttemptListInput) (*mcp.CallToolResult, any, error) {
+	values := url.Values{}
+	if in.Outcome != "" {
+		values.Set("outcome", in.Outcome)
+	}
+	if in.CommandName != "" {
+		values.Set("commandName", in.CommandName)
+	}
+	if in.After != "" {
+		values.Set("after", in.After)
+		values.Set("afterId", in.AfterID)
+	}
+	if in.Limit > 0 {
+		values.Set("limit", fmt.Sprintf("%d", in.Limit))
+	}
+	path := "/v1/workspaces/" + url.PathEscape(in.WorkspaceID) + "/mutation-attempts"
+	if query := values.Encode(); query != "" {
+		path += "?" + query
+	}
+	return c.get(ctx, path)
 }
 func (c *client) runList(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/runs")
@@ -506,12 +788,41 @@ func (c *client) taskReportImplemented(ctx context.Context, _ *mcp.CallToolReque
 	envelope["proceedReason"] = in.ProceedReason
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.report_implemented", arguments, envelope))
 }
+func acceptancePolicyArguments(in acceptancePolicyFields) map[string]any {
+	return map[string]any{"workspaceId": in.WorkspaceID, "policyVersion": in.PolicyVersion, "defaultMode": in.DefaultMode, "evidenceProfileId": in.EvidenceProfileID}
+}
+func (c *client) acceptancePolicyChangePreview(ctx context.Context, _ *mcp.CallToolRequest, in acceptancePolicyPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("task.acceptance_policy.change", acceptancePolicyArguments(in.acceptancePolicyFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) acceptancePolicyChangeExecute(ctx context.Context, _ *mcp.CallToolRequest, in acceptancePolicyExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.acceptance_policy.change", acceptancePolicyArguments(in.acceptancePolicyFields), executeEnv(in.executeEnvelope)))
+}
+func acceptanceEscalateArguments(in acceptanceEscalateFields) map[string]any {
+	return map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "assignmentId": in.AssignmentID, "reason": in.Reason, "evidenceReference": in.EvidenceReference, "policyVersion": in.PolicyVersion}
+}
+func (c *client) acceptanceModeEscalatePreview(ctx context.Context, _ *mcp.CallToolRequest, in acceptanceEscalatePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("task.acceptance_mode.escalate", acceptanceEscalateArguments(in.acceptanceEscalateFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) acceptanceModeEscalateExecute(ctx context.Context, _ *mcp.CallToolRequest, in acceptanceEscalateExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.acceptance_mode.escalate", acceptanceEscalateArguments(in.acceptanceEscalateFields), executeEnv(in.executeEnvelope)))
+}
+func (c *client) taskEvidenceReport(ctx context.Context, _ *mcp.CallToolRequest, in evidenceReportInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{
+		"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "evidenceId": in.EvidenceID,
+		"completionReportRecordId": in.CompletionReportRecordID, "verificationVerdict": in.VerificationVerdict,
+		"verificationReference": in.VerificationReference, "verificationReferenceKind": in.VerificationReferenceKind,
+		"independentReviewRecordId": in.IndependentReviewRecordID, "reviewVerdict": in.ReviewVerdict,
+		"unresolvedBlockingCount": in.UnresolvedBlockingCount, "commitReferenceId": in.CommitReferenceID,
+	}
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.evidence.report", arguments, automaticEnv(in.automaticEnvelope)))
+}
 func taskCreateArguments(in taskCreateFields) map[string]any {
 	return map[string]any{
 		"workspaceId": in.WorkspaceID, "taskUuid": in.TaskUUID, "laneId": in.LaneID, "phaseId": in.PhaseID,
 		"parentTaskId": in.ParentTaskID, "title": in.Title, "description": in.Description,
 		"predecessorTaskIds": in.PredecessorTaskIDs, "successorTaskIds": in.SuccessorTaskIDs,
-		"terminalReason": in.TerminalReason,
+		"terminalReason": in.TerminalReason, "requestedAcceptanceMode": in.RequestedAcceptanceMode,
+		"evidenceProfileId": in.EvidenceProfileID,
 	}
 }
 func (c *client) taskCreatePreview(ctx context.Context, _ *mcp.CallToolRequest, in taskCreatePreviewInput) (*mcp.CallToolResult, any, error) {
@@ -526,6 +837,94 @@ func (c *client) taskCreateExecute(ctx context.Context, _ *mcp.CallToolRequest, 
 		envelope["proceedReason"] = in.ProceedReason
 	}
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.create", taskCreateArguments(in.taskCreateFields), envelope))
+}
+func backlogArguments(in backlogMutationFields) map[string]any {
+	out := map[string]any{"workspaceId": in.WorkspaceID}
+	if in.BacklogUUID != "" {
+		out["backlogUuid"] = in.BacklogUUID
+	}
+	if in.BacklogPublicID != 0 {
+		out["backlogPublicId"] = in.BacklogPublicID
+	}
+	if in.LaneID != "" {
+		out["laneId"] = in.LaneID
+	}
+	if in.TargetLaneID != "" {
+		out["targetLaneId"] = in.TargetLaneID
+	}
+	if in.Title != nil {
+		out["title"] = *in.Title
+	}
+	if in.Description != nil {
+		out["description"] = *in.Description
+	}
+	if in.Reason != "" {
+		out["reason"] = in.Reason
+	}
+	if in.OrderedBacklogPublicIDs != nil {
+		out["orderedBacklogPublicIds"] = in.OrderedBacklogPublicIDs
+	}
+	if in.TaskUUID != "" {
+		out["taskUuid"] = in.TaskUUID
+	}
+	if in.PhaseID != "" {
+		out["phaseId"] = in.PhaseID
+	}
+	if in.ParentTaskID != 0 {
+		out["parentTaskId"] = in.ParentTaskID
+	}
+	if in.PredecessorTaskIDs != nil {
+		out["predecessorTaskIds"] = in.PredecessorTaskIDs
+	}
+	if in.SuccessorTaskIDs != nil {
+		out["successorTaskIds"] = in.SuccessorTaskIDs
+	}
+	if in.TerminalReason != "" {
+		out["terminalReason"] = in.TerminalReason
+	}
+	return out
+}
+func (c *client) callBacklogPreview(ctx context.Context, name string, fields backlogMutationFields, envelope previewEnvelope) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command(name, backlogArguments(fields), previewEnv(envelope)))
+}
+func (c *client) callBacklogExecute(ctx context.Context, name string, fields backlogMutationFields, envelope mutationExecuteEnvelope) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command(name, backlogArguments(fields), mutationExecuteEnv(envelope)))
+}
+func (c *client) backlogCreatePreview(ctx context.Context, _ *mcp.CallToolRequest, in backlogCreatePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogPreview(ctx, "backlog.create", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogUUID: in.BacklogUUID, LaneID: in.LaneID, Title: &in.Title, Description: in.Description}, in.previewEnvelope)
+}
+func (c *client) backlogCreateExecute(ctx context.Context, _ *mcp.CallToolRequest, in backlogCreateExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogExecute(ctx, "backlog.create", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogUUID: in.BacklogUUID, LaneID: in.LaneID, Title: &in.Title, Description: in.Description}, in.mutationExecuteEnvelope)
+}
+func (c *client) backlogUpdatePreview(ctx context.Context, _ *mcp.CallToolRequest, in backlogUpdatePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogPreview(ctx, "backlog.update", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, Title: in.Title, Description: in.Description}, in.previewEnvelope)
+}
+func (c *client) backlogUpdateExecute(ctx context.Context, _ *mcp.CallToolRequest, in backlogUpdateExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogExecute(ctx, "backlog.update", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, Title: in.Title, Description: in.Description}, in.mutationExecuteEnvelope)
+}
+func (c *client) backlogMovePreview(ctx context.Context, _ *mcp.CallToolRequest, in backlogMovePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogPreview(ctx, "backlog.move", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, TargetLaneID: in.TargetLaneID}, in.previewEnvelope)
+}
+func (c *client) backlogMoveExecute(ctx context.Context, _ *mcp.CallToolRequest, in backlogMoveExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogExecute(ctx, "backlog.move", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, TargetLaneID: in.TargetLaneID}, in.mutationExecuteEnvelope)
+}
+func (c *client) backlogReorderPreview(ctx context.Context, _ *mcp.CallToolRequest, in backlogReorderPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogPreview(ctx, "backlog.reorder", backlogMutationFields{WorkspaceID: in.WorkspaceID, LaneID: in.LaneID, OrderedBacklogPublicIDs: in.OrderedBacklogPublicIDs}, in.previewEnvelope)
+}
+func (c *client) backlogReorderExecute(ctx context.Context, _ *mcp.CallToolRequest, in backlogReorderExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogExecute(ctx, "backlog.reorder", backlogMutationFields{WorkspaceID: in.WorkspaceID, LaneID: in.LaneID, OrderedBacklogPublicIDs: in.OrderedBacklogPublicIDs}, in.mutationExecuteEnvelope)
+}
+func (c *client) backlogDiscardPreview(ctx context.Context, _ *mcp.CallToolRequest, in backlogDiscardPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogPreview(ctx, "backlog.discard", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, Reason: in.Reason}, in.previewEnvelope)
+}
+func (c *client) backlogDiscardExecute(ctx context.Context, _ *mcp.CallToolRequest, in backlogDiscardExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogExecute(ctx, "backlog.discard", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, Reason: in.Reason}, in.mutationExecuteEnvelope)
+}
+func (c *client) backlogPromotePreview(ctx context.Context, _ *mcp.CallToolRequest, in backlogPromotePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogPreview(ctx, "backlog.promote", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, TaskUUID: in.TaskUUID, PhaseID: in.PhaseID, ParentTaskID: in.ParentTaskID, PredecessorTaskIDs: in.PredecessorTaskIDs, SuccessorTaskIDs: in.SuccessorTaskIDs, TerminalReason: in.TerminalReason, RequestedAcceptanceMode: in.RequestedAcceptanceMode, EvidenceProfileID: in.EvidenceProfileID}, in.previewEnvelope)
+}
+func (c *client) backlogPromoteExecute(ctx context.Context, _ *mcp.CallToolRequest, in backlogPromoteExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.callBacklogExecute(ctx, "backlog.promote", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, TaskUUID: in.TaskUUID, PhaseID: in.PhaseID, ParentTaskID: in.ParentTaskID, PredecessorTaskIDs: in.PredecessorTaskIDs, SuccessorTaskIDs: in.SuccessorTaskIDs, TerminalReason: in.TerminalReason, RequestedAcceptanceMode: in.RequestedAcceptanceMode, EvidenceProfileID: in.EvidenceProfileID}, in.mutationExecuteEnvelope)
 }
 func phaseCreateArguments(in phaseCreateFields) map[string]any {
 	return map[string]any{"workspaceId": in.WorkspaceID, "phaseId": in.PhaseID, "name": in.Name}
@@ -553,7 +952,11 @@ func (c *client) laneCreateExecute(ctx context.Context, _ *mcp.CallToolRequest, 
 	return c.call(ctx, "POST", "/v1/commands/execute", command("lane.create", laneCreateArguments(in.laneCreateFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
 }
 func gateCreateArguments(in gateCreateFields) map[string]any {
-	return map[string]any{"workspaceId": in.WorkspaceID, "gateId": in.GateID, "name": in.Name, "fromPhaseId": in.FromPhaseID, "toPhaseId": in.ToPhaseID}
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "gateId": in.GateID, "name": in.Name, "fromPhaseId": in.FromPhaseID, "toPhaseId": in.ToPhaseID}
+	if in.Alias != "" {
+		arguments["alias"] = in.Alias
+	}
+	return arguments
 }
 func (c *client) gateCreatePreview(ctx context.Context, _ *mcp.CallToolRequest, in gateCreatePreviewInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/preview", command("gate.create", gateCreateArguments(in.gateCreateFields), previewEnv(in.previewEnvelope)))
@@ -573,6 +976,21 @@ func (c *client) gateAttachTaskPreview(ctx context.Context, _ *mcp.CallToolReque
 }
 func (c *client) gateAttachTaskExecute(ctx context.Context, _ *mcp.CallToolRequest, in gateAttachTaskExecuteInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/execute", command("gate.attach_task", gateAttachTaskArguments(in.gateAttachTaskFields), conditionalExecuteEnv(in.conditionalExecuteEnvelope)))
+}
+func gateEntryTaskArguments(in gateEntryTaskFields) map[string]any {
+	return map[string]any{"workspaceId": in.WorkspaceID, "gateId": in.GateID, "taskId": in.TaskID}
+}
+func (c *client) gateAttachEntryTaskPreview(ctx context.Context, _ *mcp.CallToolRequest, in gateEntryTaskPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("gate.attach_entry_task", gateEntryTaskArguments(in.gateEntryTaskFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) gateAttachEntryTaskExecute(ctx context.Context, _ *mcp.CallToolRequest, in gateEntryTaskExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("gate.attach_entry_task", gateEntryTaskArguments(in.gateEntryTaskFields), automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) gateDetachEntryTaskPreview(ctx context.Context, _ *mcp.CallToolRequest, in gateEntryTaskPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("gate.detach_entry_task", gateEntryTaskArguments(in.gateEntryTaskFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) gateDetachEntryTaskExecute(ctx context.Context, _ *mcp.CallToolRequest, in gateEntryTaskExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("gate.detach_entry_task", gateEntryTaskArguments(in.gateEntryTaskFields), automaticEnv(in.automaticEnvelope)))
 }
 func (c *client) taskConfirmPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskConfirmPreviewInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/preview", command("task.confirm", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID}, previewEnv(in.previewEnvelope)))

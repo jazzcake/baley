@@ -95,10 +95,19 @@ func TestImplementedEvidenceBindsWarningsToAcknowledgementAndReason(t *testing.T
 
 func TestGatePassEvidenceRequiresNonEmptyConditions(t *testing.T) {
 	event := PlannedEvent{Type: "gate.passed", EntityType: "gate", EntityID: "gate", Payload: map[string]any{
-		"gateId": "gate", "conditions": []GatePassConditionEvidence{}, "humanApprovalAttestationId": "att", "workspaceRevision": 3, "decisionSnapshotHash": "sha256:snapshot",
+		"gateId": "gate", "conditions": []GatePassConditionEvidence{}, "entryTasks": []GateEntryTask{{GateID: "gate", TaskID: "next", SelectionSource: "automatic"}}, "humanApprovalAttestationId": "att", "workspaceRevision": 3, "decisionSnapshotHash": "sha256:snapshot",
 	}}
 	if evaluation := ValidateEventEvidence(event); !evaluation.HasErrors() {
 		t.Fatal("empty gate condition snapshot accepted")
+	}
+}
+
+func TestGatePassEvidenceRequiresEntrySnapshotKey(t *testing.T) {
+	event := PlannedEvent{Type: "gate.passed", EntityType: "gate", EntityID: "gate", Payload: map[string]any{
+		"gateId": "gate", "conditions": []GatePassConditionEvidence{{LinkID: "link", TaskID: "task", TaskStatus: TaskConfirmed}}, "humanApprovalAttestationId": "att", "workspaceRevision": 3, "decisionSnapshotHash": "sha256:snapshot",
+	}}
+	if evaluation := ValidateEventEvidence(event); !evaluation.HasErrors() {
+		t.Fatal("missing Gate entry snapshot accepted")
 	}
 }
 

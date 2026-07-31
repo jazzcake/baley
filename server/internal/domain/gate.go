@@ -22,6 +22,8 @@ type Phase struct {
 
 type Gate struct {
 	ID               string
+	PublicID         int
+	Alias            string
 	WorkspaceID      string
 	FromPhaseID      string
 	ToPhaseID        string
@@ -37,6 +39,49 @@ type GateTaskCondition struct {
 	TaskStatus  TaskStatus
 	Passed      bool
 	PassReason  string
+}
+
+type GateEntryTask struct {
+	WorkspaceID     string
+	GateID          string
+	TaskID          string
+	SelectionSource string
+}
+
+func NormalizeGateAlias(value string) (string, error) {
+	alias := strings.ToLower(strings.TrimSpace(value))
+	if alias == "" {
+		return "", nil
+	}
+	if len(alias) > 64 || alias[0] == '-' || alias[len(alias)-1] == '-' {
+		return "", &Violation{Code: CodeInvalidStateTransition}
+	}
+	previousDash := false
+	for _, char := range alias {
+		valid := char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-'
+		if !valid || char == '-' && previousDash {
+			return "", &Violation{Code: CodeInvalidStateTransition}
+		}
+		previousDash = char == '-'
+	}
+	return alias, nil
+}
+
+func IsReservedGatePublicReference(value string) bool {
+	reference := strings.TrimSpace(value)
+	if len(reference) < 3 || !strings.EqualFold(reference[:2], "G#") {
+		return false
+	}
+	digits := reference[2:]
+	if digits[0] < '1' || digits[0] > '9' {
+		return false
+	}
+	for index := 1; index < len(digits); index++ {
+		if digits[index] < '0' || digits[index] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func GateReady(conditions []GateTaskCondition) bool {

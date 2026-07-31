@@ -11,14 +11,16 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
 
 1. Read `docs/baley-system-spec-v1.md` and `docs/baley-command-architecture.md` when the current thread lacks fresh Baley domain context.
 2. Resolve Task references using numeric public IDs. Accept `#104`, `task #104`, `task 104`, `task104`, and `104번 task`.
-3. Do not interpret a bare ambiguous number as a Task ID without contextual evidence.
-4. Inspect the target Task, Lane, Phase, dependency, and Gate context before preparing a write command.
-5. Select exactly one command from `contracts/v1/commands.json` when possible. Read `references/commands.md` for payload patterns. Prefer relationship-aware `task.create` or `dependency.patch` over a multi-command sequence that can partially succeed.
-6. Validate obvious invariants before preview:
+3. Resolve Gate references using `G#<publicId>` first for human-facing instructions while accepting the stable internal `gateId` and optional alias. Keep all three in evidence when available. Treat canonical `G#[1-9][0-9]*` as a public-reference-only namespace: never create it as an internal `gateId`, and never fall back to an internal ID or alias when that public reference is absent.
+4. Do not interpret a bare ambiguous number as a Task ID without contextual evidence.
+5. Inspect the target Task, Lane, Phase, dependency, and Gate context before preparing a write command.
+6. Select exactly one command from `contracts/v1/commands.json` when possible. Read `references/commands.md` for payload patterns. Prefer relationship-aware `task.create` or `dependency.patch` over a multi-command sequence that can partially succeed.
+7. Validate obvious invariants before preview:
    - Task exists.
    - dependency does not create a cycle.
    - multi-edge rewrites use one atomic dependency patch and validate the final graph.
    - direct Task dependency stays in the Workspace; Lane and Phase boundaries are allowed.
+   - for an additional Task in an existing workflow, the proposed predecessor or independent-root intent is known. If the LLM cannot establish either from context, do not preview or create the Task; present a candidate and ask the human whether it is independent or follows a specific Task.
    - a later-Phase to earlier-Phase dependency preserves `phase_order_inversion` as a warning.
    - dependency does not affect Gate readiness unless the Task is explicitly attached to that Gate.
    - a completed path either reaches a successor, joins the outgoing Gate, or has an intentional terminal reason.
@@ -27,10 +29,10 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
    - Gate pass and Gate Task pass/revoke target the current active Phase's outgoing Gate.
    - only detailed-planning Runs start in a future inactive Phase.
    - the requested action does not exercise human-only authority without an explicit matching `humanApprovalAttestation`.
-7. Show a concise preview for user-requested structural changes. Run lifecycle and Task Record registration happen automatically without repeated confirmation.
-8. Call the Baley MCP tool only when one is available and any required human approval has been obtained.
-9. If no Baley command tool is available, stop after the preview. Do not patch fixtures, application source, or a database as a substitute.
-10. Report the resulting Task IDs and Event IDs after execution.
+8. Show a concise preview for user-requested structural changes. Run lifecycle and Task Record registration happen automatically without repeated confirmation.
+9. Call the Baley MCP tool only when one is available and any required human approval has been obtained.
+10. If no Baley command tool is available, stop after the preview. Do not patch fixtures, application source, or a database as a substitute.
+11. Report the resulting Task IDs and Event IDs after execution.
 
 ## Read Requests
 
@@ -43,11 +45,31 @@ Answer read requests directly from an available Baley tool. Examples:
 
 When no live Baley tool exists, state that only fixture or document context is available.
 
-Treat multiple predecessor/successor edges and disconnected DAG components as valid. Do not infer that a DAG must be one connected graph.
+Treat multiple predecessor/successor edges and disconnected DAG components as valid domain shapes. Their validity does not authorize the LLM to introduce a new disconnected component without explicit user intent.
 
 ## Write Requests
 
 Translate natural language into a typed command and preview it.
+
+For lane Backlog intake, do not ask for or infer a Phase. Resolve only the target
+lane and use `backlog.create`; if the lane cannot be established from context,
+ask for it. Backlog items are phase-free planning intake, use `B#<publicId>`,
+and do not have Task dependencies, Gate conditions, Runs, Records, blockers, or
+Task lifecycle status.
+
+When the user asks to promote a Backlog item into a Task, establish the explicit
+target Phase plus predecessor/successor or intentional-root/leaf intent before
+previewing `backlog.promote`. Promotion copies lane, title, and description from
+the Backlog item and does not accept overrides. It atomically creates the pending
+Task and relationships through the same `task.create` topology/warning rules,
+then marks the Backlog item promoted. Exact preview warning acknowledgement is
+required on execute. Promotion never attaches a Gate condition or changes a
+Gate entry Task; that is a separate command and approval boundary.
+
+Use `backlog.update`, `backlog.move`, `backlog.reorder`, and `backlog.discard`
+for active items. Discard is an audited soft terminal transition and does not
+create a Task terminal reason. A lane with active Backlog items must move,
+promote, or discard them before lane termination.
 
 Example:
 
@@ -67,6 +89,8 @@ Preview:
 
 Do not invent the new public Task ID before execution.
 
+When adding a Task after work already exists, establish its predecessor or obtain an explicit user statement that it is an independent root. If neither is available, keep the proposed row in chat or a planning document and ask for the missing context; do not create a standalone Task merely to make the graph valid.
+
 Use `dependency.patch` for edge reversal or any rewrite that removes and adds edges together. Include terminal-reason changes in that same patch when the path shape changes. Never disconnect first and hope a later connect succeeds. If a path has no successor or Gate condition, either add the intended continuation or record an intentional leaf reason; otherwise preserve the `dangling_path` warning.
 
 ## Automatic Workflow
@@ -79,6 +103,13 @@ Use `dependency.patch` for edge reversal or any rewrite that removes and adds ed
 - Do not include the entire Task Record directory in general repository search. Read only exact paths returned for the current Task.
 - Move durable knowledge from Task Records into normal project documentation when the repository workflow calls for it. This is ordinary LLM repository work, not a Baley command, state, or Event.
 - Report implementation completion with an assessment, residual risks, and optional completion-report reference. Do not claim Baley verified semantic quality.
+- After reporting the primary Task implemented, inspect related open Tasks whose acceptance outcome may have been satisfied or made unnecessary by the same work. Classify each one before proposing any human decision:
+  - already `implemented`: re-check its assessment and commit, test/build, and review evidence against the Task acceptance outcome; include it only when the evidence is still sufficient, otherwise use `task.rework` and record the remaining work;
+  - `pending` or `in_progress` and fully satisfied by the same commit, tests, build, and review evidence: record an explicit shared-evidence assessment and report it `implemented` through the normal Agent workflow before asking for confirmation;
+  - no longer needed or superseded rather than implemented: propose `task.discard` with the real reason such as `superseded by #<id>`, never confirmation;
+  - partially satisfied or uncertain: keep it open and update only the truthful remaining context.
+- Never use human confirmation to bypass `pending`/`in_progress` → `implemented`, missing evidence, or another invalid state transition.
+- A related Task already `confirmed` or `discarded` is terminal in V1. Create a new follow-up Task when new work is required instead of rewriting its outcome.
 
 ## Authority
 
@@ -94,7 +125,31 @@ Use `dependency.patch` for edge reversal or any rewrite that removes and adds ed
 - Distinguish the human initiator and approver from the Agent that executes the command.
 - Lane Group, Lane fork, Branch, and worktree lifecycle management are outside V1.
 
-When Task status is `implemented` or Gate status is `ready`, report the derived human decision with its target, expected Workspace revision, warnings, and snapshot hash, then stop before mutation. Resume only with a matching `humanApprovalAttestation`. V1 has no persisted approval inbox.
+For every human-only action, create the fresh preview before asking for approval, but present a human decision brief rather than a transport dump. Lead with what was delivered, how it was verified, independent review results when available, and any residual risk that could change the decision. Keep Workspace revision, command hash, capability, and snapshot hash as internal audit-binding data unless the human asks for them or a stale/mismatch error requires explanation.
+
+For one `task.confirm`, use this concise pattern:
+
+```text
+#<id>은 <delivered outcome>, <test/build verification>, <independent review result>를 완료했습니다. 완료로 확인할까요?
+```
+
+When several Tasks are already `implemented`, create a write-free baseline `task.confirm` preview for every target at the same starting Workspace revision, then explicitly enumerate their outcomes in one grouped decision brief. V1 grouped approval is limited to this homogeneous `task.confirm` set. Keep different actions separate: confirmation and discard must not be hidden in the same generic “complete all” question. Treat an unambiguous reply such as “yes”, “confirm”, “네”, or “확인합니다” to the immediately preceding single or explicitly enumerated grouped decision brief as the human approval statement.
+
+Execute a grouped approval as an LLM-controlled sequence, not as a server batch mutation. For every command in the approved set:
+
+1. create a fresh preview just in time;
+2. require the first fresh preview revision to equal the retained group baseline revision and every later fresh preview revision to equal the immediately preceding successful command's resulting revision; then compare action, target, projected diff, required capability, all errors/warnings/advisories, and optional decision snapshot with that target's baseline preview, ignoring only the expected revision and command hash;
+3. execute with a new command-specific `humanApprovalAttestation` bound to that preview's exact revision, command hash, and optional snapshot hash;
+4. use the same non-empty approval `statementHash` and `conversationRef` on every command-specific attestation for correlation, never a prior command hash or attestation;
+5. fresh-read before the next iteration.
+
+The expected revision increase caused solely by an earlier successful command in that approved sequence does not require another human question. Re-preview internally and continue only when the revision progression and comparison fields remain equivalent. Any mismatch before the first command or between later commands means external or unexpected state changed: stop and ask again even when the projected diff appears unchanged. Do not let the Agent downgrade a changed diagnostic as “not material” on the human's behalf. Report each resulting status and Event IDs, including any partial progress if a later iteration stops.
+
+Do not present routine topology diagnostics as though they were implementation-quality failures. In particular, acknowledge `dangling_path` only as a warning when confirmation is otherwise approved; never invent or approve a terminal reason to suppress it. Surface the diagnostic in the decision brief only when it materially changes the human decision.
+
+Apply the same outcome-first approach to human-only Gate, Lane, `task.discard`, and Workspace decisions: describe the real-world effect and decision evidence first, while preserving exact revision/hash/snapshot binding internally. `task.rework` is an Agent Operator action and does not require human approval. V1 has no persisted approval inbox.
+
+The server enforces only each command's current revision, canonical hash, target, warnings, and command-specific attestation. The Skill/Operator enforces the grouped baseline comparison, revision chain, and shared human statement. Do not claim the server provides an atomic or authenticated approval bundle.
 
 Treat Viewer, Operator, Approver, and Owner as capability bundles for the future authenticated API. Never assume an Agent Operator has human approval capability.
 

@@ -1,5 +1,6 @@
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { WorkspaceFixture } from "../domain/model";
+import { BACKLOG_RAIL_GUTTER_WIDTH } from "../components/backlog-rail.config";
 
 const elk = new ELK();
 export const NODE_WIDTH = 190;
@@ -10,7 +11,7 @@ const PHASE_HEADER_HEIGHT = 74;
 export const LANE_HEIGHT = 154;
 export const LANE_BAND_INSET_Y = 18;
 export const LANE_CONTENT_BREATHING_ROOM_Y = 18;
-export const LANE_LABEL_HEIGHT = 52;
+export const LANE_LABEL_HEIGHT = 68;
 const GATE_CORRIDOR_WIDTH = 250;
 const MIN_PHASE_WIDTH = 340;
 
@@ -93,6 +94,7 @@ async function layoutPhase(
 export async function layoutGraph(
   fixture: WorkspaceFixture,
   taskIds: Set<string>,
+  reserveBacklogRail = true,
 ): Promise<GraphLayout> {
   const phases = [...fixture.phases].sort((a, b) => a.order - b.order);
   const localLayouts = await Promise.all(
@@ -116,7 +118,8 @@ export async function layoutGraph(
   });
   const height = cursorY + 42;
 
-  let cursorX = LANE_LABEL_WIDTH;
+  // TEMP UI experiment: reserve a phase-free gutter for the lane backlog rail.
+  let cursorX = LANE_LABEL_WIDTH + (reserveBacklogRail ? BACKLOG_RAIL_GUTTER_WIDTH : 0);
   localLayouts.forEach((local, phaseIndex) => {
     const phaseWidth = Math.max(
       MIN_PHASE_WIDTH,

@@ -15,6 +15,7 @@ func TestTaskAndDependencyMutationsAgainstPostgres(t *testing.T) {
 	if url == "" {
 		t.Skip("BALEY_TEST_DATABASE_URL is not set")
 	}
+	requireDisposableDatabase(t, url)
 	ctx := context.Background()
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "graph-mutation-integration-secret")
 	repo, err := postgres.Open(ctx, url)
@@ -22,7 +23,7 @@ func TestTaskAndDependencyMutationsAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	if _, err = repo.Pool.Exec(ctx, "TRUNCATE events,human_approval_attestations,commands,workspace_counters,run_git_observations,commit_references,task_record_indexes,repositories,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE"); err != nil {
+	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE events,human_approval_attestations,commands,workspace_counters,run_git_observations,commit_references,task_record_indexes,repositories,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE; SET session_replication_role='origin'"); err != nil {
 		t.Fatal(err)
 	}
 	if err = repo.SeedDemo(ctx); err != nil {
@@ -98,8 +99,12 @@ func TestTaskAndDependencyMutationsAgainstPostgres(t *testing.T) {
 	if _, err = service.Execute(ctx, clear); err != nil {
 		t.Fatalf("acknowledged terminal clear failed: %v", err)
 	}
-	execute("gate.create", map[string]any{"workspaceId": wid, "gateId": "validation-ready", "name": "Validation Ready", "fromPhaseId": "validate", "toPhaseId": "deploy"}, "gate-create", 11)
-	execute("gate.attach_task", map[string]any{"workspaceId": wid, "gateId": "validation-ready", "taskId": 110}, "gate-attach-future", 12)
+	execute("gate.create", map[string]any{"workspaceId": wid, "gateId": "validation-ready-internal", "alias": "validation-ready", "name": "Validation Ready", "fromPhaseId": "validate", "toPhaseId": "deploy"}, "gate-create", 11)
+	snapshot, _ = repo.LoadSnapshot(ctx, wid)
+	if created := application.FindGateByReference(snapshot.Gates, "G#2"); created == nil || created.Alias != "validation-ready" || snapshot.NextGatePublicID != 3 {
+		t.Fatalf("Workspace counter did not issue Gate G#2: %#v", snapshot.Gates)
+	}
+	execute("gate.attach_task", map[string]any{"workspaceId": wid, "gateId": "G#2", "taskId": 110}, "gate-attach-future", 12)
 	execute("gate.detach_task", map[string]any{"workspaceId": wid, "gateId": "validation-ready", "taskId": 110}, "gate-detach-future", 13)
 	execute("lane.create", map[string]any{"workspaceId": wid, "laneId": "ops", "name": "Operations"}, "lane-create", 14)
 	execute("lane.update", map[string]any{"workspaceId": wid, "laneId": "ops", "name": "Operations", "goal": "Ship safely", "summary": "Deployment work"}, "lane-update", 15)

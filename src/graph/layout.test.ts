@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pilotReadyFixture } from "../fixtures/pilot-ready";
+import { BACKLOG_RAIL_GUTTER_WIDTH } from "../components/backlog-rail.config";
 import { laneBandRect, laneLabelTop, layoutGraph, LANE_BAND_INSET_Y, LANE_CONTENT_BREATHING_ROOM_Y, LANE_HEIGHT, LANE_LABEL_HEIGHT, NODE_HEIGHT, NODE_WIDTH, rectanglesOverlap } from "./layout";
 
 describe("phase-aware graph layout", () => {
@@ -29,6 +30,25 @@ describe("phase-aware graph layout", () => {
       expect(point.y).toBeGreaterThanOrEqual(laneTop + LANE_BAND_INSET_Y + LANE_CONTENT_BREATHING_ROOM_Y);
       expect(point.y + NODE_HEIGHT).toBeLessThanOrEqual(laneTop + laneHeight - LANE_BAND_INSET_Y - LANE_CONTENT_BREATHING_ROOM_Y);
     }
+  });
+
+  it("keeps the temporary backlog gutter outside the first phase", async () => {
+    const layout = await layoutGraph(
+      pilotReadyFixture,
+      new Set(pilotReadyFixture.tasks.map((task) => task.id)),
+    );
+
+    expect(layout.phaseRects[0]?.x).toBe(180 + BACKLOG_RAIL_GUTTER_WIDTH);
+  });
+
+  it("does not reserve the temporary backlog gutter when the rail is hidden", async () => {
+    const layout = await layoutGraph(
+      pilotReadyFixture,
+      new Set(pilotReadyFixture.tasks.map((task) => task.id)),
+      false,
+    );
+
+    expect(layout.phaseRects[0]?.x).toBe(180);
   });
 
   it("places every gate in the empty corridor between phases", async () => {

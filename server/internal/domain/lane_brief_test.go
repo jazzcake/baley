@@ -40,6 +40,44 @@ func TestBuildLaneBriefPreservesMultiRepositoryAndUnverifiedCommitEvidence(t *te
 	}
 }
 
+func TestBuildLaneBriefKeepsEveryActiveRunAheadOfTerminalHistory(t *testing.T) {
+	input := laneBriefFixture()
+	input.RecentLimit = 1
+	activeStarted := input.Now.Add(-2 * time.Hour)
+	input.Runs = []Run{
+		{ID: "active", WorkspaceID: "workspace", TaskID: "task", Kind: RunImplementation, Status: RunRunning, StartedAt: activeStarted},
+	}
+	for index := 0; index < 5; index++ {
+		started, ended := input.Now.Add(time.Duration(-index-1)*time.Minute), input.Now.Add(time.Duration(-index)*time.Minute)
+		input.Runs = append(input.Runs, Run{
+			ID: "terminal-" + string(rune('a'+index)), WorkspaceID: "workspace", TaskID: "task",
+			Kind: RunImplementation, Status: RunSucceeded, StartedAt: started, EndedAt: &ended, ResultSummary: "done",
+		})
+	}
+	brief, evaluation := BuildLaneBrief(input)
+	if evaluation.HasErrors() || len(brief.RecentEvidence) != 1 ||
+		brief.RecentEvidence[0].ID != "active" || brief.RecentEvidence[0].Alignment != "aligned" {
+		t.Fatalf("active Run was truncated by terminal history: %+v %+v", brief.RecentEvidence, evaluation)
+	}
+}
+
+func TestBuildLaneBriefUsesResolvedRepositoryMismatch(t *testing.T) {
+	input := laneBriefFixture()
+	input.Records = []DatedTaskRecord{{
+		Record: TaskRecord{
+			ID: "record", WorkspaceID: "workspace", TaskID: "task", RepositoryID: "repo",
+			RelativePath: "task-records/task/report.md", Type: RecordCompletionReport,
+			State: RecordReportedUncommitted, ShortSummary: "report",
+		},
+		ObservedAt: input.Now, RepositoryStatus: "missing", MismatchReason: "path absent",
+	}}
+	brief, evaluation := BuildLaneBrief(input)
+	if evaluation.HasErrors() || brief.RecentEvidence[0].Alignment != "missing" ||
+		brief.OpenTasks[0].EvidenceAlignment != "missing" {
+		t.Fatalf("resolved repository mismatch lost: %+v %+v", brief, evaluation)
+	}
+}
+
 func TestBuildLaneBriefProjectsGateAndHumanDecisions(t *testing.T) {
 	input := laneBriefFixture()
 	input.Tasks[0].Status = TaskImplemented

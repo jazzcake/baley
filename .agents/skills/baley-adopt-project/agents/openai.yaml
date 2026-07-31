@@ -1,0 +1,4 @@
+interface:
+  display_name: "Baley Adopt Project"
+  short_description: "Bootstrap and recover a Baley pilot project"
+  default_prompt: "Use $baley-adopt-project to bootstrap this repository into a safe Baley pilot."

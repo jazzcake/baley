@@ -27,7 +27,7 @@ Baley의 초기 개발은 기능 수를 늘리는 방식이 아니라 가장 위
 → Day Tripper 파일럿
 ```
 
-현재 위치는 **Gate V2 close-out 완료 및 Phase 3 진입**이다. Persistent Core, Gate 전이, Run/Record, 나머지 graph command, backup·restore, 독립 fixture, Viewer 인수와 명시적 사람 승인 증거가 완료됐다. Task #110은 Workspace revision 11에서 `confirmed`이며, 다음 작업은 실제 Repository/Record bootstrap과 multi-repository Operator integration이다.
+현재 위치는 **Gate V2 close-out 완료 및 Adoption Embedding 진입 준비**다. Persistent Core, Gate 전이, Run/Record, 나머지 graph command, backup·restore, 독립 fixture, Viewer 인수와 명시적 사람 승인 증거가 완료됐다. 현재 Adoption slice는 outcome-first 공동 승인, 특정 Phase Task 생성, lane별 Backlog 승격과 단일-repository 증거·복원에 집중하며 multi-repository integration은 후속 manifest로 미룬다.
 
 환경 독립 선행 구현은 Wave 7(P4-05~06)까지 단위 검증·독립 재리뷰를 완료했다. Phase 2~4의 선행 모듈은 모두 준비됐으며, PostgreSQL·MCP·실제 Git repository·API/브라우저 통합 판정은 데스크탑 검증 큐로 유지한다.
 
@@ -343,10 +343,15 @@ baley gate status <gate>
 
 ## 11. 현재 다음 행동
 
-1. 새 MCP process에서 `phase.create`, `lane.create`, `gate.create`, `gate.attach_task` typed preview/execute schema를 reload한 뒤 Adoption Lane과 Embedding Contract/Enablement/Pilot 구조를 생성한다.
-2. active Validate Gate에 조건을 추가할 때는 fresh preview의 command hash와 명시적인 사람 승인 진술을 사용하고, 미래 Gate 조건은 Operator 권한으로 구성한다.
-3. 권한이 다른 legacy 8080 listener는 소유 launch context에서 정리한다. 그 전까지 새 MCP process는 user-level `BALEY_SERVER_URL=http://127.0.0.1:18080`으로 current-source runtime을 사용한다.
-4. multi-repository CommitReference와 Record 증거를 위한 CLI/Operator 경로를 완성한다. Branch/worktree lifecycle은 외부 Git 도구에 두고 Baley에는 commit reference와 비권위적 observation만 기록한다.
+1. Adoption Lane, Embedding Contract/Enablement/Pilot Phase와 인접 Gate 생성은 완료했다. 생성 증거는 `task-records/structural-typed-mcp/completion-report-02.md`에 있다.
+2. [`baley-adoption-task-manifest.md`](baley-adoption-task-manifest.md)의 PM 기준선에 따라 Task를 typed `task.create` preview/execute로 생성하고 public ID를 manifest에 반영한다.
+3. active `embedding-contract-entry`에는 Validate Task #116을 조건으로 연결한다. 이 변경은 fresh preview의 command hash와 명시적인 사람 승인을 받은 뒤에만 execute한다.
+4. 미래 Gate에는 AC-04와 AE-04를 각각 조건으로 연결하고 Contract → Enablement → Pilot 순서로 수용 기준을 검증한다.
+5. 권한이 다른 legacy 8080 listener는 소유 launch context에서 정리한다. 그 전까지 새 MCP process는 user-level `BALEY_SERVER_URL=http://127.0.0.1:18080`으로 current-source runtime을 사용한다.
+6. Task #121에서 outcome-first 공동 승인, 특정 Phase Task 생성, lane별
+   BacklogItem 승격의 typed vertical slice를 구현·회귀 검증했다. 단일-repository
+   증거·복원 경로는 후속 Task와 함께 진행하며 multi-repository CommitReference
+   조율은 후속 manifest로 유지한다.
 
 ## 12. Gate-transition close-out
 

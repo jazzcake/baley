@@ -8,6 +8,57 @@ import (
 	"testing"
 )
 
+func TestClientSendsConfiguredAgentTokenWithoutPuttingItInThePayload(t *testing.T) {
+	const token = "agent-secret-that-must-stay-in-the-header"
+	var authorization string
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workspaceRevision":2}`))
+	}))
+	defer server.Close()
+
+	c := &client{base: server.URL, http: server.Client(), agentToken: token}
+	result, _, err := c.runStart(context.Background(), nil, runStartInput{
+		WorkspaceID: "workspace",
+		TaskID:      135,
+		ClientRunID: "client-run",
+		Kind:        "implementation",
+		automaticEnvelope: automaticEnvelope{
+			ExpectedWorkspaceRevision: 1,
+			IdempotencyKey:            "idempotency-key",
+			ExecutedByActorID:         "agent",
+		},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("run start failed: %#v %v", result, err)
+	}
+	if authorization != "Bearer "+token {
+		t.Fatalf("missing agent bearer token: %q", authorization)
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) == "" || containsJSONSecret(raw, token) {
+		t.Fatal("agent token leaked into the command payload")
+	}
+}
+
+func containsJSONSecret(raw []byte, secret string) bool {
+	for index := 0; index+len(secret) <= len(raw); index++ {
+		if string(raw[index:index+len(secret)]) == secret {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTaskConfirmExecuteForwardsWarningAcknowledgementEnvelope(t *testing.T) {
 	var body map[string]any
 	var decodeErr error
@@ -168,7 +219,7 @@ func TestStructuralCreateHandlersForwardTypedCommandsAndConditionalApproval(t *t
 		path string
 		body map[string]any
 	}
-	requests := make(chan capturedRequest, 8)
+	requests := make(chan capturedRequest, 12)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -193,8 +244,12 @@ func TestStructuralCreateHandlersForwardTypedCommandsAndConditionalApproval(t *t
 	_, _, _ = c.gateCreateExecute(context.Background(), nil, gateCreateExecuteInput{gateCreateFields: gateCreateFields{WorkspaceID: "workspace", GateID: "contract-ready", Name: "Contract Ready", FromPhaseID: "validate", ToPhaseID: "contract"}, mutationExecuteEnvelope: executeEnvValue})
 	_, _, _ = c.gateAttachTaskPreview(context.Background(), nil, gateAttachTaskPreviewInput{gateAttachTaskFields: gateAttachTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 116, ClearTerminal: true}, previewEnvelope: previewEnvValue})
 	_, _, _ = c.gateAttachTaskExecute(context.Background(), nil, gateAttachTaskExecuteInput{gateAttachTaskFields: gateAttachTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 116, ClearTerminal: true}, conditionalExecuteEnvelope: conditionalExecuteEnvelope{mutationExecuteEnvelope: executeEnvValue, ApprovedByActorID: "human", ApprovedCommandHash: "sha256:test", ConversationRef: "thread"}})
+	_, _, _ = c.gateAttachEntryTaskPreview(context.Background(), nil, gateEntryTaskPreviewInput{gateEntryTaskFields: gateEntryTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 129}, previewEnvelope: previewEnvValue})
+	_, _, _ = c.gateAttachEntryTaskExecute(context.Background(), nil, gateEntryTaskExecuteInput{gateEntryTaskFields: gateEntryTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 129}, automaticEnvelope: executeEnvValue.automaticEnvelope})
+	_, _, _ = c.gateDetachEntryTaskPreview(context.Background(), nil, gateEntryTaskPreviewInput{gateEntryTaskFields: gateEntryTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 129}, previewEnvelope: previewEnvValue})
+	_, _, _ = c.gateDetachEntryTaskExecute(context.Background(), nil, gateEntryTaskExecuteInput{gateEntryTaskFields: gateEntryTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 129}, automaticEnvelope: executeEnvValue.automaticEnvelope})
 
-	wantNames := []string{"phase.create", "phase.create", "lane.create", "lane.create", "gate.create", "gate.create", "gate.attach_task", "gate.attach_task"}
+	wantNames := []string{"phase.create", "phase.create", "lane.create", "lane.create", "gate.create", "gate.create", "gate.attach_task", "gate.attach_task", "gate.attach_entry_task", "gate.attach_entry_task", "gate.detach_entry_task", "gate.detach_entry_task"}
 	for index, wantName := range wantNames {
 		request := <-requests
 		wantPath := "/v1/commands/preview"

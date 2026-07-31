@@ -23,12 +23,16 @@ func TestParseGoldenQueriesAndMutations(t *testing.T) {
 		{[]string{"lane", "brief", "lane-a", "--workspace", "workspace"}, QueryInvocation, "lane.brief", `{"laneId":"lane-a","workspaceId":"workspace"}`, false},
 		{[]string{"task", "list", "--workspace", "workspace", "--status", "pending", "--lane", "lane-a"}, QueryInvocation, "task.list", `{"laneId":"lane-a","status":"pending","workspaceId":"workspace"}`, false},
 		{[]string{"gate", "status", "gate-a", "--workspace", "workspace"}, QueryInvocation, "gate.status", `{"gateId":"gate-a","workspaceId":"workspace"}`, false},
+		{[]string{"gate", "status", "G#7", "--workspace", "workspace"}, QueryInvocation, "gate.status", `{"gateId":"G#7","workspaceId":"workspace"}`, false},
 		{[]string{"run", "list", "--workspace", "workspace", "--task", "104"}, QueryInvocation, "run.list", `{"taskId":104,"workspaceId":"workspace"}`, false},
 		{[]string{"record", "list", "--workspace", "workspace", "--task", "104"}, QueryInvocation, "record.list", `{"taskId":104,"workspaceId":"workspace"}`, false},
 		{[]string{"run", "start", "104", "--workspace", "workspace", "--kind", "implementation", "--actor", "agent", "--idempotency", "run-104", "--revision", "7", "--execute"}, MutationInvocation, "run.start", `{"kind":"implementation","taskId":104,"workspaceId":"workspace"}`, true},
 		{[]string{"record", "attach-commit", "record-a", "--workspace", "workspace", "--commit-sha", `"abc"`, "--actor", "agent", "--idempotency", "record-a-commit"}, MutationInvocation, "record.attach_commit", `{"commitSha":"abc","recordId":"record-a","workspaceId":"workspace"}`, false},
 		{[]string{"lane", "close-out", "lane-a", "--workspace", "workspace", "--actor", "agent", "--idempotency", "lane-close"}, MutationInvocation, "lane.close_out", `{"laneId":"lane-a","workspaceId":"workspace"}`, false},
+		{[]string{"gate", "create", "--workspace", "workspace", "--actor", "agent", "--idempotency", "gate-create", "--gate-id", "release-ready", "--alias", "release-ready", "--name", "Release Ready", "--from-phase-id", "validate", "--to-phase-id", "release"}, MutationInvocation, "gate.create", `{"alias":"release-ready","fromPhaseId":"validate","gateId":"release-ready","name":"Release Ready","toPhaseId":"release","workspaceId":"workspace"}`, false},
 		{[]string{"gate", "pass", "gate-a", "--workspace", "workspace", "--actor", "agent", "--idempotency", "gate-pass"}, MutationInvocation, "gate.pass", `{"gateId":"gate-a","workspaceId":"workspace"}`, false},
+		{[]string{"gate", "attach-entry-task", "gate-a", "--workspace", "workspace", "--actor", "agent", "--idempotency", "entry", "--task-id", "110"}, MutationInvocation, "gate.attach_entry_task", `{"gateId":"gate-a","taskId":110,"workspaceId":"workspace"}`, false},
+		{[]string{"gate", "detach-entry-task", "gate-a", "--workspace", "workspace", "--actor", "agent", "--idempotency", "entry-remove", "--task-id", "110"}, MutationInvocation, "gate.detach_entry_task", `{"gateId":"gate-a","taskId":110,"workspaceId":"workspace"}`, false},
 	}
 	for _, test := range tests {
 		invocation, err := Parse(test.args)
