@@ -352,6 +352,13 @@ baley gate status <gate>
    BacklogItem 승격의 typed vertical slice를 구현·회귀 검증했다. 단일-repository
    증거·복원 경로는 후속 Task와 함께 진행하며 multi-repository CommitReference
    조율은 후속 manifest로 유지한다.
+7. 지인·친구 대상 Hosted Pilot의 배포 topology와 운영 경계 초안은
+   [`hosted-pilot-deployment-plan.md`](hosted-pilot-deployment-plan.md)에 둔다.
+8. Site Operator, Workspace Owner, Participant와 Agent의 권한·동시성 계획은
+   [`multi-user-collaboration-plan.md`](multi-user-collaboration-plan.md)에 둔다.
+9. readiness, 관측성, CI, backup/restore와 장애 대응 기준은
+   [`operations-quality-plan.md`](operations-quality-plan.md)에 둔다. 세 계획은 Owner
+   검토 전 draft이며 live Baley Backlog 또는 Task 상태를 대신하지 않는다.
 
 ## 12. Gate-transition close-out
 
