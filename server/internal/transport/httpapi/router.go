@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,11 +29,22 @@ type API struct {
 	Auth           *authn.Service
 	AuthMode       string
 	CookieSecure   bool
+	Build          BuildInfo
+	ReadyCheck     func(context.Context) (int64, error)
+}
+
+type BuildInfo struct {
+	Version       string `json:"version"`
+	Commit        string `json:"commit"`
+	BuiltAt       string `json:"builtAt"`
+	SchemaVersion int64  `json:"schemaVersion"`
 }
 
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
+	mux.HandleFunc("GET /readyz", a.readiness)
+	mux.HandleFunc("GET /versionz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, a.Build) })
 	mux.HandleFunc("POST /v1/auth/login", a.login)
 	mux.HandleFunc("GET /v1/auth/session", a.authSession)
 	mux.HandleFunc("POST /v1/auth/logout", a.logout)
@@ -66,7 +78,20 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/records", a.records)
 	mux.HandleFunc("POST /v1/commands/preview", a.preview)
 	mux.HandleFunc("POST /v1/commands/execute", a.execute)
-	return a.cors(a.authentication(mux))
+	return a.observability(a.cors(a.authentication(mux)))
+}
+
+func (a *API) readiness(w http.ResponseWriter, r *http.Request) {
+	if a.ReadyCheck == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready", "error": "readiness check unavailable"})
+		return
+	}
+	schemaVersion, err := a.ReadyCheck(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "schemaVersion": schemaVersion, "version": a.buildVersion()})
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
@@ -529,7 +554,7 @@ func (a *API) authentication(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/v1/auth/login" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/versionz" || r.URL.Path == "/v1/auth/login" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1113,4 +1138,81 @@ func (a *API) isOriginAllowed(origin string) bool {
 		}
 	}
 	return false
+}
+
+type responseCapture struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (w *responseCapture) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *responseCapture) Write(value []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(value)
+	w.bytes += n
+	return n, err
+}
+
+func (w *responseCapture) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (a *API) observability(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		requestID := validRequestID(r.Header.Get("X-Request-ID"))
+		if requestID == "" {
+			requestID = randomRequestID()
+		}
+		w.Header().Set("X-Request-ID", requestID)
+		w.Header().Set("X-Baley-Version", a.buildVersion())
+		capture := &responseCapture{ResponseWriter: w}
+		next.ServeHTTP(capture, r)
+		if capture.status == 0 {
+			capture.status = http.StatusOK
+		}
+		entry, _ := json.Marshal(map[string]any{
+			"event": "http_request", "requestId": requestID, "method": r.Method,
+			"path": r.URL.Path, "status": capture.status, "bytes": capture.bytes,
+			"durationMs": time.Since(started).Milliseconds(),
+		})
+		log.Print(string(entry))
+	})
+}
+
+func (a *API) buildVersion() string {
+	if strings.TrimSpace(a.Build.Version) == "" {
+		return "dev"
+	}
+	return a.Build.Version
+}
+
+func validRequestID(value string) string {
+	if len(value) < 8 || len(value) > 128 {
+		return ""
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.' {
+			continue
+		}
+		return ""
+	}
+	return value
+}
+
+func randomRequestID() string {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err == nil {
+		return hex.EncodeToString(raw)
+	}
+	return strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
 }

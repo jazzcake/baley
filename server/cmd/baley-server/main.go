@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,15 +21,34 @@ import (
 	"github.com/jazzcake/baley/server/internal/application"
 	"github.com/jazzcake/baley/server/internal/authn"
 	"github.com/jazzcake/baley/server/internal/persistence/postgres"
+	"github.com/jazzcake/baley/server/internal/runtimeconfig"
 	"github.com/jazzcake/baley/server/internal/transport/httpapi"
 	"golang.org/x/term"
+)
+
+const expectedSchemaVersion int64 = 16
+
+var (
+	buildVersion = "dev"
+	buildCommit  = "unknown"
+	buildTime    = "unknown"
 )
 
 func main() {
 	if len(os.Args) < 2 {
 		log.Fatal("usage: baley-server migrate [up|down] | account-bootstrap WORKSPACE_ID ACTOR_ID LOGIN_ID DISPLAY_NAME | serve")
 	}
-	dbURL := env("BALEY_DATABASE_URL", "postgres://baley:baley@127.0.0.1:54329/baley?sslmode=disable")
+	environment := os.Getenv("BALEY_ENV")
+	dbURL, configured, err := runtimeconfig.Load("BALEY_DATABASE_URL")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !configured {
+		if !isDevelopmentEnvironment(environment) {
+			log.Fatal("BALEY_DATABASE_URL or BALEY_DATABASE_URL_FILE is required outside development and test")
+		}
+		dbURL = "postgres://baley:baley@127.0.0.1:54329/baley?sslmode=disable"
+	}
 	if os.Args[1] == "migrate" {
 		direction := "up"
 		if len(os.Args) > 2 {
@@ -42,6 +62,18 @@ func main() {
 	}
 	if os.Args[1] != "serve" && os.Args[1] != "account-bootstrap" {
 		log.Fatal("unknown command")
+	}
+	var runtimeConfig runtimeConfig
+	var origins []string
+	if os.Args[1] == "serve" {
+		runtimeConfig, err = resolveRuntimeConfig(environment, os.Getenv("BALEY_AUTH_MODE"), os.Getenv("BALEY_COOKIE_SECURE"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		origins, err = resolveViewerOrigins(environment)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -83,10 +115,6 @@ func main() {
 		log.Printf("bootstrapped local Owner account %s for Workspace %s", accountID, os.Args[2])
 		return
 	}
-	runtimeConfig, err := resolveRuntimeConfig(os.Getenv("BALEY_ENV"), os.Getenv("BALEY_AUTH_MODE"), os.Getenv("BALEY_COOKIE_SECURE"))
-	if err != nil {
-		log.Fatal(err)
-	}
 	if runtimeConfig.AuthMode == "enforced" {
 		if err = repo.ValidateEnforcedOwners(ctx); err != nil {
 			log.Fatal(err)
@@ -119,15 +147,26 @@ func main() {
 			}
 		}
 	}()
-	api := &httpapi.API{Service: service, Repo: repo, AllowedOrigins: viewerOrigins(), Auth: authService, AuthMode: runtimeConfig.AuthMode, CookieSecure: runtimeConfig.CookieSecure}
-	server := &http.Server{Addr: addr, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	api := &httpapi.API{
+		Service: service, Repo: repo, AllowedOrigins: origins, Auth: authService,
+		AuthMode: runtimeConfig.AuthMode, CookieSecure: runtimeConfig.CookieSecure,
+		Build: httpapi.BuildInfo{Version: buildVersion, Commit: buildCommit, BuiltAt: buildTime, SchemaVersion: expectedSchemaVersion},
+		ReadyCheck: func(readyCtx context.Context) (int64, error) {
+			return repo.Readiness(readyCtx, expectedSchemaVersion)
+		},
+	}
+	server := &http.Server{
+		Addr: addr, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second,
+		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stop()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	log.Printf("Baley server listening on http://%s", addr)
+	log.Printf("Baley server %s (%s) listening on http://%s", buildVersion, buildCommit, addr)
 	if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
@@ -170,7 +209,7 @@ type runtimeConfig struct {
 
 func resolveRuntimeConfig(environment, requestedAuthMode, requestedCookieSecure string) (runtimeConfig, error) {
 	environment = strings.ToLower(strings.TrimSpace(environment))
-	development := environment == "" || environment == "development" || environment == "dev" || environment == "test" || environment == "local"
+	development := isDevelopmentEnvironment(environment)
 
 	authMode := strings.ToLower(strings.TrimSpace(requestedAuthMode))
 	if authMode == "" {
@@ -201,19 +240,45 @@ func resolveRuntimeConfig(environment, requestedAuthMode, requestedCookieSecure 
 	return runtimeConfig{AuthMode: authMode, CookieSecure: cookieSecure}, nil
 }
 
-func viewerOrigins() []string {
+func isDevelopmentEnvironment(environment string) bool {
+	environment = strings.ToLower(strings.TrimSpace(environment))
+	return environment == "" || environment == "development" || environment == "dev" || environment == "test" || environment == "local"
+}
+
+func resolveViewerOrigins(environment string) ([]string, error) {
 	raw := os.Getenv("BALEY_VIEWER_ORIGINS")
 	if raw == "" {
 		raw = os.Getenv("BALEY_VIEWER_ORIGIN")
 	}
 	if raw == "" {
+		if !isDevelopmentEnvironment(environment) {
+			return nil, errors.New("BALEY_VIEWER_ORIGINS is required outside development and test")
+		}
 		raw = "http://127.0.0.1:5173,http://localhost:5173"
 	}
 	origins := make([]string, 0)
+	seen := map[string]bool{}
 	for _, origin := range strings.Split(raw, ",") {
-		if origin = strings.TrimSpace(origin); origin != "" {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
+		}
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+			(parsed.Path != "" && parsed.Path != "/") {
+			return nil, fmt.Errorf("invalid viewer origin %q", origin)
+		}
+		if !isDevelopmentEnvironment(environment) && parsed.Scheme != "https" {
+			return nil, fmt.Errorf("viewer origin %q must use https outside development and test", origin)
+		}
+		origin = strings.TrimSuffix(origin, "/")
+		if !seen[origin] {
+			seen[origin] = true
 			origins = append(origins, origin)
 		}
 	}
-	return origins
+	if len(origins) == 0 {
+		return nil, errors.New("at least one viewer origin is required")
+	}
+	return origins, nil
 }

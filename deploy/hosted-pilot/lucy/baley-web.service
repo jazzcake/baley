@@ -1,0 +1,31 @@
+[Unit]
+Description=Baley Hosted Pilot Viewer gateway
+After=network-online.target baley.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=baley
+Group=baley
+ExecStart=/usr/bin/caddy run --environ --config /etc/baley/Caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/baley/Caddyfile --force
+TimeoutStopSec=5s
+Restart=on-failure
+RestartSec=5s
+MemoryMax=96M
+LimitNOFILE=8192
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

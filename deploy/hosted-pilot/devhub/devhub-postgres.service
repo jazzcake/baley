@@ -1,0 +1,19 @@
+[Unit]
+Description=devhub shared PostgreSQL on Tailscale
+After=docker.service tailscaled.service network-online.target
+Requires=docker.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/devhub-postgres/deploy
+ExecStartPre=/srv/devhub-postgres/deploy/validate-config.sh /etc/devhub-postgres/postgres.env
+ExecStart=/usr/bin/docker-compose --env-file /etc/devhub-postgres/postgres.env -f /srv/devhub-postgres/deploy/compose.yml up --no-recreate
+ExecStop=/usr/bin/docker-compose --env-file /etc/devhub-postgres/postgres.env -f /srv/devhub-postgres/deploy/compose.yml stop
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=120s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

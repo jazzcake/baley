@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,6 +30,69 @@ func TestCORSAllowsConfiguredViewerOrigins(t *testing.T) {
 			}
 			if got := response.Header().Get("Access-Control-Allow-Origin"); got != origin {
 				t.Fatalf("Access-Control-Allow-Origin=%q, want %q", got, origin)
+			}
+		})
+	}
+}
+
+func TestReadinessAndVersionEndpointsRemainPublic(t *testing.T) {
+	api := &API{
+		AuthMode:   "enforced",
+		Build:      BuildInfo{Version: "v1.2.3", Commit: "abcdef", BuiltAt: "2026-08-01T00:00:00Z", SchemaVersion: 16},
+		ReadyCheck: func(_ context.Context) (int64, error) { return 16, nil },
+	}
+	handler := api.Handler()
+
+	for _, path := range []string{"/readyz", "/versionz"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+		if got := response.Header().Get("X-Baley-Version"); got != "v1.2.3" {
+			t.Fatalf("%s X-Baley-Version=%q", path, got)
+		}
+		if got := response.Header().Get("X-Request-ID"); len(got) < 8 {
+			t.Fatalf("%s X-Request-ID=%q", path, got)
+		}
+	}
+}
+
+func TestReadinessDoesNotExposeDatabaseError(t *testing.T) {
+	api := &API{ReadyCheck: func(_ context.Context) (int64, error) {
+		return 15, errors.New("postgres://user:password@database/baley")
+	}}
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	response := httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d", response.Code)
+	}
+	if strings.Contains(response.Body.String(), "password") || strings.Contains(response.Body.String(), "postgres://") {
+		t.Fatalf("readiness leaked internal error: %s", response.Body.String())
+	}
+}
+
+func TestObservabilityReusesOnlySafeRequestID(t *testing.T) {
+	api := &API{}
+	for _, test := range []struct {
+		name, input, want string
+	}{
+		{name: "safe", input: "upstream-123", want: "upstream-123"},
+		{name: "unsafe", input: "bad\nvalue"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/healthz?token=not-logged", nil)
+			request.Header.Set("X-Request-ID", test.input)
+			response := httptest.NewRecorder()
+			api.Handler().ServeHTTP(response, request)
+			got := response.Header().Get("X-Request-ID")
+			if test.want != "" && got != test.want {
+				t.Fatalf("X-Request-ID=%q, want %q", got, test.want)
+			}
+			if test.want == "" && (got == "" || got == test.input) {
+				t.Fatalf("unsafe request ID was not replaced: %q", got)
 			}
 		})
 	}

@@ -1,0 +1,38 @@
+[Unit]
+Description=Baley Hosted Pilot API
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=baley
+Group=baley
+WorkingDirectory=/srv/baley/current
+EnvironmentFile=/etc/baley/baley.env
+LoadCredential=database_url:/etc/baley/secrets/database_url
+LoadCredential=lease_token_secret:/etc/baley/secrets/lease_token_secret
+Environment=BALEY_DATABASE_URL_FILE=%d/database_url
+Environment=BALEY_LEASE_TOKEN_SECRET_FILE=%d/lease_token_secret
+ExecStart=/srv/baley/current/baley-server serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=15s
+MemoryMax=256M
+LimitNOFILE=8192
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

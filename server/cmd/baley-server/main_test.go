@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestResolveRuntimeConfigAuthModeContract(t *testing.T) {
 	tests := []struct {
@@ -28,6 +31,40 @@ func TestResolveRuntimeConfigAuthModeContract(t *testing.T) {
 				t.Fatalf("resolveRuntimeConfig() = %#v, want mode=%q secure=%v", got, tt.wantMode, tt.wantSecure)
 			}
 		})
+	}
+}
+
+func TestResolveViewerOriginsProductionContract(t *testing.T) {
+	t.Setenv("BALEY_VIEWER_ORIGIN", "")
+	t.Setenv("BALEY_VIEWER_ORIGINS", "")
+	if _, err := resolveViewerOrigins("production"); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("production accepted missing viewer origin: %v", err)
+	}
+
+	t.Setenv("BALEY_VIEWER_ORIGINS", "http://baley.example")
+	if _, err := resolveViewerOrigins("production"); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("production accepted HTTP viewer origin: %v", err)
+	}
+
+	t.Setenv("BALEY_VIEWER_ORIGINS", "https://baley.example, https://baley.example/")
+	origins, err := resolveViewerOrigins("production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(origins) != 1 || origins[0] != "https://baley.example" {
+		t.Fatalf("origins=%v", origins)
+	}
+}
+
+func TestResolveViewerOriginsDevelopmentDefaults(t *testing.T) {
+	t.Setenv("BALEY_VIEWER_ORIGIN", "")
+	t.Setenv("BALEY_VIEWER_ORIGINS", "")
+	origins, err := resolveViewerOrigins("development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(origins) != 2 {
+		t.Fatalf("origins=%v", origins)
 	}
 }
 

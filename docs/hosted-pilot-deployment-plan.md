@@ -1,7 +1,8 @@
 ---
 type: implementation-plan
-status: draft-for-owner-review
+status: superseded
 scope: hosted-pilot
+superseded_by: docs/hosted-pilot-simple-server-architecture.md
 related:
   - docs/account-workspace-access-contract.md
   - docs/account-workspace-access-operations.md
@@ -11,11 +12,20 @@ related:
 
 # Hosted Baley Pilot 서비스 서버·배포 기획
 
+> 이 문서는 초기 `devhub=API+DB` 배치 검토 기록이다. 이후 실제 host inventory와
+> Owner 결정으로 `lucy=Viewer+API`, `devhub=shared PostgreSQL` 구조가 채택됐으며,
+> 현재 정본은 `hosted-pilot-simple-server-architecture.md`다. Hosted 배포 자체는
+> 2026-08-02 로컬 기능 마감 결정에 따라 보류됐다.
+
 ## 1. 결정된 전제
 
-- Baley는 사용자가 이미 외부 서비스용으로 운영하는 두 서버에 배포한다.
-- front web server는 저비용 머신이며 정적 Viewer, TLS, 공개 진입점을 맡는다.
-- backend server는 4 core, 16 GB RAM 머신이며 Baley API와 PostgreSQL을 맡는다.
+- Baley는 사용자가 이미 외부 서비스용으로 운영하는 두 서버에 실제 배포한다.
+- `devhub`는 backend host다. 4 core, 16 GB RAM 기준으로 Baley API,
+  PostgreSQL과 local backup staging을 맡는다.
+- 대기 중인 웹 전용 서버는 front host다. 실제 hostname이 확정되기 전까지
+  `web-front`라는 논리명을 사용하며 정적 Viewer, TLS와 공개 진입점을 맡는다.
+- 두 host는 기존 서비스와 격리된 Baley process/container, network, volume과
+  secret 범위를 사용한다.
 - 초기 사용자는 지인·친구 중심의 소규모 초대형 Pilot이다.
 - 일반 사용자의 기본 사람 인증은 Google Identity Services 로그인으로 한다.
 - local password 인증은 최초 Site Operator bootstrap과 비상 복구 경계로 유지한다.
@@ -40,12 +50,12 @@ Browser
   |
   | HTTPS: https://baley.example
   v
-Front web server
+web-front (웹 전용 서버)
   |- /            -> versioned static Viewer files
   `- /api/*       -> private encrypted link로 backend gateway에 reverse proxy
                           |
                           v
-Backend server gateway
+devhub gateway
   `- 127.0.0.1:8080 -> baley-server
                           |
                           v
@@ -56,6 +66,54 @@ front와 backend 사이에는 기존 사설망, WireGuard/Tailscale 같은 tunne
 인증된 TLS 연결 중 하나를 사용한다. backend public firewall은 front server에서 오는
 gateway traffic만 허용한다. PostgreSQL 5432와 Baley의 loopback 8080은 public interface에
 publish하지 않는다.
+
+실제 배포 연결은 다음 순서로 연다.
+
+1. `devhub` 내부에서 PostgreSQL, migration, `baley-server`, `/healthz`와 `/readyz`를
+   먼저 검증한다.
+2. `web-front`와 `devhub` 사이의 private link를 구성하고 backend gateway만
+   `web-front`에서 접근 가능하게 한다.
+3. `web-front`에 versioned Viewer artifact와 `/api/*` reverse proxy를 배치한다.
+4. production domain과 TLS를 연결한 뒤 login, Workspace 전환과 logout을 검증한다.
+5. backup/restore drill과 rollback을 통과한 뒤 초대형 Pilot 사용자를 받는다.
+
+3단계 전에는 `devhub`의 Baley API와 PostgreSQL을 public Internet에 노출하지 않는다.
+
+### 3.1 `web-front` 확인 현황과 보호 경계
+
+2026-08-01 Owner inventory 기준으로 `web-front`에는 Lucy English 한 서비스만
+실행 중이다.
+
+| 항목 | 확인 내용 |
+| --- | --- |
+| container | `learning_english-app-1` (`learning_english-app` image) |
+| service age | 약 4개월 연속 실행 |
+| public listener | 443 HTTPS, Cloudflare Origin certificate |
+| additional listener | 3001 HTTP |
+| ingress 구조 | 443/3001 모두 `docker-proxy`가 container로 전달 |
+| application TLS | 별도 Nginx 없이 Lucy의 Go process가 직접 처리 |
+| host listener | 22, 443, 3001 |
+| disk | 39 GB 중 약 7.2 GB 사용 |
+| memory | 약 914 MB, 약 516 MB available |
+| load | 거의 유휴 |
+
+공개 IP와 접속 credential은 repository에 기록하지 않고 SSH config 또는 별도 운영
+inventory에서 관리한다.
+
+이 환경에서 확정된 보호 경계는 다음과 같다.
+
+- Baley Viewer를 build하는 작업은 다른 host/CI에서 수행하고 `web-front`에는 정적
+  artifact만 배치한다.
+- `web-front`에 Baley API나 PostgreSQL을 배치하지 않는다.
+- Lucy의 443 listener, certificate와 container를 첫 Baley 배포에서 변경하지 않는다.
+- Baley용 별도 public hostname은 Lucy와 충돌하지 않는 ingress를 사용한다. 기존
+  Cloudflare 구성을 이용한 별도 tunnel 또는 shared front gateway가 후보지만 HP-02
+  topology 결정 전에는 하나로 고정하지 않는다.
+- shared gateway를 선택해 443을 이관해야 한다면 Lucy의 listener 변경, health check와
+  즉시 rollback을 별도 사람 승인 작업으로 다룬다.
+
+메모리 여유가 크지는 않으므로 `web-front`의 Baley 구성은 정적 파일 serving과
+경량 ingress로 제한하고 실제 사용량을 관측한다.
 
 동일-origin 구성을 우선한다.
 
@@ -213,14 +271,17 @@ backup과 구분해 단계적으로 도입한다.
 
 ## 11. 구현 전 Owner 입력
 
-다음 값은 repository에서 추측하지 않고 실제 서버 기준으로 확정한다.
+host 역할 배치는 확정됐다. 다음 값은 repository에서 추측하지 않고 실제 서버
+inventory에서 읽거나 Owner가 제공한 값으로 확정한다.
 
-- front/backend OS와 CPU architecture
-- 현재 사용하는 front web server와 process/container 관리자
+- `devhub`의 실제 hostname과 두 host의 OS·CPU architecture
+- 두 host의 SSH 접속 별칭과 배포 사용자가 가진 권한 범위
+- `web-front`의 Docker/Cloudflare 설정을 읽을 수 있는 배포 사용자와 Lucy rollback 경로
+- `devhub`에서 현재 사용하는 gateway와 process/container 관리자
 - 두 서버 사이의 사설망 또는 tunnel 유무
 - 사용할 domain과 DNS 관리 위치
 - Google Cloud project, OAuth consent branding과 production web client ID
-- backend의 기존 PostgreSQL 사용 여부와 Baley 전용 instance/cluster 선택
+- `devhub`의 기존 PostgreSQL 사용 여부와 Baley 전용 instance/cluster 선택
 - encrypted off-host backup 목적지
 - 기존 홈서비스 monitoring·alert 채널
 

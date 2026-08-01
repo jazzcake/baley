@@ -1,0 +1,28 @@
+[Unit]
+Description=Baley Hosted Pilot database migration
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=baley
+Group=baley
+WorkingDirectory=/srv/baley/current
+EnvironmentFile=/etc/baley/baley.env
+LoadCredential=database_url:/etc/baley/secrets/migration_database_url
+Environment=BALEY_DATABASE_URL_FILE=%d/database_url
+ExecStart=/srv/baley/current/baley-server migrate up
+TimeoutStartSec=120s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=

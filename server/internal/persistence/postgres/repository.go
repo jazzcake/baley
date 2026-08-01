@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/jazzcake/baley/server/internal/application"
 	"github.com/jazzcake/baley/server/internal/authz"
 	"github.com/jazzcake/baley/server/internal/domain"
+	"github.com/jazzcake/baley/server/internal/runtimeconfig"
 	"github.com/pressly/goose/v3"
 )
 
@@ -31,8 +31,11 @@ type Repository struct {
 }
 
 func Open(ctx context.Context, url string) (*Repository, error) {
-	secretSource := os.Getenv("BALEY_LEASE_TOKEN_SECRET")
-	if secretSource == "" {
+	secretSource, configured, err := runtimeconfig.Load("BALEY_LEASE_TOKEN_SECRET")
+	if err != nil {
+		return nil, err
+	}
+	if !configured {
 		return nil, fmt.Errorf("BALEY_LEASE_TOKEN_SECRET is required")
 	}
 	pool, err := pgxpool.New(ctx, url)
@@ -46,6 +49,20 @@ func Open(ctx context.Context, url string) (*Repository, error) {
 	digest := sha256.Sum256([]byte(secretSource))
 	secret := digest[:]
 	return &Repository{Pool: pool, leaseTokenSecret: secret}, nil
+}
+
+func (r *Repository) Readiness(ctx context.Context, expectedSchemaVersion int64) (int64, error) {
+	if err := r.Pool.Ping(ctx); err != nil {
+		return 0, fmt.Errorf("database ping: %w", err)
+	}
+	var schemaVersion int64
+	if err := r.Pool.QueryRow(ctx, "SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1").Scan(&schemaVersion); err != nil {
+		return 0, fmt.Errorf("read migration version: %w", err)
+	}
+	if schemaVersion != expectedSchemaVersion {
+		return schemaVersion, fmt.Errorf("database migration version is %d, expected %d", schemaVersion, expectedSchemaVersion)
+	}
+	return schemaVersion, nil
 }
 
 func (r *Repository) RunLeaseToken(runID string) (string, error) {

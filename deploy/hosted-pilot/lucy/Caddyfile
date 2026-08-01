@@ -1,0 +1,30 @@
+{
+	admin 127.0.0.1:2019
+	auto_https off
+}
+
+http://127.0.0.1:8081 {
+	encode zstd gzip
+
+	header {
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+
+	handle_path /api/* {
+		reverse_proxy 127.0.0.1:8080 {
+			health_uri /readyz
+			health_interval 30s
+			health_timeout 3s
+		}
+	}
+
+	handle {
+		root * /srv/baley/current/viewer
+		try_files {path} /index.html
+		file_server
+	}
+}

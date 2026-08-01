@@ -27,7 +27,10 @@ Baley의 초기 개발은 기능 수를 늘리는 방식이 아니라 가장 위
 → Day Tripper 파일럿
 ```
 
-현재 위치는 **Gate V2 close-out 완료 및 Adoption Embedding 진입 준비**다. Persistent Core, Gate 전이, Run/Record, 나머지 graph command, backup·restore, 독립 fixture, Viewer 인수와 명시적 사람 승인 증거가 완료됐다. 현재 Adoption slice는 outcome-first 공동 승인, 특정 Phase Task 생성, lane별 Backlog 승격과 단일-repository 증거·복원에 집중하며 multi-repository integration은 후속 manifest로 미룬다.
+현재 위치는 **Adoption Embedding Enablement와 로컬 Pilot 기능 baseline 마감**이다.
+Persistent Core, Gate 전이, Run/Record, graph command, lane별 Backlog,
+Account·Workspace membership과 승인 경계의 로컬 baseline은 완료됐다. Hosted Pilot
+배포 artifact는 준비됐지만 실제 server 설치와 local Pilot DB 이전은 보류한다.
 
 환경 독립 선행 구현은 Wave 7(P4-05~06)까지 단위 검증·독립 재리뷰를 완료했다. Phase 2~4의 선행 모듈은 모두 준비됐으며, PostgreSQL·MCP·실제 Git repository·API/브라우저 통합 판정은 데스크탑 검증 큐로 유지한다.
 
@@ -314,7 +317,42 @@ baley gate status <gate>
 - [ ] Cross-lane Gate가 실제 프로젝트 조율에 반복적으로 사용된다.
 - [ ] 독립 제품으로 일반화할 핵심 요구가 Day Tripper 특수 요구와 구별된다.
 
-## 9. 이후 후보
+## 9. Hosted Pilot 보류 Track
+
+Hosted deployment의 repository baseline과 runbook은 구현했지만, Owner는 우선 로컬
+기능 완성으로 마감하기로 결정했다. 아래 구조와 절차는 향후 배포 재개 시 사용할 준비된
+계획이며 현재 server mutation을 뜻하지 않는다.
+
+실제 host 역할:
+
+- `lucy`: 정적 Viewer, loopback Baley API와 경량 ingress
+- `devhub`: tailnet shared PostgreSQL과 backup staging
+
+실행 순서:
+
+1. 두 host의 read-only inventory와 격리 경계 확정
+2. production artifact, secret/config validation, readiness와 운영 로그
+3. local Pilot DB export/import와 `devhub` PostgreSQL staging
+4. `lucy` Viewer/API와 private DB 연결
+5. Site Operator/Owner 분리와 Google invite
+6. off-host backup/restore, 관측, rollback과 실제 host 종합 수용
+7. 명시적 사람 승인 후 초대형 Pilot 개시
+
+세부 Task 후보, 의존성과 사람 확인 경계는
+[`hosted-pilot-simple-execution-manifest.md`](hosted-pilot-simple-execution-manifest.md)를
+따른다.
+
+### Gate HP — Hosted Pilot 공개 승인
+
+- [ ] `devhub`의 DB가 public Internet에 직접 노출되지 않는다.
+- [ ] `lucy`의 단일 HTTPS origin에서 login, Workspace 전환과 logout이 동작한다.
+- [ ] 두 Account·두 Workspace의 권한과 데이터 격리가 실제 host에서 검증된다.
+- [ ] off-host backup을 빈 DB에 복원하고 application smoke test가 통과한다.
+- [ ] 배포 중 실패한 application을 이전 artifact로 되돌릴 수 있다.
+- [ ] raw credential이 Git, image, log, Event와 browser storage에 남지 않는다.
+- [ ] Owner가 실제 외부 사용자 초대를 승인한다.
+
+## 10. 이후 후보
 
 파일럿 근거가 있을 때만 검토한다.
 
@@ -326,9 +364,8 @@ baley gate status <gate>
 - 배포·release Gate
 - 외부 도구 import
 - 조직 단위 권한
-- hosted deployment
 
-## 10. 주요 위험과 대응
+## 11. 주요 위험과 대응
 
 | 위험 | 초기 대응 |
 |---|---|
@@ -341,26 +378,16 @@ baley gate status <gate>
 | 기존 제품과 차별성이 약함 | 장기 lane, cross-lane Gate와 multi-repo 기억에 범위 집중 |
 | 기능이 workflow engine으로 팽창 | 범용 실행 엔진, 일정 최적화와 대규모 조직 기능은 초기 제외 |
 
-## 11. 현재 다음 행동
+## 12. 현재 다음 행동
 
-1. Adoption Lane, Embedding Contract/Enablement/Pilot Phase와 인접 Gate 생성은 완료했다. 생성 증거는 `task-records/structural-typed-mcp/completion-report-02.md`에 있다.
-2. [`baley-adoption-task-manifest.md`](baley-adoption-task-manifest.md)의 PM 기준선에 따라 Task를 typed `task.create` preview/execute로 생성하고 public ID를 manifest에 반영한다.
-3. active `embedding-contract-entry`에는 Validate Task #116을 조건으로 연결한다. 이 변경은 fresh preview의 command hash와 명시적인 사람 승인을 받은 뒤에만 execute한다.
-4. 미래 Gate에는 AC-04와 AE-04를 각각 조건으로 연결하고 Contract → Enablement → Pilot 순서로 수용 기준을 검증한다.
-5. 권한이 다른 legacy 8080 listener는 소유 launch context에서 정리한다. 그 전까지 새 MCP process는 user-level `BALEY_SERVER_URL=http://127.0.0.1:18080`으로 current-source runtime을 사용한다.
-6. Task #121에서 outcome-first 공동 승인, 특정 Phase Task 생성, lane별
-   BacklogItem 승격의 typed vertical slice를 구현·회귀 검증했다. 단일-repository
-   증거·복원 경로는 후속 Task와 함께 진행하며 multi-repository CommitReference
-   조율은 후속 manifest로 유지한다.
-7. 지인·친구 대상 Hosted Pilot의 배포 topology와 운영 경계 초안은
-   [`hosted-pilot-deployment-plan.md`](hosted-pilot-deployment-plan.md)에 둔다.
-8. Site Operator, Workspace Owner, Participant와 Agent의 권한·동시성 계획은
-   [`multi-user-collaboration-plan.md`](multi-user-collaboration-plan.md)에 둔다.
-9. readiness, 관측성, CI, backup/restore와 장애 대응 기준은
-   [`operations-quality-plan.md`](operations-quality-plan.md)에 둔다. 세 계획은 Owner
-   검토 전 draft이며 live Baley Backlog 또는 Task 상태를 대신하지 않는다.
+1. 로컬 기능 baseline과 전체 검증 결과를 commit/push해 마감한다.
+2. 로컬 `Baley Pilot` Workspace와 PostgreSQL data를 그대로 유지한다.
+3. 실제 사용에서 발견되는 제품 기능과 UX 문제를 다음 로컬 Task로 관리한다.
+4. Hosted Pilot은 명시적으로 재개할 때
+   [`hosted-pilot-simple-execution-manifest.md`](hosted-pilot-simple-execution-manifest.md)의
+   HPS-07부터 새 승인으로 진행한다.
 
-## 12. Gate-transition close-out
+## 13. Gate-transition close-out
 
 - [x] 종료 의미: Task #110 `confirmed`, Pilot Ready Gate `passed`, Build `completed`, Validate `active`.
 - [x] 사람 승인과 warning acknowledgement가 분리된 revision-11 Event에 보존됐다.
