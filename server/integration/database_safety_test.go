@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var disposableDatabaseName = regexp.MustCompile(`(?i)(^|_)(test|testing)(_|$)`)
+var disposableDatabaseName = regexp.MustCompile(`(?i)(^|_)(test|testing|acceptance)(_|$)`)
 
 func requireDisposableDatabase(t *testing.T, rawURL string) {
 	t.Helper()
@@ -35,7 +35,7 @@ func validateDisposableDatabaseURL(rawURL string) error {
 	}
 	database := config.Database
 	if !disposableDatabaseName.MatchString(database) {
-		return fmt.Errorf("database %q must contain a standalone test/testing marker", database)
+		return fmt.Errorf("database %q must contain a standalone test, testing, or acceptance marker", database)
 	}
 	return nil
 }
@@ -45,6 +45,7 @@ func TestValidateDisposableDatabaseURL(t *testing.T) {
 		"postgres://baley:baley@127.0.0.1:54329/baley_test?sslmode=disable",
 		"postgres://baley:baley@localhost:54329/baley_test_121?sslmode=disable",
 		"postgres://baley:baley@[::1]:54329/testing_baley?sslmode=disable",
+		"postgres://baley:baley@127.0.0.1:54329/baley_acceptance?sslmode=disable",
 	} {
 		if err := validateDisposableDatabaseURL(rawURL); err != nil {
 			t.Errorf("safe URL %q rejected: %v", rawURL, err)
@@ -55,6 +56,7 @@ func TestValidateDisposableDatabaseURL(t *testing.T) {
 		"postgres://baley:baley@db.internal:5432/baley_test?sslmode=disable",
 		"postgres://baley:baley@10.0.0.8:5432/baley_test?sslmode=disable",
 		"postgres://baley:baley@127.0.0.1:54329/baley_reconstructed_20260726?sslmode=disable",
+		"postgres://baley:baley@127.0.0.1:54329/baley_acceptancearchive?sslmode=disable",
 		"postgres://baley:baley@127.0.0.1:54329/baley_test?host=prod.example.com&database=prod",
 	} {
 		if err := validateDisposableDatabaseURL(rawURL); err == nil {

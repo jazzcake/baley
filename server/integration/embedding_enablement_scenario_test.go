@@ -305,7 +305,14 @@ supersedes: null
 	if err = os.WriteFile(recordPaths["measurement"], []byte(measurement), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	validator := exec.Command("python", measurementValidator, recordPaths["measurement"])
+	pythonCommand, pythonErr := exec.LookPath("python")
+	if pythonErr != nil {
+		pythonCommand, pythonErr = exec.LookPath("python3")
+	}
+	if pythonErr != nil {
+		t.Fatal("Python is required (python or python3)")
+	}
+	validator := exec.Command(pythonCommand, measurementValidator, recordPaths["measurement"])
 	if output, validateErr := validator.CombinedOutput(); validateErr != nil {
 		t.Fatalf("coherent scenario pilot measurement is invalid: %v\n%s", validateErr, output)
 	}

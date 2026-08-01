@@ -199,9 +199,14 @@ func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{"code": "workspace_create_failed", "message": err.Error()}})
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
+	status := http.StatusCreated
+	if value.Idempotent {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{
 		"id": value.ID, "name": value.Name, "state": value.State, "revision": value.Revision,
 		"role": value.Role, "relationship": "owner", "capabilities": value.Capabilities,
+		"idempotent": value.Idempotent,
 	})
 }
 

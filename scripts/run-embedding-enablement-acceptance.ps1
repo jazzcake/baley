@@ -21,8 +21,8 @@ $uri = [Uri]$DatabaseUrl
 if ($uri.Host -notin @("127.0.0.1", "::1")) {
   throw "Acceptance database must use a literal loopback host."
 }
-if ($uri.AbsolutePath -notmatch "(test|acceptance)") {
-  throw "Acceptance database name must contain test or acceptance."
+if ($uri.AbsolutePath -notmatch "(^|_)(test|testing|acceptance)(_|$)") {
+  throw "Acceptance database name must contain a standalone test, testing, or acceptance marker."
 }
 $allowedQueryKeys = @("sslmode", "connect_timeout", "application_name")
 foreach ($part in $uri.Query.TrimStart("?").Split("&", [System.StringSplitOptions]::RemoveEmptyEntries)) {
@@ -84,8 +84,15 @@ try {
     Pop-Location
   }
 
-  Invoke-Checked python (Join-Path $skillRoot "scripts/test_validate_pilot_measurement.py")
-  Invoke-Checked python (Join-Path $skillRoot "scripts/validate_pilot_measurement.py") (Join-Path $repoRoot "task-records/embedding-enablement-acceptance/pilot-measurement-01.md")
+  $pythonCommand = if (Get-Command python -ErrorAction SilentlyContinue) {
+    "python"
+  } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
+    "python3"
+  } else {
+    throw "Python is required (python or python3)."
+  }
+  Invoke-Checked $pythonCommand (Join-Path $skillRoot "scripts/test_validate_pilot_measurement.py")
+  Invoke-Checked $pythonCommand (Join-Path $skillRoot "scripts/validate_pilot_measurement.py") (Join-Path $repoRoot "task-records/embedding-enablement-acceptance/pilot-measurement-01.md")
   Push-Location $repoRoot
   try {
     $npmCommand = if (Get-Command npm.cmd -ErrorAction SilentlyContinue) { "npm.cmd" } else { "npm" }

@@ -267,6 +267,18 @@ describe("authenticated Workspace routing", () => {
 
   it("issues a preview-bound approval grant and removes the token from the DOM after one copy", async () => {
     vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
+    const localStorageSetItem = vi.fn();
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => null),
+        setItem: localStorageSetItem,
+        removeItem: vi.fn(),
+        clear: vi.fn(),
+        key: vi.fn(() => null),
+        length: 0,
+      },
+    });
     vi.mocked(previewCommand).mockResolvedValue({
       commandHash: "sha256:command",
       expectedWorkspaceRevision: 7,
@@ -314,7 +326,7 @@ describe("authenticated Workspace routing", () => {
       acknowledgedWarningCodes: ["dangling_path"],
       proceedReason: "의도된 topology 경고를 확인함",
     }, "csrf");
-    expect(localStorage.getItem("approvalGrantToken")).toBeNull();
+    expect(localStorageSetItem).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "MCP execute 입력을 복사하고 화면에서 폐기" }));
 
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith(JSON.stringify({

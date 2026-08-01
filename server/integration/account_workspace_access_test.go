@@ -79,6 +79,9 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if err = repo.ValidateEnforcedOwners(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = repo.CreateOwnedWorkspace(ctx, postgres.DemoWorkspaceID, "Baley Pilot", postgres.DemoHumanActorID); err == nil {
+		t.Fatal("seeded Workspace was misclassified as an idempotent create retry")
+	}
 	authService, err := authn.NewService(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +185,23 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	createdMembership, err := repo.Membership(ctx, createdWorkspaceID, postgres.DemoHumanActorID)
 	if err != nil || createdMembership == nil || createdMembership.Role != authz.RoleOwner || !createdMembership.Active {
 		t.Fatalf("creator Owner binding missing: %+v %v", createdMembership, err)
+	}
+	retryWorkspaceResponse := ownerMutation(http.MethodPost, "/v1/workspaces", []byte(`{
+		"workspaceId":"30000000-0000-4000-8000-000000000123",
+		"name":"Adoption Pilot"
+	}`))
+	var retriedWorkspace struct {
+		ID         string `json:"id"`
+		Idempotent bool   `json:"idempotent"`
+	}
+	if retryWorkspaceResponse.Code != http.StatusOK || json.Unmarshal(retryWorkspaceResponse.Body.Bytes(), &retriedWorkspace) != nil ||
+		retriedWorkspace.ID != createdWorkspaceID || !retriedWorkspace.Idempotent {
+		t.Fatalf("Workspace create retry status=%d body=%s", retryWorkspaceResponse.Code, retryWorkspaceResponse.Body.String())
+	}
+	var workspaceCreateEvents int
+	if err = repo.Pool.QueryRow(ctx, `SELECT count(*) FROM security_events
+		WHERE workspace_id=$1 AND event_type='workspace.created'`, createdWorkspaceID).Scan(&workspaceCreateEvents); err != nil || workspaceCreateEvents != 1 {
+		t.Fatalf("Workspace create retry emitted duplicate events: count=%d err=%v", workspaceCreateEvents, err)
 	}
 	duplicateWorkspaceResponse := ownerMutation(http.MethodPost, "/v1/workspaces", []byte(`{
 		"workspaceId":"30000000-0000-4000-8000-000000000123",

@@ -23,6 +23,7 @@ type WorkspaceAccess struct {
 	ID, Name, State, Role string
 	Revision              int64
 	Capabilities          []authz.Capability
+	Idempotent            bool
 }
 
 type MemberAccess struct {
@@ -59,6 +60,41 @@ func (r *Repository) CreateOwnedWorkspace(ctx context.Context, workspaceID, name
 		JOIN actors actor ON actor.id=account.actor_id AND actor.actor_type='human'
 		WHERE account.actor_id=$1 FOR SHARE`, creatorActorID).Scan(&accountActive); err != nil || !accountActive {
 		return WorkspaceAccess{}, fmt.Errorf("active human account required")
+	}
+	// The client-generated Workspace UUID is the retry identity. Replay only an
+	// exact create owned by the same active human and evidenced by the original
+	// workspace.created security Event; pre-existing seeded/imported Workspaces
+	// must continue to conflict.
+	var existing WorkspaceAccess
+	var existingActive bool
+	err = tx.QueryRow(ctx, `SELECT workspace.id,workspace.name,workspace.state,workspace.revision,
+		membership.role,membership.active
+		FROM workspaces workspace
+		JOIN workspace_memberships membership
+		  ON membership.workspace_id=workspace.id AND membership.actor_id=$2
+		WHERE workspace.id=$1 AND membership.created_by_actor_id=$2
+		  AND EXISTS (
+		    SELECT 1 FROM security_events creation
+		    WHERE creation.workspace_id=workspace.id
+		      AND creation.actor_id=$2
+		      AND creation.event_type='workspace.created'
+		      AND creation.entity_type='workspace'
+		      AND creation.entity_id=workspace.id)
+		FOR SHARE OF workspace,membership`, workspaceID, creatorActorID).
+		Scan(&existing.ID, &existing.Name, &existing.State, &existing.Revision, &existing.Role, &existingActive)
+	if err == nil {
+		if existing.Name != name || existing.State != "active" || existing.Role != string(authz.RoleOwner) || !existingActive {
+			return WorkspaceAccess{}, fmt.Errorf("Workspace identity is already in use")
+		}
+		existing.Capabilities, err = authz.ResolveRole(authz.RoleOwner, authz.ActorHuman, authz.HumanSession)
+		if err != nil {
+			return WorkspaceAccess{}, err
+		}
+		existing.Idempotent = true
+		return existing, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return WorkspaceAccess{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO workspaces(id,name,state,revision)
 		VALUES($1,$2,'active',1)`, workspaceID, name); err != nil {
