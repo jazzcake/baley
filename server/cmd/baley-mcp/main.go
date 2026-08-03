@@ -612,7 +612,8 @@ func (c *client) call(ctx context.Context, method, path string, payload any) (*m
 	if err = json.Unmarshal(raw, &structured); err != nil {
 		structured = map[string]any{"httpStatus": res.StatusCode, "raw": string(raw)}
 	}
-	if res.StatusCode == http.StatusUnauthorized && c.credentialStorePath != "" && workspaceID != "" && token != "" {
+	if (res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusNotFound) &&
+		c.credentialStorePath != "" && workspaceID != "" && token != "" {
 		if err = c.removeWorkspaceCredential(workspaceID); err != nil {
 			return nil, nil, err
 		}

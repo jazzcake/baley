@@ -109,6 +109,58 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 	}
 }
 
+func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t *testing.T) {
+	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
+	var connectionCreated bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces/"+workspaceID {
+			if r.Header.Get("Authorization") != "Bearer stale-or-cross-workspace-token" {
+				t.Fatalf("unexpected credential: %q", r.Header.Get("Authorization"))
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"workspace not found"}}`))
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/mcp/connections" {
+			connectionCreated = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"replacement","workspaceId":"` + workspaceID + `","status":"pending","connectionSecret":"secret","approvalUrl":"http://viewer/workspaces/` + workspaceID + `/mcp-connect/replacement"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	storePath := filepath.Join(t.TempDir(), "credentials.json")
+	c := &client{
+		base: server.URL, http: server.Client(), credentialStorePath: storePath,
+		agentActorID: "agent", pendingConnections: map[string]pendingWorkspaceConnection{},
+	}
+	if err := c.writeCredentialStore(credentialStore{
+		Version: 1, ServerURL: server.URL,
+		Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: "stale-or-cross-workspace-token"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, _, err := c.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
+	if err != nil || result == nil || !result.IsError || !connectionCreated {
+		t.Fatalf("expected replacement Owner connection: result=%#v err=%v", result, err)
+	}
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok || structured["code"] != "workspace_connection_required" {
+		t.Fatalf("404 did not become an Owner connection request: %#v", result.StructuredContent)
+	}
+	store, err := c.readCredentialStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.Workspaces[workspaceID]; exists {
+		t.Fatal("stale Workspace credential was not removed")
+	}
+}
+
 func containsJSONSecret(raw []byte, secret string) bool {
 	for index := 0; index+len(secret) <= len(raw); index++ {
 		if string(raw[index:index+len(secret)]) == secret {
