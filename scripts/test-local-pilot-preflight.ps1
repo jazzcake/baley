@@ -33,28 +33,36 @@ $checks += Add-Check "clean-worktree" ($worktree.Count -eq 0) $(if ($worktree.Co
 
 $serverURL = "http://127.0.0.1:8080"
 $workspaceID = "00000000-0000-4000-8000-000000000001"
-$agentToken = [Environment]::GetEnvironmentVariable("BALEY_AGENT_TOKEN", "User")
-$mcpEnvironmentForwarding = $false
+$environmentPath = Join-Path $repoRoot ".env.baley-mcp.local"
+. (Join-Path $PSScriptRoot "baley-mcp-env.ps1")
+$agentToken = $null
+try {
+  $localEnvironment = Read-BaleyMCPEnvironment -Path $environmentPath
+  $agentToken = $localEnvironment.BALEY_AGENT_TOKEN
+  $localEnvironment = $null
+} catch {}
+$environmentIgnored = @(& git -C $repoRoot check-ignore -- ".env.baley-mcp.local").Count -eq 1
+$checks += Add-Check "mcp-env-gitignored" $environmentIgnored ".env.baley-mcp.local"
+$mcpEnvironmentLauncher = $false
 $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
 if ($null -ne $codexCommand) {
   try {
     $mcpConfigJSON = (& codex mcp get baley --json 2>$null | Out-String)
     if ($LASTEXITCODE -eq 0) {
       $mcpConfig = $mcpConfigJSON | ConvertFrom-Json
-      $forwardedNames = @($mcpConfig.transport.env_vars)
       $staticEnvironmentNames = if ($null -eq $mcpConfig.transport.env) {
         @()
       } else {
         @($mcpConfig.transport.env.PSObject.Properties.Name)
       }
-      $mcpEnvironmentForwarding =
-        $forwardedNames -contains "BALEY_SERVER_URL" -and
-        $forwardedNames -contains "BALEY_AGENT_TOKEN" -and
+      $mcpEnvironmentLauncher =
+        $mcpConfig.transport.command -match "(?i)powershell" -and
+        @($mcpConfig.transport.args) -contains (Join-Path $PSScriptRoot "run-baley-mcp.ps1") -and
         $staticEnvironmentNames -notcontains "BALEY_AGENT_TOKEN"
     }
   } catch {}
 }
-$checks += Add-Check "codex-mcp-user-env-forwarding" $mcpEnvironmentForwarding "Environment names are forwarded without storing the Agent token"
+$checks += Add-Check "codex-mcp-local-env-launcher" $mcpEnvironmentLauncher "Launcher reads the Git-ignored environment without static token config"
 $agentRead = $false
 $agentAdminDenied = $false
 $workspace = $null
@@ -79,6 +87,7 @@ $checks += Add-Check "agent-admin-denied" $agentAdminDenied "members endpoint re
 $checks += Add-Check "embedding-pilot-active" ($null -ne $workspace -and $workspace.activePhaseId -eq "embedding-pilot") $(if ($workspace) { $workspace.activePhaseId } else { "unavailable" })
 $checks += Add-Check "task-124-confirmed" ($null -ne $task124 -and $task124.status -eq "confirmed") $(if ($task124) { $task124.status } else { "unavailable" })
 $checks += Add-Check "gate-4-passed" ($null -ne $gate4 -and $gate4.status -eq "passed") $(if ($gate4) { $gate4.status } else { "unavailable" })
+$agentToken = $null
 
 $checks | Format-Table -AutoSize
 Write-Output "MANUAL: sign in as the Owner and confirm the Baley Pilot graph renders before #125."

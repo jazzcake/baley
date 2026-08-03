@@ -35,6 +35,8 @@ $backup = .\scripts\local-pilot-db.ps1 backup
 .\scripts\local-pilot-db.ps1 verify $backup
 
 # Owner password는 화면에 표시되지 않으며 raw Agent token도 출력하지 않는다.
+# Token은 Git에서 제외된 .env.baley-mcp.local에만 기록된다.
+# 발급 이름은 매번 timestamp와 무작위 suffix를 포함하므로 이전 token과 충돌하지 않는다.
 .\scripts\prepare-local-pilot-agent.ps1
 
 .\scripts\test-local-pilot-preflight.ps1
@@ -76,7 +78,8 @@ Participant 계정과 다중 Workspace의 실제 browser 검증은 다중 사용
 - local PostgreSQL: healthy, `127.0.0.1:54329` only
 - backup restore: Workspace 1, Task 30, Event 438, schema 16 일치
 - managed runtime: API `127.0.0.1:8080`, Viewer `127.0.0.1:5174`
-- Agent token: operator scope authenticated read 통과, raw token은 User environment에만 저장
+- Agent token: operator scope authenticated read 통과, raw token은 Git-ignored
+  `.env.baley-mcp.local`에만 저장
 
 repository 변경을 commit하고 해당 commit으로 runtime을 재시작하면 자동 preflight의
 `clean-worktree`와 `runtime-current-commit` 조건이 최종 통과한다. Owner는 Viewer에서 graph가

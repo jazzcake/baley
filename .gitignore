@@ -8,3 +8,7 @@ test-results/
 .vite-dev.err.log
 .tmp/
 server/.tmp/
+.env
+.env.*
+!.env.example
+!.env.*.example

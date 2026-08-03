@@ -10,17 +10,30 @@ $ErrorActionPreference = "Stop"
 $serverURL = "http://127.0.0.1:8080"
 $origin = "http://127.0.0.1:5174"
 $workspaceID = "00000000-0000-4000-8000-000000000001"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$environmentPath = Join-Path $repoRoot ".env.baley-mcp.local"
+. (Join-Path $PSScriptRoot "baley-mcp-env.ps1")
+$tokenNameBase = $TokenName.Trim()
+if ([string]::IsNullOrWhiteSpace($tokenNameBase)) {
+  $tokenNameBase = "local-day-tripper-onboarding"
+}
+$tokenNameSuffix = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+$effectiveTokenName = "$tokenNameBase-$tokenNameSuffix"
 
-$existingToken = [Environment]::GetEnvironmentVariable("BALEY_AGENT_TOKEN", "User")
-if (![string]::IsNullOrWhiteSpace($existingToken)) {
+$existing = $null
+if (Test-Path -LiteralPath $environmentPath -PathType Leaf) {
   try {
-    $existing = Invoke-RestMethod -Uri "$serverURL/v1/workspaces/$workspaceID" -Headers @{ Authorization = "Bearer $existingToken" }
+    $existingEnvironment = Read-BaleyMCPEnvironment -Path $environmentPath
+    $existing = Invoke-RestMethod -Uri "$serverURL/v1/workspaces/$workspaceID" -Headers @{ Authorization = "Bearer $($existingEnvironment.BALEY_AGENT_TOKEN)" }
+    $existingEnvironment = $null
     if ($existing.id -eq $workspaceID) {
-      Write-Output "An existing User-level Agent token already passes Workspace read verification."
-      Write-Output "Open a new Codex thread if the current Baley MCP process started before that token was configured."
+      Write-Output "The existing local Baley MCP environment passes Workspace read verification."
+      Write-Output "Open a new Codex thread so the MCP launcher reloads the file."
       return
     }
-  } catch {}
+  } catch {
+    $existingEnvironment = $null
+  }
 }
 
 $securePassword = Read-Host "Password for $LoginID" -AsSecureString
@@ -40,18 +53,19 @@ try {
 
 $body = @{
   actorId = $AgentActorID
-  name = $TokenName
+  name = $effectiveTokenName
   scopes = @("workspace:read", "workspace:operate", "run:operate", "record:operate")
 } | ConvertTo-Json
 $issued = Invoke-RestMethod -Method Post -Uri "$serverURL/v1/workspaces/$workspaceID/agent-tokens" `
   -Headers @{ Origin = $origin; "X-Baley-CSRF" = $login.csrfToken } -WebSession $session `
   -ContentType "application/json" -Body $body
 
-[Environment]::SetEnvironmentVariable("BALEY_SERVER_URL", $serverURL, "User")
-[Environment]::SetEnvironmentVariable("BALEY_AGENT_TOKEN", $issued.token, "User")
 $verified = Invoke-RestMethod -Uri "$serverURL/v1/workspaces/$workspaceID" -Headers @{ Authorization = "Bearer $($issued.token)" }
 if ($verified.id -ne $workspaceID) { throw "issued Agent token did not pass Workspace read verification" }
+Write-BaleyMCPEnvironment -Path $environmentPath -ServerURL $serverURL -AgentToken $issued.token
+$issued.token = $null
 
 Write-Output "Issued and verified Agent token $($issued.id) (prefix $($issued.prefix))."
-Write-Output "Ensure the Codex Baley MCP registration whitelists BALEY_SERVER_URL and BALEY_AGENT_TOKEN through env_vars."
-Write-Output "Completely exit and relaunch the Codex host, then open a new thread so the Baley MCP process receives the current User environment."
+Write-Output "Token audit name: $effectiveTokenName"
+Write-Output "Stored it in the Git-ignored local Baley MCP environment file."
+Write-Output "Open a new Codex thread so the MCP launcher reloads the file."

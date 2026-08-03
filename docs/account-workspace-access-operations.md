@@ -108,23 +108,27 @@ process:
 BALEY_AGENT_TOKEN=<opaque token>
 ```
 
-For a local Codex stdio registration, store `BALEY_SERVER_URL` and
-`BALEY_AGENT_TOKEN` as Windows User environment variables and whitelist their
-names rather than copying their values into `config.toml`:
+For a local Codex stdio registration, keep `BALEY_SERVER_URL` and
+`BALEY_AGENT_TOKEN` in the Git-ignored `.env.baley-mcp.local`. Generate or refresh
+that file through `scripts/prepare-local-pilot-agent.ps1`; do not edit or print the
+raw token manually. Register the loader rather than copying secret values into
+`config.toml`:
 
 ```toml
 [mcp_servers.baley]
-command = "go"
-args = ["-C", 'D:\Project_AI\baley\server', "run", "./cmd/baley-mcp"]
-env_vars = ["BALEY_SERVER_URL", "BALEY_AGENT_TOKEN"]
+command = "powershell.exe"
+args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", 'D:\Project_AI\baley\scripts\run-baley-mcp.ps1']
 ```
 
-After issuing or rotating a token, completely exit and relaunch the Codex host so
-it receives the current User environment, then open a new thread. Restarting only
-the MCP child or opening a thread under an already-running host can preserve a
-stale environment. If the client cached an older tool schema, the new thread also
-loads the current `approvalGrantToken` execute field. Never put the Agent token in
-the static `env` table, command arguments, command JSON, Task Records, Git, browser
+The loader accepts only those two exact names and does not evaluate shell syntax.
+Every local token rotation receives a timestamped audit name so a lost previous
+raw token does not collide with the Workspace-unique token-name constraint. Old
+token rows remain visible for explicit Owner revocation; the preparation script
+does not silently revoke credentials.
+After issuing or rotating a token, open a new thread so a new MCP child reloads
+the file. If the client cached an older tool schema, the new thread also loads the
+current `approvalGrantToken` execute field. Never put the Agent token in the
+static `env` table, command arguments, command JSON, Task Records, Git, browser
 storage, or logs.
 
 Rotation is issue-new, update the Agent process, verify it, then revoke-old.
