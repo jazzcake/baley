@@ -108,10 +108,24 @@ process:
 BALEY_AGENT_TOKEN=<opaque token>
 ```
 
-Restart the MCP process after changing the environment. If the connected client
-cached an older tool schema, open a new thread so the current
-`approvalGrantToken` execute field is loaded. Never put the Agent token in command
-JSON, Task Records, Git, browser storage, or logs.
+For a local Codex stdio registration, store `BALEY_SERVER_URL` and
+`BALEY_AGENT_TOKEN` as Windows User environment variables and whitelist their
+names rather than copying their values into `config.toml`:
+
+```toml
+[mcp_servers.baley]
+command = "go"
+args = ["-C", 'D:\Project_AI\baley\server', "run", "./cmd/baley-mcp"]
+env_vars = ["BALEY_SERVER_URL", "BALEY_AGENT_TOKEN"]
+```
+
+After issuing or rotating a token, completely exit and relaunch the Codex host so
+it receives the current User environment, then open a new thread. Restarting only
+the MCP child or opening a thread under an already-running host can preserve a
+stale environment. If the client cached an older tool schema, the new thread also
+loads the current `approvalGrantToken` execute field. Never put the Agent token in
+the static `env` table, command arguments, command JSON, Task Records, Git, browser
+storage, or logs.
 
 Rotation is issue-new, update the Agent process, verify it, then revoke-old.
 

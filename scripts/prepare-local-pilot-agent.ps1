@@ -53,4 +53,5 @@ $verified = Invoke-RestMethod -Uri "$serverURL/v1/workspaces/$workspaceID" -Head
 if ($verified.id -ne $workspaceID) { throw "issued Agent token did not pass Workspace read verification" }
 
 Write-Output "Issued and verified Agent token $($issued.id) (prefix $($issued.prefix))."
-Write-Output "Open a new Codex thread so the Baley MCP process inherits the new user environment variable."
+Write-Output "Ensure the Codex Baley MCP registration whitelists BALEY_SERVER_URL and BALEY_AGENT_TOKEN through env_vars."
+Write-Output "Completely exit and relaunch the Codex host, then open a new thread so the Baley MCP process receives the current User environment."

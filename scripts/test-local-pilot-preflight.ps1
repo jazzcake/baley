@@ -34,6 +34,27 @@ $checks += Add-Check "clean-worktree" ($worktree.Count -eq 0) $(if ($worktree.Co
 $serverURL = "http://127.0.0.1:8080"
 $workspaceID = "00000000-0000-4000-8000-000000000001"
 $agentToken = [Environment]::GetEnvironmentVariable("BALEY_AGENT_TOKEN", "User")
+$mcpEnvironmentForwarding = $false
+$codexCommand = Get-Command codex -ErrorAction SilentlyContinue
+if ($null -ne $codexCommand) {
+  try {
+    $mcpConfigJSON = (& codex mcp get baley --json 2>$null | Out-String)
+    if ($LASTEXITCODE -eq 0) {
+      $mcpConfig = $mcpConfigJSON | ConvertFrom-Json
+      $forwardedNames = @($mcpConfig.transport.env_vars)
+      $staticEnvironmentNames = if ($null -eq $mcpConfig.transport.env) {
+        @()
+      } else {
+        @($mcpConfig.transport.env.PSObject.Properties.Name)
+      }
+      $mcpEnvironmentForwarding =
+        $forwardedNames -contains "BALEY_SERVER_URL" -and
+        $forwardedNames -contains "BALEY_AGENT_TOKEN" -and
+        $staticEnvironmentNames -notcontains "BALEY_AGENT_TOKEN"
+    }
+  } catch {}
+}
+$checks += Add-Check "codex-mcp-user-env-forwarding" $mcpEnvironmentForwarding "Environment names are forwarded without storing the Agent token"
 $agentRead = $false
 $agentAdminDenied = $false
 $workspace = $null
