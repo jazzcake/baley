@@ -125,7 +125,7 @@ function Start-Runtime {
   Assert-PortFree 5174
 
   Invoke-Checked docker @("compose", "-f", (Join-Path $repoRoot "docker-compose.yml"), "up", "-d", "postgres") "PostgreSQL start failed"
-  $containerID = (& docker compose -f (Join-Path $repoRoot "docker-compose.yml") ps -q postgres).Trim()
+  $containerID = ([string](& docker compose -f (Join-Path $repoRoot "docker-compose.yml") ps -q postgres)).Trim()
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($containerID)) {
     throw "PostgreSQL container was not found"
   }
@@ -215,7 +215,7 @@ function Start-Runtime {
 
 function Show-Status {
   $state = Read-State
-  $databaseContainer = (& docker compose -f (Join-Path $repoRoot "docker-compose.yml") ps -q postgres).Trim()
+  $databaseContainer = ([string](& docker compose -f (Join-Path $repoRoot "docker-compose.yml") ps -q postgres)).Trim()
   $databaseHealth = if ($databaseContainer) { (& docker inspect --format "{{.State.Health.Status}}" $databaseContainer).Trim() } else { "stopped" }
   $apiReady = $false
   $viewerReady = $false
