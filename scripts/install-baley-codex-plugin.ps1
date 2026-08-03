@@ -5,6 +5,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "codex-cli.ps1")
+$codexCLI = Resolve-CodexCLI
 $userRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
 $pluginParent = Join-Path $userRoot "plugins"
 $pluginRoot = Join-Path $pluginParent "baley"
@@ -95,10 +97,10 @@ $marketplaceName = (& python (Join-Path $pluginCreatorRoot "scripts\read_marketp
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($marketplaceName)) {
   throw "Personal Codex marketplace name could not be resolved"
 }
-& codex plugin add "baley@$marketplaceName"
+& $codexCLI plugin add "baley@$marketplaceName"
 if ($LASTEXITCODE -ne 0) { throw "Baley plugin installation failed" }
 
-$pluginList = (& codex plugin list --json | ConvertFrom-Json)
+$pluginList = (& $codexCLI plugin list --json | ConvertFrom-Json)
 $installed = @($pluginList.installed | Where-Object { $_.pluginId -eq "baley@$marketplaceName" -and $_.enabled })
 if ($installed.Count -ne 1) {
   throw "Baley plugin was not found as an enabled Codex plugin after installation"

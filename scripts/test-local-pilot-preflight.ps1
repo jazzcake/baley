@@ -4,6 +4,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "codex-cli.ps1")
 $failures = [Collections.Generic.List[string]]::new()
 
 function Add-Check {
@@ -57,10 +58,11 @@ $checks += Add-Check "mcp-env-gitignored" $environmentIgnored ".env.baley-mcp.lo
 $credentialStoreIgnored = @(& git -C $repoRoot check-ignore -- ".tmp/baley-mcp/credentials.json").Count -eq 1
 $checks += Add-Check "mcp-credential-store-gitignored" $credentialStoreIgnored ".tmp/baley-mcp/credentials.json"
 $mcpEnvironmentLauncher = $false
-$codexCommand = Get-Command codex -ErrorAction SilentlyContinue
-if ($null -ne $codexCommand) {
+$codexCLI = $null
+try { $codexCLI = Resolve-CodexCLI } catch {}
+if ($null -ne $codexCLI) {
   try {
-    $mcpConfigJSON = (& codex mcp get baley --json 2>$null | Out-String)
+    $mcpConfigJSON = (& $codexCLI mcp get baley --json 2>$null | Out-String)
     if ($LASTEXITCODE -eq 0) {
       $mcpConfig = $mcpConfigJSON | ConvertFrom-Json
       $staticEnvironmentNames = if ($null -eq $mcpConfig.transport.env) {
@@ -78,9 +80,9 @@ if ($null -ne $codexCommand) {
 $checks += Add-Check "codex-mcp-local-env-launcher" $mcpEnvironmentLauncher "Launcher uses the live multi-Workspace credential store without static token config"
 $baleyPluginInstalled = $false
 $baleyPluginSkills = $false
-if ($null -ne $codexCommand) {
+if ($null -ne $codexCLI) {
   try {
-    $pluginList = (& codex plugin list --json 2>$null | Out-String) | ConvertFrom-Json
+    $pluginList = (& $codexCLI plugin list --json 2>$null | Out-String) | ConvertFrom-Json
     $baleyPlugin = @($pluginList.installed | Where-Object {
       $_.pluginId -eq "baley@personal" -and $_.enabled
     }) | Select-Object -First 1
