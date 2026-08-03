@@ -153,6 +153,25 @@ body { background: #f6f7fb; }
 .lane-anchor-column-heading { z-index: 7; }
 .backlog-rail-layer ~ .lane-label { left: 224px; width: 200px; }
 .graph-stage { position: absolute; inset: 0; }
+
+/* Workspace-wide Task search stays anchored to the visible graph viewport. */
+.task-search-panel { z-index: 30; width: min(420px,calc(100% - 140px)); margin-bottom: 18px; }
+.task-search { position: relative; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 15px; border: 1px solid #c7cad4; border-radius: 10px; background: rgba(255,255,255,.97); color: #676879; box-shadow: 0 8px 28px rgba(9,30,66,.17); backdrop-filter: blur(8px); }
+.task-search:focus-within { border-color: #0073ea; box-shadow: 0 0 0 2px rgba(0,115,234,.16),0 10px 32px rgba(9,30,66,.2); }
+.task-search input { min-width: 0; flex: 1; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: #323338; font-size: 13px; }
+.task-search input::placeholder { color: #8f929d; }
+.task-search input::-webkit-search-cancel-button { cursor: pointer; }
+.task-search-results { position: absolute; right: 0; bottom: calc(100% + 9px); left: 0; overflow: hidden; border: 1px solid #d0d4e4; border-radius: 9px; background: #fff; box-shadow: 0 10px 30px rgba(9,30,66,.18); }
+.task-search-results button { width: 100%; display: grid; grid-template-columns: 48px minmax(0,1fr) auto; align-items: center; gap: 9px; min-height: 43px; padding: 7px 11px; border: 0; border-bottom: 1px solid #eceef3; background: #fff; color: #323338; text-align: left; cursor: pointer; }
+.task-search-results button:last-of-type { border-bottom: 0; }
+.task-search-results button:hover,.task-search-results button.active { background: #edf5ff; }
+.task-search-results button:focus-visible { position: relative; outline: 2px solid #0073ea; outline-offset: -2px; }
+.task-search-results span,.task-search-results small { font-family: 'DM Mono'; font-size: 9px; text-transform: uppercase; }
+.task-search-results span { color: #0073ea; font-weight: 700; }
+.task-search-results strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.task-search-results small { color: #8a8d98; }
+.task-search-results p { margin: 0; padding: 14px; color: #777a88; font-size: 11px; text-align: center; }
+@media (max-width: 760px) { .task-search-panel { width: calc(100% - 32px); } }
 .backlog-list { position: absolute; inset: 0; z-index: 3; overflow: auto; padding: 28px; background: #f8f9fc; }
 .backlog-list-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 0 0 22px; border-bottom: 1px solid #dfe1e8; }
 .backlog-list-header span { color: #676879; font-family: 'DM Mono'; font-size: 9px; letter-spacing: .1em; }

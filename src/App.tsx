@@ -8,13 +8,14 @@ import { APIError } from "./api/http";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import type { Account, WorkspaceMembership } from "./auth/model";
 import { canvasKey, connectedTaskIds, defaultGateFocusId, laneFocusTaskIds, visibleTaskIds, type ViewSpec } from "./graph/projection";
-import { laneBandRect, laneLabelTop, layoutGraph, type GraphLayout } from "./graph/layout";
+import { laneBandRect, laneLabelTop, layoutGraph, NODE_HEIGHT, NODE_WIDTH, type GraphLayout } from "./graph/layout";
 import { fitViewportToCanvas, zoomViewportAtCenter } from "./graph/viewport";
 import { INSPECTOR_DEFAULT_WIDTH, INSPECTOR_MAX_WIDTH, INSPECTOR_MIN_WIDTH, inspectorWidthFromKey, inspectorWidthFromPointer } from "./layout/inspector";
 import { TaskNode } from "./components/TaskNode";
 import { GateNode } from "./components/GateNode";
 import { BacklogList, BacklogRail } from "./components/BacklogRail";
 import { LaneAnchorColumn } from "./components/LaneAnchorColumn";
+import { TaskSearch } from "./components/TaskSearch";
 import { laneColorMap } from "./components/lane-palette";
 import { LoginScreen, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
 import { traceViewer } from "./debug/viewer-trace";
@@ -136,12 +137,15 @@ function WorkspaceViewer({
   }, [graph.gates, routeView]);
   const selectedId = useMemo(() => new URLSearchParams(location.search).get("task") ?? undefined, [location.search]);
   const [layout, setLayout] = useState<GraphLayout | undefined>();
+  const [layoutViewKey, setLayoutViewKey] = useState<string>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
   const [backlogListOpen, setBacklogListOpen] = useState(false);
+  const [taskFocusRequest, setTaskFocusRequest] = useState<{ taskId: string; requestId: number }>();
   const backlogExpandButtonRef = useRef<HTMLButtonElement | null>(null);
   const graphStageRef = useRef<HTMLDivElement>(null);
   const requestGenerationRef = useRef(0);
+  const taskFocusRequestIdRef = useRef(0);
   const routeNavigateRef = useRef(routeNavigate);
   routeNavigateRef.current = routeNavigate;
   const visible = useMemo(() => visibleTaskIds(graph, view), [graph, view]);
@@ -154,7 +158,13 @@ function WorkspaceViewer({
 
   useEffect(() => {
     let active = true;
-    void layoutGraph(graph, visible, view.kind !== "gate").then((nextLayout) => { if (active) setLayout(nextLayout); });
+    const requestedViewKey = canvasKey(view);
+    void layoutGraph(graph, visible, view.kind !== "gate").then((nextLayout) => {
+      if (active) {
+        setLayout(nextLayout);
+        setLayoutViewKey(requestedViewKey);
+      }
+    });
     return () => { active = false; };
   }, [graph, visible, view.kind]);
   useEffect(() => {
@@ -162,6 +172,7 @@ function WorkspaceViewer({
     let controller: AbortController | undefined;
     setFixture(undefined);
     setLayout(undefined);
+    setLayoutViewKey(undefined);
     setBacklogListOpen(false);
     const refresh = () => {
       controller?.abort();
@@ -338,6 +349,24 @@ function WorkspaceViewer({
     setBacklogListOpen(false);
     window.setTimeout(() => backlogExpandButtonRef.current?.focus(), 0);
   };
+  const selectSearchResult = (task: Task, query: string) => {
+    const requestId = ++taskFocusRequestIdRef.current;
+    const targetPosition = layout?.taskPositions.get(task.id);
+    traceViewer("task-search:select", {
+      query,
+      taskId: task.id,
+      publicId: task.publicId,
+      sourceView: view.kind,
+      targetView: "multi",
+      targetPosition,
+      selectedTaskId: selectedId,
+      renderedNodePresent: nodes.some((node) => node.id === task.id),
+      requestId,
+    });
+    setTaskFocusRequest({ taskId: task.id, requestId });
+    routeNavigate({ pathname: workspaceBase, search: `?task=${encodeURIComponent(task.id)}` });
+    setBacklogListOpen(false);
+  };
 
   if (!fixture && !loadError) return <main className="server-state" data-workspace-target={workspaceId}><h1>Baley</h1><p>Workspace graph를 불러오는 중입니다…</p></main>;
   if (!fixture && loadError) return <main className="server-state error"><h1>Server unavailable</h1><p>{loadError}</p><small>Viewer는 fixture로 대체 표시하지 않습니다.</small></main>;
@@ -371,6 +400,8 @@ function WorkspaceViewer({
                 <Background color="#d8d6ce" gap={24} size={1} />
                 <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} laneColors={laneColors} onOpenBacklog={() => setBacklogListOpen(true)} setBacklogExpandButton={(node) => { backlogExpandButtonRef.current = node; }} /></ViewportPortal>
                 <CanvasControls layout={layout} />
+                <Panel position="bottom-center" className="task-search-panel"><TaskSearch tasks={graph.tasks} onSelect={selectSearchResult} /></Panel>
+                <TaskFocusController request={taskFocusRequest} layout={layoutViewKey === canvasKey(view) ? layout : undefined} />
               </ReactFlow>
             </div>
             {backlogListOpen && <BacklogList lanes={graph.lanes} items={graph.backlogItems} laneColors={laneColors} onClose={closeBacklogList} />}
@@ -383,6 +414,89 @@ function WorkspaceViewer({
       </section>
     </main>
   );
+}
+
+function TaskFocusController({ request, layout }: { request?: { taskId: string; requestId: number }; layout?: GraphLayout }) {
+  const store = useStoreApi();
+  const controllerReady = useStore((state) => Boolean(state.panZoom));
+  const handledRequestRef = useRef<number>();
+  const inFlightRequestRef = useRef<number>();
+
+  useEffect(() => {
+    if (!request || !controllerReady || handledRequestRef.current === request.requestId || inFlightRequestRef.current === request.requestId) return;
+    const position = layout?.taskPositions.get(request.taskId);
+    if (!position) return;
+    const state = store.getState();
+    const panZoom = state.panZoom;
+    const canvasWidth = state.width || state.domNode?.clientWidth || 0;
+    const canvasHeight = state.height || state.domNode?.clientHeight || 0;
+    if (!panZoom || !canvasWidth || !canvasHeight) {
+      traceViewer("task-search:focus-waiting", {
+        requestId: request.requestId,
+        taskId: request.taskId,
+        panZoomReady: Boolean(panZoom),
+        storeSize: { width: state.width, height: state.height },
+        domSize: { width: state.domNode?.clientWidth, height: state.domNode?.clientHeight },
+      });
+      return;
+    }
+    const target = {
+      x: position.x + NODE_WIDTH / 2,
+      y: position.y + NODE_HEIGHT / 2,
+      zoom: Math.max(state.transform[2], 0.9),
+    };
+    const viewport = {
+      x: canvasWidth / 2 - target.x * target.zoom,
+      y: canvasHeight / 2 - target.y * target.zoom,
+      zoom: target.zoom,
+    };
+    const viewportElement = state.domNode?.querySelector<HTMLElement>(".react-flow__viewport");
+    inFlightRequestRef.current = request.requestId;
+    traceViewer("task-search:focus-request", {
+      requestId: request.requestId,
+      taskId: request.taskId,
+      target,
+      viewport,
+      canvas: { width: canvasWidth, height: canvasHeight },
+      store: { x: state.transform[0], y: state.transform[1], zoom: state.transform[2] },
+      domTransform: viewportElement?.style.transform,
+      controllerReady,
+      renderedNodePresent: state.nodeLookup.has(request.taskId),
+    });
+    const controllerUpdate = panZoom.setViewport(viewport, { duration: 0 });
+    const applied = store.getState();
+    const renderedViewport = applied.domNode?.querySelector<HTMLElement>(".react-flow__viewport");
+    handledRequestRef.current = request.requestId;
+    inFlightRequestRef.current = undefined;
+    store.setState({ transform: [viewport.x, viewport.y, viewport.zoom] });
+    if (renderedViewport) renderedViewport.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
+    traceViewer("task-search:focus-applied", {
+      requestId: request.requestId,
+      taskId: request.taskId,
+      store: { x: viewport.x, y: viewport.y, zoom: viewport.zoom },
+      domTransform: renderedViewport?.style.transform,
+      renderedNodePresent: applied.nodeLookup.has(request.taskId),
+    });
+    void controllerUpdate.then((result) => {
+      const committed = store.getState();
+      const renderer = committed.domNode?.querySelector<HTMLElement & { __zoom?: unknown }>(".react-flow__renderer");
+      if (result && renderer) renderer.__zoom = result;
+      traceViewer("task-search:controller-settled", {
+        requestId: request.requestId,
+        taskId: request.taskId,
+        controllerResult: result,
+        store: { x: committed.transform[0], y: committed.transform[1], zoom: committed.transform[2] },
+      });
+    }).catch((error: unknown) => {
+      traceViewer("task-search:controller-failed", {
+        requestId: request.requestId,
+        taskId: request.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, [controllerReady, layout, request, store]);
+
+  return null;
 }
 
 function InspectorResizeHandle({ width, onWidth }: { width: number; onWidth: (width: number) => void }) {

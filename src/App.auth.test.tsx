@@ -46,6 +46,8 @@ vi.mock("./api/auth", () => ({
 }));
 vi.mock("./api/client", () => ({ fetchGraph: vi.fn() }));
 vi.mock("./graph/layout", () => ({
+  NODE_WIDTH: 190,
+  NODE_HEIGHT: 110,
   laneBandRect: vi.fn(),
   laneLabelTop: vi.fn(),
   layoutGraph: vi.fn(async () => ({
@@ -63,8 +65,9 @@ vi.mock("@xyflow/react", () => ({
   Panel: ({ children, ...props }: { children: React.ReactNode }) => React.createElement("div", props, children),
   ReactFlow: ({ children }: { children: React.ReactNode }) => React.createElement("div", { "data-testid": "graph" }, children),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-  useStore: (selector: (state: unknown) => unknown) => selector({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55 }),
-  useStoreApi: () => ({ getState: () => ({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55, width: 1200, height: 700, panZoom: { setViewport: vi.fn() } }) }),
+  useReactFlow: () => ({ setCenter: vi.fn(() => Promise.resolve()) }),
+  useStore: (selector: (state: unknown) => unknown) => selector({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55, width: 1200, height: 700, panZoom: { setViewport: vi.fn() } }),
+  useStoreApi: () => ({ getState: () => ({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55, width: 1200, height: 700, nodeLookup: new Map(), panZoom: { setViewport: vi.fn() } }), setState: vi.fn() }),
 }));
 
 const account = { id: "account", actorId: "owner-actor", loginId: "owner", displayName: "Pilot Owner" };

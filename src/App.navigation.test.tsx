@@ -8,8 +8,20 @@ import { pilotReadyFixture } from "./fixtures/pilot-ready";
 import { layoutGraph, type GraphLayout } from "./graph/layout";
 import App from "./App";
 
+const panZoomSetViewport = vi.hoisted(() => vi.fn(() => Promise.resolve({})));
+const setViewportState = vi.hoisted(() => vi.fn());
+const renderedViewport = vi.hoisted(() => ({ style: { transform: "translate(0px, 0px) scale(1)" } }));
+const renderedRenderer = vi.hoisted(() => ({ __zoom: undefined as unknown }));
+const canvasDomNode = vi.hoisted(() => ({
+  clientWidth: 1200,
+  clientHeight: 700,
+  querySelector: vi.fn((selector: string) => selector === ".react-flow__viewport" ? renderedViewport : selector === ".react-flow__renderer" ? renderedRenderer : undefined),
+}));
+
 vi.mock("./api/client", () => ({ fetchGraph: vi.fn() }));
 vi.mock("./graph/layout", () => ({
+  NODE_WIDTH: 190,
+  NODE_HEIGHT: 110,
   laneBandRect: vi.fn(),
   laneLabelTop: vi.fn(),
   layoutGraph: vi.fn(async () => undefined),
@@ -20,8 +32,8 @@ vi.mock("@xyflow/react", () => ({
   ReactFlow: ({ children, viewport, fitView, panOnDrag }: { children: React.ReactNode; viewport?: unknown; fitView?: unknown; panOnDrag?: boolean }) => React.createElement("div", { "data-testid": "graph", "data-controlled": String(Boolean(viewport)), "data-auto-fit": String(Boolean(fitView)), "data-drag-disabled": String(panOnDrag === false) }, children),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
   useReactFlow: () => ({ zoomIn: vi.fn(), zoomOut: vi.fn(), fitView: vi.fn() }),
-  useStore: (selector: (state: unknown) => unknown) => selector({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55 }),
-  useStoreApi: () => ({ getState: () => ({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55, width: 1200, height: 700, panZoom: { setViewport: vi.fn() } }) }),
+  useStore: (selector: (state: unknown) => unknown) => selector({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55, width: 0, height: 0, domNode: canvasDomNode, panZoom: { setViewport: panZoomSetViewport } }),
+  useStoreApi: () => ({ getState: () => ({ transform: [0, 0, 1], minZoom: 0.55, maxZoom: 1.55, width: 0, height: 0, domNode: canvasDomNode, nodeLookup: new Map(pilotReadyFixture.tasks.map((task) => [task.id, {}])), panZoom: { setViewport: panZoomSetViewport } }), setState: setViewportState }),
 }));
 
 describe("Home navigation entry points", () => {
@@ -40,6 +52,9 @@ describe("Home navigation entry points", () => {
     window.history.replaceState({}, "", "/workspaces/pilot/lanes/client?task=pilot-ui");
     vi.mocked(fetchGraph).mockResolvedValue(pilotReadyFixture);
     vi.mocked(layoutGraph).mockResolvedValue(backlogLayout);
+    panZoomSetViewport.mockClear();
+    setViewportState.mockClear();
+    renderedViewport.style.transform = "translate(0px, 0px) scale(1)";
   });
 
   afterEach(() => {
@@ -95,5 +110,23 @@ describe("Home navigation entry points", () => {
     expect(artLane.tagName).toBe("BUTTON");
     fireEvent.click(artLane);
     await waitFor(() => expect(window.location.pathname).toBe("/workspaces/pilot/lanes/art"));
+  });
+
+  it("shows a public-ID result and focuses the clicked Task", async () => {
+    const pilotTask = pilotReadyFixture.tasks.find((task) => task.publicId === 104)!;
+    vi.mocked(layoutGraph).mockResolvedValue({
+      ...backlogLayout,
+      taskPositions: new Map([[pilotTask.id, { x: 500, y: 240 }]]),
+    });
+    render(<App />);
+
+    const search = await screen.findByRole("combobox", { name: "Task 검색" });
+    fireEvent.change(search, { target: { value: "#104" } });
+    fireEvent.click(await screen.findByRole("option", { name: /#104.*Pilot UI/ }));
+
+    await waitFor(() => expect(window.location.pathname + window.location.search).toBe(`/workspaces/pilot?task=${pilotTask.id}`));
+    await waitFor(() => expect(panZoomSetViewport).toHaveBeenCalledWith({ x: 5, y: 55, zoom: 1 }, { duration: 0 }));
+    expect(setViewportState).toHaveBeenCalledWith({ transform: [5, 55, 1] });
+    expect(renderedViewport.style.transform).toBe("translate(5px, 55px) scale(1)");
   });
 });
