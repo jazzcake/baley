@@ -23,7 +23,7 @@ Run, Record, Task confirmation, and Gate approval rules.
    the Owner its approval URL and retry that same read after approval. Do not
    create a per-Workspace env file, copy a token, register another MCP server,
    or request a new thread.
-5. Never put passwords, agent tokens, approval grants, Run lease tokens, or
+5. Never put passwords, agent tokens, Run lease tokens, or
    credential-bearing URLs in config, Task Records, commands, or logs.
 
 Read [references/operations.md](references/operations.md) before mutating

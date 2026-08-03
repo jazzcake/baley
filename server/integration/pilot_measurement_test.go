@@ -23,7 +23,7 @@ func TestPilotMeasurementRecordRegisterAgainstPostgres(t *testing.T) {
 	}
 	defer repo.Pool.Close()
 	if _, err = repo.Pool.Exec(ctx, `SET session_replication_role='replica';
-		TRUNCATE security_events,approval_grants,agent_tokens,workspace_memberships,
+		TRUNCATE security_events,agent_tokens,workspace_memberships,
 		account_sessions,account_credentials,accounts,mutation_attempts,
 		events,human_approval_attestations,commands,workspace_counters,
 		run_git_observations,commit_references,task_record_indexes,repositories,runs,

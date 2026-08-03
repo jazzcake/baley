@@ -164,7 +164,7 @@ Pilot으로 운영하는 것이다.
 #### HP-13 — Hosted staging 종합 수용
 
 - 두 Account·두 Workspace 격리, login/logout, Workspace 전환, Agent token,
-  approval grant, backup restore와 application rollback을 실제 host에서 검증한다.
+  연결된 사람의 채팅 승인, backup restore와 application rollback을 실제 host에서 검증한다.
 - predecessor: HP-09, HP-11, HP-12
 - human confirm: 필요. Pilot 공개 Gate의 근거다.
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, KeyRound, LayoutGrid, LogOut, Plus, Settings, X } from "lucide-react";
+import { Check, ChevronDown, LayoutGrid, LogOut, Plus, Settings, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   attachExistingAccount,
@@ -9,15 +9,11 @@ import {
   disableMemberAccount,
   fetchWorkspaceMembers,
   fetchMCPConnection,
-  issueApprovalGrant,
-  previewCommand,
   removeWorkspaceMember,
   resetMemberPassword,
-  revokeApprovalGrant,
   transferWorkspaceOwnership,
   updateWorkspaceMember,
 } from "../api/auth";
-import type { ApprovalGrant, CommandPreview, CommandRequest } from "../api/auth";
 import type { MCPConnection } from "../api/auth";
 import { APIError } from "../api/http";
 import { traceViewer } from "../debug/viewer-trace";
@@ -322,7 +318,6 @@ export function WorkspaceAccessControls({
 }) {
   const navigate = useNavigate();
   const [memberAdminOpen, setMemberAdminOpen] = useState(false);
-  const [approvalGrantOpen, setApprovalGrantOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountMenuError, setAccountMenuError] = useState<string>();
   const [logoutBusy, setLogoutBusy] = useState(false);
@@ -330,10 +325,6 @@ export function WorkspaceAccessControls({
   const accountMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const canAdmin = membership.capabilities.includes("workspace:admin") || membership.role === "owner";
-  const canApprove = membership.role === "owner" || membership.capabilities.some((capability) =>
-    capability === "task:approve" ||
-    capability === "lane:approve" ||
-    capability === "gate:approve");
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -424,10 +415,6 @@ export function WorkspaceAccessControls({
           closeAccountMenu();
           navigate("/workspaces");
         }}><LayoutGrid size={16} />내 Workspace</button>
-        {canApprove && <button type="button" role="menuitem" tabIndex={-1} onClick={() => {
-          closeAccountMenu();
-          setApprovalGrantOpen(true);
-        }}><KeyRound size={16} />승인 Grant 발급</button>}
         {canAdmin && <button type="button" role="menuitem" tabIndex={-1} onClick={() => {
           closeAccountMenu();
           setMemberAdminOpen(true);
@@ -456,11 +443,6 @@ export function WorkspaceAccessControls({
       csrfToken={csrfToken}
       onClose={() => setMemberAdminOpen(false)}
       onMembershipsChanged={onMembershipsChanged}
-    />}
-    {approvalGrantOpen && <ApprovalGrantPanel
-      workspace={membership}
-      csrfToken={csrfToken}
-      onClose={() => setApprovalGrantOpen(false)}
     />}
   </div>;
 }
@@ -659,248 +641,6 @@ export function WorkspaceContextSwitcher({
       </span>
     </form>}
   </span>;
-}
-
-function ApprovalGrantPanel({
-  workspace,
-  csrfToken,
-  onClose,
-}: {
-  workspace: WorkspaceMembership;
-  csrfToken: string;
-  onClose: () => void;
-}) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const tokenRef = useRef<HTMLElement>(null);
-  const commandInputRef = useRef<HTMLTextAreaElement>(null);
-  const tokenTimerRef = useRef<number>();
-  const [hasCommandInput, setHasCommandInput] = useState(false);
-  const [preview, setPreview] = useState<{ command: CommandRequest; result: CommandPreview }>();
-  const [acknowledgedWarnings, setAcknowledgedWarnings] = useState<string[]>([]);
-  const [proceedReason, setProceedReason] = useState("");
-  const [grantMeta, setGrantMeta] = useState<Omit<ApprovalGrant, "grantToken">>();
-  const [busy, setBusy] = useState(false);
-  const [tokenAvailable, setTokenAvailable] = useState(false);
-  const [error, setError] = useState<string>();
-
-  const clearToken = () => {
-    if (tokenTimerRef.current !== undefined) window.clearTimeout(tokenTimerRef.current);
-    tokenTimerRef.current = undefined;
-    if (tokenRef.current) tokenRef.current.textContent = "";
-    setTokenAvailable(false);
-  };
-
-  const close = () => {
-    clearToken();
-    if (commandInputRef.current) commandInputRef.current.value = "";
-    setHasCommandInput(false);
-    setPreview(undefined);
-    onClose();
-  };
-
-  useEffect(() => {
-    window.setTimeout(() => closeRef.current?.focus(), 0);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      if (tokenTimerRef.current !== undefined) window.clearTimeout(tokenTimerRef.current);
-      if (tokenRef.current) tokenRef.current.textContent = "";
-    };
-  }, []);
-
-  const loadPreview = async () => {
-    setError(undefined);
-    setGrantMeta(undefined);
-    clearToken();
-    let command: CommandRequest;
-    try {
-      command = JSON.parse(commandInputRef.current?.value ?? "") as CommandRequest;
-    } catch {
-      setError("명령 JSON 형식을 확인해주세요.");
-      return;
-    }
-    if (!command || typeof command.name !== "string" || typeof command.arguments !== "object" ||
-      !command.envelope || typeof command.envelope.idempotencyKey !== "string") {
-      setError("name, arguments, envelope.idempotencyKey가 포함된 typed command가 필요합니다.");
-      return;
-    }
-    if (command.arguments.workspaceId !== workspace.id) {
-      setError("명령의 Workspace와 현재 Workspace가 일치하지 않습니다.");
-      return;
-    }
-    if (command.envelope.approvalGrantToken || command.envelope.humanApprovalAttestation) {
-      setError("기존 승인 token이나 attestation이 없는 원본 명령을 사용해주세요.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const result = await previewCommand(command, csrfToken);
-      setPreview({ command, result });
-      setAcknowledgedWarnings([]);
-      setProceedReason("");
-      traceViewer("approval-grant:preview-committed", {
-        targetWorkspaceId: workspace.id,
-        commandName: command.name,
-        commandHash: result.commandHash,
-        workspaceRevision: result.expectedWorkspaceRevision,
-        warningCodes: result.warnings.map((warning) => warning.code),
-        decisionSnapshotPresent: Boolean(result.decisionSnapshotHash),
-      });
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const issue = async () => {
-    if (!preview) return;
-    setBusy(true);
-    setError(undefined);
-    clearToken();
-    try {
-      const result = await issueApprovalGrant(workspace.id, {
-        command: preview.command,
-        acknowledgedWarningCodes: acknowledgedWarnings,
-        proceedReason,
-      }, csrfToken);
-      const { grantToken, ...metadata } = result;
-      setGrantMeta(metadata);
-      const executeInput = {
-        ...preview.command.arguments,
-        ...preview.command.envelope,
-        expectedWorkspaceRevision: result.workspaceRevision,
-        acknowledgedWarningCodes: acknowledgedWarnings,
-        ...(proceedReason.trim() ? { proceedReason: proceedReason.trim() } : {}),
-        approvalGrantToken: grantToken,
-      };
-      if (tokenRef.current) tokenRef.current.textContent = JSON.stringify(executeInput, null, 2);
-      setTokenAvailable(true);
-      const remaining = Math.max(0, new Date(result.expiresAt).getTime() - Date.now());
-      tokenTimerRef.current = window.setTimeout(clearToken, Math.min(remaining, 10 * 60 * 1000));
-      traceViewer("approval-grant:issued", {
-        targetWorkspaceId: workspace.id,
-        grantId: result.id,
-        commandHash: result.commandHash,
-        workspaceRevision: result.workspaceRevision,
-        expiresAt: result.expiresAt,
-      });
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const copyAndDiscard = async () => {
-    const token = tokenRef.current?.textContent;
-    if (!token) return;
-    try {
-      await navigator.clipboard.writeText(token);
-      clearToken();
-    } catch {
-      setError("클립보드에 복사하지 못했습니다. 브라우저 권한을 확인해주세요.");
-    }
-  };
-
-  const revoke = async () => {
-    if (!grantMeta) return;
-    setBusy(true);
-    try {
-      await revokeApprovalGrant(workspace.id, grantMeta.id, csrfToken);
-      clearToken();
-      setGrantMeta(undefined);
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const blockingErrors = preview?.result.errors.filter((item) => item.code !== "human_approval_required") ?? [];
-  const allWarningsAcknowledged = preview?.result.warnings.every((warning) => acknowledgedWarnings.includes(warning.code)) ?? false;
-  const canIssue = Boolean(
-    preview &&
-    blockingErrors.length === 0 &&
-    allWarningsAcknowledged &&
-    (preview.result.warnings.length === 0 || proceedReason.trim()),
-  );
-
-  return <div className="admin-overlay">
-    <section className="member-admin approval-grant-panel" role="dialog" aria-modal="true" aria-labelledby="approval-grant-title">
-      <header>
-        <div><span>HUMAN APPROVAL</span><h2 id="approval-grant-title">1회용 승인 Grant</h2></div>
-        <button ref={closeRef} className="icon-button" type="button" aria-label="승인 Grant 닫기" onClick={close}><X size={18} /></button>
-      </header>
-      <p className="admin-intro">Agent가 준비한 typed command를 붙여 넣으면 서버의 fresh preview를 확인한 뒤 해당 명령에만 결속된 token을 발급합니다.</p>
-      {error && <div className="form-error" role="alert">{error}</div>}
-      <label className="command-input-label" htmlFor="approval-command">Typed command JSON</label>
-      <textarea
-        ref={commandInputRef}
-        id="approval-command"
-        onChange={(event) => {
-          setHasCommandInput(Boolean(event.currentTarget.value.trim()));
-          setPreview(undefined);
-          setGrantMeta(undefined);
-          clearToken();
-        }}
-        spellCheck={false}
-        placeholder='{"name":"task.confirm","arguments":{"workspaceId":"…","taskId":123},"envelope":{"idempotencyKey":"…","expectedWorkspaceRevision":1}}'
-      />
-      <button className="primary-button preview-button" type="button" disabled={busy || !hasCommandInput} onClick={() => void loadPreview()}>Fresh preview 확인</button>
-      {preview && <section className="approval-preview">
-        <h3>승인할 정확한 명령</h3>
-        <dl>
-          <div><dt>Command</dt><dd>{preview.command.name}</dd></div>
-          <div><dt>Target</dt><dd>{preview.result.entityType || "workspace"} · {preview.result.entityId || workspace.id}</dd></div>
-          <div><dt>Revision</dt><dd>{preview.result.expectedWorkspaceRevision}</dd></div>
-          <div><dt>Capability</dt><dd>{preview.result.requiredCapability}</dd></div>
-          <div><dt>Command hash</dt><dd><code>{preview.result.commandHash}</code></dd></div>
-          <div><dt>Snapshot</dt><dd><code>{preview.result.decisionSnapshotHash || "없음"}</code></dd></div>
-        </dl>
-        <details><summary>Projected diff</summary><pre>{JSON.stringify(preview.result.projectedDiff, null, 2)}</pre></details>
-        {preview.result.errors.map((item) => <div className={item.code === "human_approval_required" ? "approval-required" : "form-error"} key={item.code}><strong>{item.code}</strong><span>{item.message}</span></div>)}
-        {preview.result.warnings.length > 0 && <fieldset className="warning-list">
-          <legend>경고 승인</legend>
-          {preview.result.warnings.map((warning) => <label key={warning.code}>
-            <input
-              type="checkbox"
-              checked={acknowledgedWarnings.includes(warning.code)}
-              onChange={(event) => {
-                const checked = event.currentTarget.checked;
-                setAcknowledgedWarnings((current) => checked
-                  ? [...new Set([...current, warning.code])]
-                  : current.filter((code) => code !== warning.code));
-              }}
-            />
-            <span><strong>{warning.code}</strong>{warning.message}</span>
-          </label>)}
-        </fieldset>}
-        {preview.result.warnings.length > 0 && <label className="command-input-label">진행 사유
-          <textarea className="proceed-reason" value={proceedReason} onChange={(event) => setProceedReason(event.currentTarget.value)} />
-        </label>}
-        <button className="primary-button" type="button" disabled={busy || !canIssue} onClick={() => void issue()}>이 명령의 Grant 발급</button>
-      </section>}
-      <section className="one-time-token" aria-live="polite">
-        <h3>1회용 MCP execute 입력</h3>
-        <code ref={tokenRef} aria-label="발급된 approval grant MCP execute 입력" />
-        {tokenAvailable
-          ? <div className="token-actions">
-            <button type="button" onClick={() => void copyAndDiscard()}>MCP execute 입력을 복사하고 화면에서 폐기</button>
-            <button type="button" onClick={clearToken}>복사하지 않고 폐기</button>
-          </div>
-          : <p>{grantMeta ? "token은 화면에서 폐기되었습니다." : "Grant 발급 후 이 위치에 한 번만 표시됩니다."}</p>}
-        {grantMeta && <div className="grant-meta">
-          <span>Grant {grantMeta.id}</span><span>만료 {grantMeta.expiresAt}</span>
-          <button type="button" disabled={busy} onClick={() => void revoke()}>서버 Grant 취소</button>
-        </div>}
-        <small>복사한 JSON은 해당 typed MCP execute의 전체 입력입니다. Grant와 같은 preview의 <code>acknowledgedWarningCodes</code> 및 <code>proceedReason</code>이 함께 들어 있으며 한 번만 사용하세요.</small>
-      </section>
-    </section>
-  </div>;
 }
 
 function MemberAdministration({

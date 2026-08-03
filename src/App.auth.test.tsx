@@ -13,13 +13,10 @@ import {
   fetchMCPConnection,
   fetchWorkspaceMembers,
   fetchWorkspaces,
-  issueApprovalGrant,
   login,
   logout,
-  previewCommand,
   removeWorkspaceMember,
   resetMemberPassword,
-  revokeApprovalGrant,
   transferWorkspaceOwnership,
   updateWorkspaceMember,
 } from "./api/auth";
@@ -46,9 +43,6 @@ vi.mock("./api/auth", () => ({
   approveMCPConnection: vi.fn(),
   disableMemberAccount: vi.fn(),
   resetMemberPassword: vi.fn(),
-  previewCommand: vi.fn(),
-  issueApprovalGrant: vi.fn(),
-  revokeApprovalGrant: vi.fn(),
 }));
 vi.mock("./api/client", () => ({ fetchGraph: vi.fn() }));
 vi.mock("./graph/layout", () => ({
@@ -116,7 +110,6 @@ describe("authenticated Workspace routing", () => {
     });
     vi.mocked(disableMemberAccount).mockResolvedValue(undefined);
     vi.mocked(resetMemberPassword).mockResolvedValue(undefined);
-    vi.mocked(revokeApprovalGrant).mockResolvedValue(undefined);
     vi.mocked(fetchMCPConnection).mockResolvedValue({
       id: "connection-1",
       workspaceId: "w1",
@@ -125,25 +118,6 @@ describe("authenticated Workspace routing", () => {
       expiresAt: "2026-08-03T13:00:00Z",
     });
     vi.mocked(approveMCPConnection).mockResolvedValue(undefined);
-    vi.mocked(previewCommand).mockResolvedValue({
-      commandHash: "sha256:command",
-      expectedWorkspaceRevision: 7,
-      requiredCapability: "task:approve",
-      projectedDiff: { status: ["implemented", "confirmed"] },
-      errors: [{ code: "human_approval_required", message: "human approval required" }],
-      warnings: [],
-      advisories: [],
-      decisionSnapshotHash: "sha256:snapshot",
-      entityType: "task",
-      entityId: "123",
-    });
-    vi.mocked(issueApprovalGrant).mockResolvedValue({
-      id: "grant-id",
-      grantToken: "one-time-secret-token",
-      expiresAt: "2099-07-28T12:00:00Z",
-      commandHash: "sha256:command",
-      workspaceRevision: 7,
-    });
     vi.mocked(layoutGraph).mockResolvedValue({
       taskPositions: new Map(),
       gatePositions: new Map(),
@@ -290,7 +264,7 @@ describe("authenticated Workspace routing", () => {
     ));
   });
 
-  it("lets a participant with an approval capability issue grants without exposing member administration", async () => {
+  it("does not expose out-of-band approval controls to an Approver", async () => {
     vi.mocked(fetchWorkspaces).mockResolvedValue([{
       id: "w3",
       name: "Approver Workspace",
@@ -305,7 +279,7 @@ describe("authenticated Workspace routing", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Pilot Owner 계정 메뉴" }));
-    expect(screen.getByRole("menuitem", { name: "승인 Grant 발급" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "승인 Grant 발급" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "멤버 관리" })).toBeNull();
   });
 
@@ -344,83 +318,6 @@ describe("authenticated Workspace routing", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "계정 비활성화" }));
     await waitFor(() => expect(disableMemberAccount).toHaveBeenCalledWith("w1", "participant", "csrf"));
-  });
-
-  it("issues a preview-bound approval grant and removes the token from the DOM after one copy", async () => {
-    vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
-    const localStorageSetItem = vi.fn();
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        getItem: vi.fn(() => null),
-        setItem: localStorageSetItem,
-        removeItem: vi.fn(),
-        clear: vi.fn(),
-        key: vi.fn(() => null),
-        length: 0,
-      },
-    });
-    vi.mocked(previewCommand).mockResolvedValue({
-      commandHash: "sha256:command",
-      expectedWorkspaceRevision: 7,
-      requiredCapability: "task:approve",
-      projectedDiff: { status: ["implemented", "confirmed"] },
-      errors: [{ code: "human_approval_required", message: "human approval required" }],
-      warnings: [{ code: "dangling_path", message: "terminal topology warning" }],
-      advisories: [],
-      decisionSnapshotHash: "sha256:snapshot",
-      entityType: "task",
-      entityId: "123",
-    });
-    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText: clipboardWrite },
-    });
-    window.history.replaceState({}, "", "/workspaces/w1");
-    render(<App />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Pilot Owner 계정 메뉴" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "승인 Grant 발급" }));
-    const commandInput = screen.getByLabelText("Typed command JSON");
-    const command = {
-      name: "task.confirm",
-      arguments: { workspaceId: "w1", taskId: 123 },
-      envelope: { idempotencyKey: "command-key", expectedWorkspaceRevision: 7 },
-    };
-    fireEvent.change(commandInput, { target: { value: JSON.stringify(command) } });
-    fireEvent.click(screen.getByRole("button", { name: "Fresh preview 확인" }));
-
-    expect(await screen.findByText("sha256:command")).toBeTruthy();
-    expect(screen.getByText("sha256:snapshot")).toBeTruthy();
-    const issueButton = screen.getByRole("button", { name: "이 명령의 Grant 발급" });
-    expect(issueButton.hasAttribute("disabled")).toBe(true);
-    fireEvent.click(screen.getByRole("checkbox", { name: /dangling_path/ }));
-    fireEvent.change(screen.getByLabelText("진행 사유"), { target: { value: "의도된 topology 경고를 확인함" } });
-    expect(issueButton.hasAttribute("disabled")).toBe(false);
-    fireEvent.click(issueButton);
-
-    const executeInput = await screen.findByLabelText("발급된 approval grant MCP execute 입력");
-    await waitFor(() => expect(executeInput.textContent).toContain("one-time-secret-token"));
-    expect(issueApprovalGrant).toHaveBeenCalledWith("w1", {
-      command,
-      acknowledgedWarningCodes: ["dangling_path"],
-      proceedReason: "의도된 topology 경고를 확인함",
-    }, "csrf");
-    expect(localStorageSetItem).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "MCP execute 입력을 복사하고 화면에서 폐기" }));
-
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith(JSON.stringify({
-      workspaceId: "w1",
-      taskId: 123,
-      idempotencyKey: "command-key",
-      expectedWorkspaceRevision: 7,
-      acknowledgedWarningCodes: ["dangling_path"],
-      proceedReason: "의도된 topology 경고를 확인함",
-      approvalGrantToken: "one-time-secret-token",
-    }, null, 2)));
-    expect(executeInput.textContent).toBe("");
-    expect(screen.getByText("token은 화면에서 폐기되었습니다.")).toBeTruthy();
   });
 
   it("keeps logout inside the account menu and ends the authenticated session", async () => {

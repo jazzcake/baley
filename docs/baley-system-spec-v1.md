@@ -137,7 +137,7 @@ V1에는 회원가입, 로그인 UI와 다중 사용자 인증을 구현하지 �
 - 외부 서버는 Tailscale, VPN, reverse proxy 인증 또는 동등한 배포 계층으로 보호한다.
 - 인증 token과 secret은 repository의 `baley.yaml`에 저장하지 않는다.
 
-제품 인증과 membership enforcement는 후속 단계에서 추가한다. 따라서 V1의 사람 승인은 보안적으로 증명된 신원이 아니라, MCP가 전달한 **사람 승인 진술**을 protocol과 Event로 보존하는 수준이다.
+제품 인증과 Workspace membership enforcement를 적용한다. Agent token은 Operator capability만 가지며, 사람 전용 command의 승인 Actor는 그 token을 발급하거나 MCP 연결을 승인한 사람으로 파생한다. MCP가 전달한 **사람 승인 진술**은 fresh preview와 결속되고, 서버는 실행 시 연결된 사람의 현재 membership과 capability를 다시 검사한다. 채팅 발화의 의미 자체는 Skill/Operator가 해석하며 서버가 독립적으로 판독하지 않는다.
 
 ## 5. 프로젝트 통합
 
@@ -853,6 +853,8 @@ executed_command_id UNIQUE
 - 승인 진술은 action, 대상 entity, canonical command payload hash와 Workspace revision에 결속된다. Gate 통과처럼 조건 snapshot이 있는 action은 snapshot hash에도 결속된다.
 - `task_confirm/task_discard`는 Task ID, `lane_close_out/lane_discard`는 Lane ID, `gate_attach_task/gate_pass`는 Gate ID, `gate_pass_task/gate_revoke_task_pass`는 `gate_tasks.id`, `workspace_close`는 Workspace ID를 대상으로 사용한다.
 - 승인 대상 command는 공통 mutation envelope에 `humanApprovalAttestation` payload를 포함한다.
+- `approved_by_actor_id`는 기본적으로 현재 Agent credential을 발급하거나 연결한 사람에게서 서버가 파생한다. client가 값을 보낼 경우 파생된 Actor와 정확히 같아야 한다.
+- 승인 과정은 같은 Agent 대화 안에서 끝난다. Viewer 승인 패널, command JSON 붙여넣기, grant 발급과 token 복사 단계는 존재하지 않는다.
 - 서버는 mutation transaction 안에서 command별 attestation과 실행 command를 1:1로 기록한다.
 - 같은 idempotency key와 command hash의 재시도는 같은 결과를 반환할 수 있지만, attestation과 command hash를 다른 command·action·entity·revision에 재사용할 수 없다.
 - 하나의 명시적 사람 발화는 바로 앞 decision brief에 열거된 유한한 `task.confirm` outcome 집합을 승인할 수 있다. LLM은 각 command에 fresh preview와 별도 attestation을 만들되 동일하며 비어 있지 않은 `statement_hash`와 `conversation_ref`로 그 승인 집합을 연관시킨다. 다른 action 종류는 별도 승인 질문을 사용한다.
@@ -911,9 +913,7 @@ workspace:close
 workspace:admin
 ```
 
-인증 도입 후 API token은 subject Actor, Actor kind, Workspace membership과 capability scope를 가진다. Agent token에는 approval capability를 부여하지 않고, 사람 인증 session만 approval scope를 발급한다. `workspace.close`는 human `owner`에게만 허용한다. 정확한 capability와 role bundle은 [`contracts/v1/capabilities.json`](../contracts/v1/capabilities.json)을 따른다.
-
-V1에는 제품 인증과 membership enforcement가 없으므로 이 capability 모델은 API contract의 목표 경계이며 보안적으로 강제되지 않는다. 단일 bootstrap human Actor를 protocol상 Owner로 취급하며, 실제 보호는 배포 계층과 HumanApprovalAttestation protocol audit에 의존한다.
+API token은 subject Actor, Actor kind, Workspace membership과 capability scope를 가진다. Agent token에는 approval capability를 부여하지 않는다. 대신 Agent credential을 연결한 human Actor의 현재 approval capability를 사람 전용 command마다 검사하며, `workspace.close`는 연결된 human `owner`에게만 허용한다. 정확한 capability와 role bundle은 [`contracts/v1/capabilities.json`](../contracts/v1/capabilities.json)을 따른다.
 
 ## 15. Command와 MCP
 
@@ -1320,10 +1320,10 @@ cross-table 상태 전이, cycle, Phase 순서와 Gate readiness는 Go command s
 - 마지막 Phase와 Run 조건에서 Workspace 종료 가능 결정 파생
 - revision 또는 snapshot 변경 후 기존 humanApprovalAttestation 거부
 - Lane close-out/discard의 사람 승인 진술 검증
-- V1 protocol audit가 인증된 사람 신원 증명이 아님을 API metadata에 표시
+- 채팅 의미는 protocol audit이며, 승인 Actor 귀속은 연결된 Agent credential에서 파생됨을 API metadata에 표시
 - command catalog가 각 mutation의 `requiredCapability`를 반환
 - active Gate attach가 transaction 현재 상태에서 `gate:approve`를 요구
-- 인증 단계 acceptance: Agent token으로 approval API 거부, `workspace.close`는 human Owner만 허용
+- 인증 단계 acceptance: Agent token 자체는 approval capability를 얻지 못하고, 사람 전용 command는 연결된 human Approver/Owner의 현재 권한을 요구
 
 ### Run과 Record
 

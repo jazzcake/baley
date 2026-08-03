@@ -140,7 +140,7 @@ global revision은 소수 사용자의 안전성을 우선한 선택이다. 서�
 5. 마지막 Owner 두 명을 동시에 비활성화해도 한 명은 남음
 6. 같은 invite를 동시에 수락해도 Account/membership이 하나만 생김
 7. invite 수락과 Owner revoke가 경쟁할 때 권한 없는 membership이 생기지 않음
-8. approval grant 발급 뒤 revision 또는 Approver 역할이 바뀌면 execute가 실패함
+8. 채팅 승인 뒤 revision 또는 연결된 사람의 Approver 역할이 바뀌면 execute가 실패함
 9. Workspace 생성 응답 손실 뒤 exact retry는 동일 Workspace를 반환함
 10. 한 Workspace 탈퇴·폐기가 global Account나 다른 Workspace membership을 바꾸지 않음
 
@@ -179,7 +179,7 @@ global revision은 소수 사용자의 안전성을 우선한 선택이다. 서�
 - 한 Account가 여러 Workspace에서 서로 다른 권한을 안전하게 사용한다.
 - Agent token은 사람 승인이나 Workspace administration을 행사하지 못한다.
 - 동시 변경은 silent overwrite 없이 성공 또는 typed conflict로 끝난다.
-- 마지막 Owner, invite single-use와 approval grant single-use가 경쟁 상황에서도 보장된다.
+- 마지막 Owner와 invite single-use가 경쟁 상황에서도 보장되고, 채팅 승인은 stale revision에서 거부된다.
 - 모든 권한 변경을 보안 Event에서 Actor와 결과 기준으로 재구성할 수 있다.
 
 ## 11. 참고 기준

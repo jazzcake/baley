@@ -837,6 +837,9 @@ func assertStructuralCreateSchema(t *testing.T, name string, raw []byte, require
 	_, hasApprovedBy := schema.Properties["approvedByActorId"]
 	_, hasApprovedHash := schema.Properties["approvedCommandHash"]
 	_, hasApprovedAt := schema.Properties["approvedAt"]
+	if _, hasApprovalGrant := schema.Properties["approvalGrantToken"]; hasApprovalGrant {
+		t.Fatalf("%s still exposes removed approvalGrantToken: %s", name, raw)
+	}
 	wantsConditionalApproval := name == "baley_gate_attach_task_execute"
 	if wantsConditionalApproval != (hasApprovedBy && hasApprovedHash && hasApprovedAt) {
 		t.Fatalf("%s conditional approval field boundary is invalid: %s", name, raw)

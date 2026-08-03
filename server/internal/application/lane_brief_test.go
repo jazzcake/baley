@@ -19,6 +19,10 @@ func TestLaneBriefEvaluationTimeAllowsOnlyBoundedDatabaseClockSkew(t *testing.T)
 	if got := laneBriefEvaluationTime(now, withinTolerance); !got.Equal(withinTolerance) {
 		t.Fatalf("bounded database clock skew was not absorbed: %s", got)
 	}
+	containerSkew := now.Add(2 * time.Second)
+	if got := laneBriefEvaluationTime(now, containerSkew); !got.Equal(containerSkew) {
+		t.Fatalf("bounded container clock skew was not absorbed: %s", got)
+	}
 	beyondTolerance := now.Add(laneBriefClockSkewTolerance + time.Millisecond)
 	if got := laneBriefEvaluationTime(now, beyondTolerance); !got.Equal(now) {
 		t.Fatalf("unbounded future timestamp was silently accepted: %s", got)

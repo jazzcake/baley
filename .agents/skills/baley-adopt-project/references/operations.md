@@ -35,7 +35,6 @@ creation, typed `repository.register`, and then run the CLI with
 |---|---|---|
 | Password | hidden login input | files, command JSON, logs |
 | Agent token | process environment / Authorization header | `baley.yaml`, Records |
-| Approval grant | one approved execute envelope | previews, Records, chat summary |
 | Run lease token | process memory / heartbeat request | config, Records, logs |
 | Lease-token server secret | server environment | repository and client |
 
@@ -57,7 +56,9 @@ table. Never use a secret as an idempotency key.
 
 Delegated technical Tasks may auto-confirm only after typed verification and
 independent-review evidence satisfy their immutable assignment. Human-required
-Tasks stay implemented until an authenticated person confirms them. Gate pass,
+Tasks stay implemented until the connected human explicitly confirms them in
+chat. The Agent internally binds that statement to a fresh preview; no separate
+Viewer approval or token-copy step exists. Gate pass,
 active Gate condition changes, Lane close/discard, and Workspace close are
 always separate human decisions based on a fresh preview.
 

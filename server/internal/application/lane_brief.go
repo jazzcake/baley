@@ -126,12 +126,12 @@ func (s *Service) LaneBrief(ctx context.Context, workspaceID, laneID string) (do
 	return brief, nil
 }
 
-const laneBriefClockSkewTolerance = time.Second
+const laneBriefClockSkewTolerance = 5 * time.Second
 
-// PostgreSQL timestamps and the application clock can differ by a few
-// milliseconds even when the snapshot was read synchronously. Accept only
-// that bounded skew; larger future timestamps still reach the domain
-// validator and are rejected as corrupt evidence.
+// PostgreSQL (especially a local Docker VM) and the application clock can
+// differ by a few seconds even when the snapshot was read synchronously.
+// Accept only that bounded skew; larger future timestamps still reach the
+// domain validator and are rejected as corrupt evidence.
 func laneBriefEvaluationTime(now, workspaceObservedAt time.Time) time.Time {
 	now, workspaceObservedAt = now.UTC(), workspaceObservedAt.UTC()
 	if workspaceObservedAt.After(now) && workspaceObservedAt.Sub(now) <= laneBriefClockSkewTolerance {

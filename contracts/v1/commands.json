@@ -24,14 +24,16 @@
     ]
   },
   "humanApprovalAttestation": {
-    "required": ["approvedByActorId", "approvedCommandHash"],
+    "required": ["approvedCommandHash"],
     "optional": [
+      "approvedByActorId",
       "decisionSnapshotHash",
       "statementHash",
       "conversationRef",
       "approvedAt"
     ],
     "serverDerived": [
+      "approvedByActorIdFromConnectedCredential",
       "action",
       "entityType",
       "entityId",

@@ -16,7 +16,6 @@ UUID_RE = re.compile(
 SECRET_RE = re.compile(
     r"(?i)(bearer\s+[a-z0-9._~-]{12,}|password\s*[:=]|"
     r"(?:baley[_-]?)?(?:agent[_-]?token|lease[_-]?token(?:[_-]?secret)?)\s*[:=]|"
-    r"approval(?:[_-]?grant)?(?:[_-]?token)?\s*[:=]|approvalGrantToken\s*[:=]|"
     r"https?://[^/\s:@]+:[^/\s@]+@)"
 )
 UTC_RFC3339_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$")

@@ -96,7 +96,7 @@ baseline/treatment 구분이다. 등록된 sample은 수정하지 않으며, cor
 
 ## Secret 규칙
 
-Password, Agent token, approval grant, Run lease token은 config, Record, log,
+Password, Agent token, Run lease token은 config, Record, log,
 command argument에 저장하지 않는다. idempotency key는 command table에
 원문으로 남을 수 있으므로 secret을 재사용하지 않는다.
 

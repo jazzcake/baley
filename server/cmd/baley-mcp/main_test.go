@@ -377,6 +377,9 @@ func TestStructuralCreateHandlersForwardTypedCommandsAndConditionalApproval(t *t
 		if envelope["initiatedByActorId"] != "human" {
 			t.Fatalf("request %d missing initiator attribution: %#v", index, envelope)
 		}
+		if _, exists := envelope["approvalGrantToken"]; exists {
+			t.Fatalf("request %d forwarded removed approvalGrantToken: %#v", index, envelope)
+		}
 		if index == 7 {
 			attestation, ok := envelope["humanApprovalAttestation"].(map[string]any)
 			if !ok || attestation["approvedByActorId"] != "human" || attestation["approvedCommandHash"] != "sha256:test" || attestation["conversationRef"] != "thread" {

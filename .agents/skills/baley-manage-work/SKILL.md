@@ -134,6 +134,8 @@ Use `dependency.patch` for edge reversal or any rewrite that removes and adds ed
 
 For every human-only action, create the fresh preview before asking for approval, but present a human decision brief rather than a transport dump. Lead with what was delivered, how it was verified, independent review results when available, and any residual risk that could change the decision. Keep Workspace revision, command hash, capability, and snapshot hash as internal audit-binding data unless the human asks for them or a stale/mismatch error requires explanation.
 
+The human answers in the same conversation. After an unambiguous approval, execute immediately with a chat attestation bound to the fresh preview. The server derives `approvedByActorId` from the human who connected the current Agent credential and rechecks that person's current Workspace role. Never ask the human to open a separate approval panel, paste command JSON, issue a grant, copy a token, or repeat the same decision in another channel.
+
 For one `task.confirm`, use this concise pattern:
 
 ```text
@@ -156,7 +158,7 @@ Do not present routine topology diagnostics as though they were implementation-q
 
 Apply the same outcome-first approach to human-only Gate, Lane, `task.discard`, and Workspace decisions: describe the real-world effect and decision evidence first, while preserving exact revision/hash/snapshot binding internally. `task.rework` is an Agent Operator action and does not require human approval. V1 has no persisted approval inbox.
 
-The server enforces only each command's current revision, canonical hash, target, warnings, and command-specific attestation. The Skill/Operator enforces the grouped baseline comparison, revision chain, and shared human statement. Do not claim the server provides an atomic or authenticated approval bundle.
+The server enforces each command's current revision, canonical hash, target, warnings, command-specific chat attestation, and the current capability of the human bound to the Agent credential. The Skill/Operator enforces the grouped baseline comparison, revision chain, and shared human statement. Do not claim the server provides an atomic approval bundle or independently verifies conversation semantics.
 
 Treat Viewer, Operator, Approver, and Owner as capability bundles for the future authenticated API. Never assume an Agent Operator has human approval capability.
 

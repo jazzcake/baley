@@ -29,8 +29,11 @@ func TestMigration14DownUp(t *testing.T) {
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "migration-14-integration-secret")
 	deletePilotMeasurementRecords(t, url)
 	migrations := filepath.Join("..", "migrations")
-	if err := postgres.Migrate(url, migrations, "down"); err != nil {
-		t.Fatal(err)
+	// Exercise migration 14 from the latest schema by stepping back to 13.
+	for range 4 {
+		if err := postgres.Migrate(url, migrations, "down"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := postgres.Migrate(url, migrations, "up"); err != nil {
 		t.Fatal(err)
@@ -40,7 +43,7 @@ func TestMigration14DownUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	for _, table := range []string{"accounts", "account_sessions", "workspace_memberships", "agent_tokens", "approval_grants", "security_events"} {
+	for _, table := range []string{"accounts", "account_sessions", "workspace_memberships", "agent_tokens", "security_events"} {
 		var exists *string
 		if err = repo.Pool.QueryRow(context.Background(), "SELECT to_regclass($1)::text", table).Scan(&exists); err != nil || exists == nil {
 			t.Fatalf("table %s missing after down/up: %v", table, err)
@@ -61,7 +64,7 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE security_events,approval_grants,agent_tokens,workspace_memberships,account_sessions,account_credentials,accounts,events,human_approval_attestations,commands,workspace_counters,runs,gate_entry_tasks,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE; SET session_replication_role='origin'"); err != nil {
+	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE security_events,agent_tokens,workspace_memberships,account_sessions,account_credentials,accounts,events,human_approval_attestations,commands,workspace_counters,runs,gate_entry_tasks,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE; SET session_replication_role='origin'"); err != nil {
 		t.Fatal(err)
 	}
 	if err = repo.SeedDemo(ctx); err != nil {
@@ -272,7 +275,7 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agent.Subject.Kind != authz.ActorAgent || agent.WorkspaceID != postgres.DemoWorkspaceID {
+	if agent.Subject.Kind != authz.ActorAgent || agent.WorkspaceID != postgres.DemoWorkspaceID || agent.ApprovalActorID != postgres.DemoHumanActorID {
 		t.Fatalf("unexpected Agent principal: %+v", agent)
 	}
 	agentCrossRequest := httptest.NewRequest(http.MethodPost, "/v1/commands/execute", bytes.NewReader(crossWorkspaceCommand))
@@ -306,46 +309,29 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if len(warnings) > 0 {
 		proceedReason = "Owner reviewed the exact warning set"
 	}
-	grantBody, _ := json.Marshal(map[string]any{
-		"command":                  previewRequest,
-		"acknowledgedWarningCodes": warnings,
-		"proceedReason":            proceedReason,
-	})
-	grantResponse := ownerMutation(http.MethodPost, "/v1/workspaces/"+postgres.DemoWorkspaceID+"/approval-grants", grantBody)
-	if grantResponse.Code != http.StatusCreated {
-		t.Fatalf("HTTP approval grant status=%d body=%s", grantResponse.Code, grantResponse.Body.String())
-	}
-	var issuedGrant struct {
-		ID         string `json:"id"`
-		GrantToken string `json:"grantToken"`
-	}
-	if err = json.Unmarshal(grantResponse.Body.Bytes(), &issuedGrant); err != nil || issuedGrant.ID == "" || issuedGrant.GrantToken == "" {
-		t.Fatalf("invalid HTTP approval grant: %+v err=%v", issuedGrant, err)
-	}
-	revokedGrant, err := repo.CreateApprovalGrant(ctx, login.Principal, postgres.DemoWorkspaceID, "task.confirm", preview, warnings, proceedReason)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = repo.Pool.Exec(ctx, "UPDATE approval_grants SET status='revoked',revoked_at=now() WHERE id=$1", revokedGrant.ID); err != nil {
-		t.Fatal(err)
-	}
 	execute := previewRequest
-	execute.Envelope.IdempotencyKey = "authenticated-confirm"
+	execute.Envelope.IdempotencyKey = "chat-approved-confirm"
 	execute.Envelope.AcknowledgedWarningCodes = warnings
 	execute.Envelope.ProceedReason = proceedReason
-	execute.Envelope.ApprovalGrantToken = issuedGrant.GrantToken
-	execute.Principal = &application.CommandPrincipal{CredentialID: agent.CredentialID, WorkspaceID: agent.WorkspaceID, Subject: agent.Subject}
-	revokedExecute := execute
-	revokedExecute.Envelope.IdempotencyKey = "revoked-grant"
-	revokedExecute.Envelope.ApprovalGrantToken = revokedGrant.Token
-	if _, err = service.Execute(ctx, revokedExecute); err == nil {
-		t.Fatal("revoked approval grant was accepted")
+	execute.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
+		ApprovedCommandHash: preview.CommandHash, DecisionSnapshotHash: preview.DecisionSnapshotHash,
+		StatementHash: "sha256:chat-approval", ConversationRef: "account-access-test",
+	}
+	execute.Principal = &application.CommandPrincipal{CredentialID: agent.CredentialID, WorkspaceID: agent.WorkspaceID, ApprovalActorID: agent.ApprovalActorID, Subject: agent.Subject}
+
+	missingApproval := execute
+	missingApproval.Envelope.IdempotencyKey = "missing-chat-approval"
+	missingApproval.Envelope.HumanApprovalAttestation = nil
+	if _, err = service.Execute(ctx, missingApproval); err == nil {
+		t.Fatal("human-only command without chat approval was accepted")
 	}
 	mismatch := execute
-	mismatch.Envelope.IdempotencyKey = "grant-mismatch"
-	mismatch.Envelope.ProceedReason += " changed"
+	mismatch.Envelope.IdempotencyKey = "connected-human-mismatch"
+	mismatch.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
+		ApprovedByActorID: "different-human", ApprovedCommandHash: preview.CommandHash,
+	}
 	if _, err = service.Execute(ctx, mismatch); err == nil {
-		t.Fatal("approval grant proceed-reason mismatch was accepted")
+		t.Fatal("approval attributed to a different human was accepted")
 	}
 	executeRaw, _ := json.Marshal(execute)
 	executeRequest := httptest.NewRequest(http.MethodPost, "/v1/commands/execute", bytes.NewReader(executeRaw))
@@ -353,13 +339,13 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	executeResponse := httptest.NewRecorder()
 	handler.ServeHTTP(executeResponse, executeRequest)
 	if executeResponse.Code != http.StatusOK {
-		t.Fatalf("HTTP Agent grant execute status=%d body=%s", executeResponse.Code, executeResponse.Body.String())
+		t.Fatalf("HTTP Agent chat-approved execute status=%d body=%s", executeResponse.Code, executeResponse.Body.String())
 	}
 	var result application.ExecutionResult
 	if err = json.Unmarshal(executeResponse.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.ApprovalProtocol != "authenticated_approval_grant" {
+	if result.ApprovalProtocol != "connected_human_chat_attestation" {
 		t.Fatalf("approval protocol=%q", result.ApprovalProtocol)
 	}
 	retryRequest := httptest.NewRequest(http.MethodPost, "/v1/commands/execute", bytes.NewReader(executeRaw))
@@ -370,10 +356,14 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if retryResponse.Code != http.StatusOK || json.Unmarshal(retryResponse.Body.Bytes(), &retry) != nil || !retry.Idempotent || retry.CommandID != result.CommandID {
 		t.Fatalf("safe HTTP idempotent retry failed: status=%d result=%+v body=%s", retryResponse.Code, retry, retryResponse.Body.String())
 	}
-	reuse := execute
-	reuse.Envelope.IdempotencyKey = "grant-reuse"
-	if _, err = service.Execute(ctx, reuse); err == nil {
-		t.Fatal("one-use grant was accepted by a different command")
+	tamperedRetry := execute
+	tamperedRetry.Envelope.HumanApprovalAttestation = nil
+	if _, err = service.Execute(ctx, tamperedRetry); commandErrorCode(err) != domain.CodeIdempotencyConflict {
+		t.Fatalf("changed approval envelope reused successful idempotency key: %v", err)
+	}
+	var recordedApprover string
+	if err = repo.Pool.QueryRow(ctx, "SELECT approved_by_actor_id FROM human_approval_attestations WHERE executed_command_id=$1", result.CommandID).Scan(&recordedApprover); err != nil || recordedApprover != postgres.DemoHumanActorID {
+		t.Fatalf("connected human approval attribution=%q err=%v", recordedApprover, err)
 	}
 	forgedCommand := map[string]any{
 		"name":      "phase.create",
@@ -546,9 +536,8 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 		   OR payload::text LIKE '%' || $2 || '%'
 		   OR payload::text LIKE '%' || $3 || '%'
 		   OR payload::text LIKE '%' || $4 || '%'
-		   OR payload::text LIKE '%' || $5 || '%'
-		   OR payload::text LIKE '%' || $6 || '%'`,
-		token.Token, issuedGrant.GrantToken, login.SessionToken, login.CSRFToken,
+		   OR payload::text LIKE '%' || $5 || '%'`,
+		token.Token, login.SessionToken, login.CSRFToken,
 		initialMemberPassword, rotatedMemberPassword).Scan(&secretLeaks); err != nil || secretLeaks != 0 {
 		t.Fatalf("raw auth secret leaked to security Events: count=%d err=%v", secretLeaks, err)
 	}

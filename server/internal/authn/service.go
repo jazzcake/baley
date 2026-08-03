@@ -74,18 +74,19 @@ type Store interface {
 }
 
 type Principal struct {
-	AccountID    string
-	ActorID      string
-	DisplayName  string
-	Subject      authz.Subject
-	SessionID    string
-	CredentialID string
-	WorkspaceID  string
+	AccountID       string
+	ActorID         string
+	ApprovalActorID string
+	DisplayName     string
+	Subject         authz.Subject
+	SessionID       string
+	CredentialID    string
+	WorkspaceID     string
 }
 
 type AgentTokenRecord struct {
-	TokenID, ActorID, WorkspaceID string
-	Scopes                        []authz.Capability
+	TokenID, ActorID, WorkspaceID, CreatedByActorID string
+	Scopes                                          []authz.Capability
 }
 
 type LoginResult struct {
@@ -178,7 +179,7 @@ func (s *Service) Login(ctx context.Context, loginID, password, remoteAddress st
 		return LoginResult{}, err
 	}
 	return LoginResult{
-		Principal: Principal{AccountID: account.AccountID, ActorID: account.ActorID, DisplayName: account.DisplayName, SessionID: sessionID,
+		Principal: Principal{AccountID: account.AccountID, ActorID: account.ActorID, ApprovalActorID: account.ActorID, DisplayName: account.DisplayName, SessionID: sessionID,
 			Subject: authz.Subject{ActorID: account.ActorID, Kind: authz.ActorHuman, Credential: authz.HumanSession, Scopes: append([]authz.Capability(nil), authz.Capabilities...)}},
 		SessionToken: sessionToken, CSRFToken: csrfToken, ExpiresAt: session.AbsoluteAt,
 	}, nil
@@ -201,7 +202,7 @@ func (s *Service) AuthenticateSession(ctx context.Context, token string) (Princi
 		}
 		record.LastSeenAt, record.IdleExpiresAt = now, idle
 	}
-	return Principal{AccountID: record.AccountID, ActorID: record.ActorID, DisplayName: record.DisplayName, SessionID: record.ID,
+	return Principal{AccountID: record.AccountID, ActorID: record.ActorID, ApprovalActorID: record.ActorID, DisplayName: record.DisplayName, SessionID: record.ID,
 		Subject: authz.Subject{ActorID: record.ActorID, Kind: authz.ActorHuman, Credential: authz.HumanSession, Scopes: append([]authz.Capability(nil), authz.Capabilities...)}}, record, nil
 }
 
@@ -211,7 +212,7 @@ func (s *Service) AuthenticateBearer(ctx context.Context, token string) (Princip
 	if err != nil {
 		return Principal{}, ErrSessionInvalid
 	}
-	return Principal{ActorID: record.ActorID, CredentialID: record.TokenID, WorkspaceID: record.WorkspaceID,
+	return Principal{ActorID: record.ActorID, ApprovalActorID: record.CreatedByActorID, CredentialID: record.TokenID, WorkspaceID: record.WorkspaceID,
 		Subject: authz.Subject{ActorID: record.ActorID, Kind: authz.ActorAgent, Credential: authz.AgentToken, Scopes: record.Scopes}}, nil
 }
 

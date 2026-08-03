@@ -54,14 +54,15 @@ bundles. Agents can only hold an active `operator` membership.
 - Agent tokens are Workspace-scoped opaque secrets; only their hashes are stored.
 - Agent scopes are a subset of the Operator bundle and can never include approval or
   administration capabilities.
-- A human-only command is executed by an Agent only with a short-lived, one-use
-  approval grant issued from an authenticated human session.
-- The server recomputes the fresh preview before grant issue and binds the grant to
-  Workspace, action, target, revision, command hash, decision snapshot, warnings, and
-  proceed-reason digest.
-- Execute locks and validates the grant, rechecks the human Account/membership/role,
-  applies the command, records the attestation, and consumes the grant in one
-  transaction. Rollback leaves it unconsumed.
+- A human-only command is executed after an explicit approval in the current Agent
+  conversation. The Agent binds the statement to a fresh preview and executes it
+  without a separate Viewer approval or token-copy step.
+- The server derives the approving Actor from the human who issued or approved the
+  Workspace-scoped Agent credential, rechecks that person's current membership and
+  capability, and binds the attestation to the command hash and decision snapshot.
+- Execute locks the Workspace, rechecks the connected human Account, membership, and
+  role, validates the attestation against the fresh command, then applies the command
+  and records the attestation in one transaction. Rollback records neither.
 - Legacy `approvedByActorId`, statement hash, and conversation reference remain audit
   provenance and do not establish identity.
 
@@ -80,9 +81,8 @@ bundles. Agents can only hold an active `operator` membership.
   Workspace are distinct operations.
 - A Workspace Owner cannot disable or reset an Account that has another active
   Workspace membership; Account authority never crosses a tenant boundary.
-- An authenticated human can inspect the server's fresh command preview and issue a
-  one-use approval grant from the Viewer without persisting the token in browser
-  state or storage.
+- Human approval stays inside the Agent conversation. The Viewer does not expose an
+  approval-token panel and never receives command JSON for routine Task management.
 - Development traces cover user event, target Workspace, auth state, route, request
   generation, committed graph Workspace, and rendered `data-workspace-id`, without
   credentials or tokens.

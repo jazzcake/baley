@@ -18,8 +18,8 @@ type CommandRequest struct {
 }
 
 type CommandPrincipal struct {
-	AccountID, CredentialID, WorkspaceID string
-	Subject                              authz.Subject
+	AccountID, CredentialID, WorkspaceID, ApprovalActorID string
+	Subject                                               authz.Subject
 }
 
 type CommandEnvelope struct {
@@ -30,12 +30,11 @@ type CommandEnvelope struct {
 	AcknowledgedWarningCodes  []string                  `json:"acknowledgedWarningCodes,omitempty"`
 	ProceedReason             string                    `json:"proceedReason,omitempty"`
 	HumanApprovalAttestation  *HumanApprovalAttestation `json:"humanApprovalAttestation,omitempty"`
-	ApprovalGrantToken        string                    `json:"approvalGrantToken,omitempty"`
 	AttemptID                 string                    `json:"-"`
 }
 
 type HumanApprovalAttestation struct {
-	ApprovedByActorID    string     `json:"approvedByActorId"`
+	ApprovedByActorID    string     `json:"approvedByActorId,omitempty"`
 	ApprovedCommandHash  string     `json:"approvedCommandHash"`
 	DecisionSnapshotHash string     `json:"decisionSnapshotHash,omitempty"`
 	StatementHash        string     `json:"statementHash,omitempty"`

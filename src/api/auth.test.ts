@@ -3,7 +3,6 @@ import {
   attachExistingAccount,
   createWorkspace,
   disableMemberAccount,
-  issueApprovalGrant,
   login,
   logout,
   resetMemberPassword,
@@ -86,7 +85,7 @@ describe("credentialed account API", () => {
     });
   });
 
-  it("uses distinct admin endpoints for attach, account disable, password reset, and preview-bound grants", async () => {
+  it("uses distinct admin endpoints for attach, account disable, and password reset", async () => {
     const member = {
       actorId: "participant",
       accountId: "account",
@@ -98,34 +97,16 @@ describe("credentialed account API", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(member))
       .mockResolvedValueOnce(jsonResponse(undefined, 204))
-      .mockResolvedValueOnce(jsonResponse(undefined, 204))
-      .mockResolvedValueOnce(jsonResponse({
-        id: "grant",
-        grantToken: "secret",
-        expiresAt: "2099-01-01T00:00:00Z",
-        commandHash: "sha256:command",
-        workspaceRevision: 4,
-      }));
+      .mockResolvedValueOnce(jsonResponse(undefined, 204));
     vi.stubGlobal("fetch", fetchMock);
 
     await attachExistingAccount("workspace", { loginId: "existing", role: "operator" }, "csrf");
     await disableMemberAccount("workspace", "participant", "csrf");
     await resetMemberPassword("workspace", "participant", "new long password value", "csrf");
-    await issueApprovalGrant("workspace", {
-      command: {
-        name: "task.confirm",
-        arguments: { workspaceId: "workspace", taskId: 1 },
-        envelope: { idempotencyKey: "key" },
-      },
-      acknowledgedWarningCodes: [],
-      proceedReason: "",
-    }, "csrf");
-
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       expect.stringContaining("/v1/workspaces/workspace/memberships"),
       expect.stringContaining("/v1/workspaces/workspace/members/participant/disable-account"),
       expect.stringContaining("/v1/workspaces/workspace/members/participant/reset-password"),
-      expect.stringContaining("/v1/workspaces/workspace/approval-grants"),
     ]);
     for (const [, init] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
       expect((init.headers as Headers).get("X-Baley-CSRF")).toBe("csrf");

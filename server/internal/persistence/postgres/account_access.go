@@ -8,15 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jazzcake/baley/server/internal/application"
 	"github.com/jazzcake/baley/server/internal/authn"
 	"github.com/jazzcake/baley/server/internal/authz"
-	"github.com/jazzcake/baley/server/internal/domain"
 )
 
 type WorkspaceAccess struct {
@@ -29,11 +26,6 @@ type WorkspaceAccess struct {
 type MemberAccess struct {
 	ActorID, AccountID, DisplayName, Role string
 	Active                                bool
-}
-
-type ApprovalGrantResult struct {
-	ID, Token string
-	ExpiresAt time.Time
 }
 
 type AgentTokenResult struct {
@@ -306,7 +298,7 @@ func (r *Repository) ChangePasswordAndRevokeSessions(ctx context.Context, accoun
 func (r *Repository) AgentByTokenHash(ctx context.Context, hash []byte, now time.Time) (authn.AgentTokenRecord, error) {
 	var value authn.AgentTokenRecord
 	var raw []byte
-	err := r.Pool.QueryRow(ctx, `SELECT token.id::text,token.actor_id,token.workspace_id,token.scopes
+	err := r.Pool.QueryRow(ctx, `SELECT token.id::text,token.actor_id,token.workspace_id,token.created_by_actor_id,token.scopes
 		FROM agent_tokens token
 		JOIN actors actor ON actor.id=token.actor_id AND actor.actor_type='agent'
 		JOIN workspace_memberships membership
@@ -314,7 +306,7 @@ func (r *Repository) AgentByTokenHash(ctx context.Context, hash []byte, now time
 		  AND membership.active AND membership.role='operator'
 		WHERE token.token_hash=$1 AND token.revoked_at IS NULL
 		  AND (token.expires_at IS NULL OR token.expires_at>$2)`, hash, now).
-		Scan(&value.TokenID, &value.ActorID, &value.WorkspaceID, &raw)
+		Scan(&value.TokenID, &value.ActorID, &value.WorkspaceID, &value.CreatedByActorID, &raw)
 	if err != nil {
 		return value, err
 	}
@@ -684,79 +676,6 @@ func DigestSecret(value string) []byte {
 	return hash[:]
 }
 
-func (r *Repository) CreateApprovalGrant(ctx context.Context, principal authn.Principal, workspaceID, action string, preview application.PreviewResult, warningCodes []string, proceedReason string) (ApprovalGrantResult, error) {
-	if principal.AccountID == "" || principal.Subject.Kind != authz.ActorHuman || principal.Subject.Credential != authz.HumanSession {
-		return ApprovalGrantResult{}, errors.New("human session required")
-	}
-	membership, err := r.Membership(ctx, workspaceID, principal.ActorID)
-	if err != nil {
-		return ApprovalGrantResult{}, err
-	}
-	required := authz.Capability(preview.RequiredCapability)
-	decision := authz.Authorize(authz.AuthorizationInput{Subject: principal.Subject, Membership: membership, WorkspaceID: workspaceID, EntityWorkspaceID: workspaceID, Capability: required})
-	if !decision.Allowed || action == "workspace.close" && membership.Role != authz.RoleOwner {
-		return ApprovalGrantResult{}, errors.New("approval capability denied")
-	}
-	humanApprovalRequired := false
-	for _, diagnostic := range preview.Errors {
-		if diagnostic.Code != domain.CodeHumanApprovalRequired {
-			return ApprovalGrantResult{}, errors.New("command preview contains blocking errors")
-		}
-		humanApprovalRequired = true
-	}
-	if !humanApprovalRequired {
-		return ApprovalGrantResult{}, errors.New("command does not require a human approval grant")
-	}
-	expectedWarnings := make([]string, 0, len(preview.Warnings))
-	for _, diagnostic := range preview.Warnings {
-		expectedWarnings = append(expectedWarnings, diagnostic.Code)
-	}
-	if !sameStringSet(expectedWarnings, warningCodes) {
-		return ApprovalGrantResult{}, errors.New("warning acknowledgement does not match fresh preview")
-	}
-	if len(expectedWarnings) > 0 && strings.TrimSpace(proceedReason) == "" {
-		return ApprovalGrantResult{}, errors.New("proceed reason is required when warnings are acknowledged")
-	}
-	token, hash, err := randomOpaqueSecret()
-	if err != nil {
-		return ApprovalGrantResult{}, err
-	}
-	id, err := randomUUIDString()
-	if err != nil {
-		return ApprovalGrantResult{}, err
-	}
-	sort.Strings(warningCodes)
-	warnings, _ := json.Marshal(warningCodes)
-	now, expires := time.Now().UTC(), time.Now().UTC().Add(5*time.Minute)
-	tx, err := r.Pool.Begin(ctx)
-	if err != nil {
-		return ApprovalGrantResult{}, err
-	}
-	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO approval_grants(
-		id,secret_hash,workspace_id,approved_by_account_id,approved_by_actor_id,action,entity_type,entity_id,
-		workspace_revision,command_hash,decision_snapshot_hash,warning_codes,proceed_reason_digest,expires_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,''),$12,$13,$14)`,
-		id, hash, workspaceID, principal.AccountID, principal.ActorID, action, preview.EntityType, preview.EntityID,
-		preview.ExpectedWorkspaceRevision, preview.CommandHash, preview.DecisionSnapshotHash, warnings, digestText(proceedReason), expires)
-	if err != nil {
-		return ApprovalGrantResult{}, err
-	}
-	if err == nil {
-		payload, _ := json.Marshal(map[string]any{"action": action, "workspaceRevision": preview.ExpectedWorkspaceRevision, "commandHash": preview.CommandHash})
-		_, err = tx.Exec(ctx, `INSERT INTO security_events(id,workspace_id,account_id,actor_id,event_type,entity_type,entity_id,payload,created_at)
-		VALUES($1,$2,$3,$4,'approval_grant.created','approval_grant',$5,$6,$7)`,
-			newID(), workspaceID, principal.AccountID, principal.ActorID, id, payload, now)
-	}
-	if err != nil {
-		return ApprovalGrantResult{}, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return ApprovalGrantResult{}, err
-	}
-	return ApprovalGrantResult{ID: id, Token: token, ExpiresAt: expires}, nil
-}
-
 func (r *Repository) IssueAgentToken(ctx context.Context, workspaceID, actorID, name, createdByActorID string, scopes []authz.Capability, expiresAt *time.Time) (AgentTokenResult, error) {
 	allowed := map[authz.Capability]bool{}
 	for _, capability := range authz.DefaultCatalog.Roles[authz.RoleOperator] {
@@ -826,27 +745,6 @@ func (r *Repository) RevokeAgentToken(ctx context.Context, workspaceID, tokenID,
 		return pgx.ErrNoRows
 	}
 	if err = insertSecurityEvent(ctx, tx, workspaceID, "", revokedByActorID, "agent_token.revoked", "agent_token", tokenID, map[string]any{}); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-func (r *Repository) RevokeApprovalGrant(ctx context.Context, workspaceID, grantID string, principal authn.Principal) error {
-	tx, err := r.Pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `UPDATE approval_grants SET status='revoked',revoked_at=now()
-		WHERE id=$1 AND workspace_id=$2 AND approved_by_account_id=$3 AND status='active'`,
-		grantID, workspaceID, principal.AccountID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() != 1 {
-		return pgx.ErrNoRows
-	}
-	if err = insertSecurityEvent(ctx, tx, workspaceID, principal.AccountID, principal.ActorID, "approval_grant.revoked", "approval_grant", grantID, map[string]any{}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

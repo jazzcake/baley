@@ -127,31 +127,27 @@ manual recovery/rotation tool; it is not the normal onboarding path.
 
 ## 6. Approve a human-only Agent command
 
-1. The Agent prepares the typed command without an approval token.
-2. The authenticated human opens the Viewer approval panel and pastes the command.
-3. The server recomputes a fresh preview and shows the exact target, revision,
-   capability, command hash, projected diff, warnings, and decision snapshot.
-4. The human acknowledges every warning and provides a proceed reason when needed.
-5. The Viewer issues a short-lived, one-use grant and displays a complete typed MCP
-   execute input once. This input contains `approvalGrantToken` plus the exact
-   `acknowledgedWarningCodes` and `proceedReason` bound to the grant.
-6. Copy that complete input into the matching MCP execute call. Do not omit or
-   change the warning acknowledgement fields: a common `dangling_path` grant will
-   fail when execute does not repeat the same codes and proceed reason.
+1. The Agent fresh-reads the target and prepares an internal typed preview.
+2. The Agent presents an outcome-first decision brief in chat. Transport fields such
+   as revision, command hash, and capability remain internal unless a mismatch needs
+   explanation.
+3. The human approves or rejects that specific outcome in the same conversation.
+4. On approval, the Agent immediately creates a command-specific chat attestation,
+   repeats exact warning acknowledgements when needed, and executes the MCP command.
+5. The server derives the approving Actor from the human who connected the current
+   Agent credential and rechecks that person's active Workspace role and capability.
 
-The grant is valid only for the exact previewed outcome. Stale revisions, changed
-hashes or snapshots, expired grants, revoked roles, cross-Workspace use, and reuse
-are rejected.
+No Viewer panel, command JSON paste, grant issuance, token copy, or second approval
+channel exists. Stale revisions, changed hashes or snapshots, revoked roles,
+cross-Workspace credentials, and approval-Actor mismatches are rejected.
 
 ## 7. Recovery and rollback
 
 - Revoke a browser Session with logout; password change/reset or Account disable
   revokes all Sessions for that Account.
 - Revoke a compromised Agent token and issue a replacement.
-- Revoke an unused approval grant from the Viewer.
 - For local recovery only, stop the server and explicitly select
   `BALEY_ENV=development` with `BALEY_AUTH_MODE=legacy`. Do not use this as a
   production rollback.
-- Prefer leaving migration 14 in place during rollback. Its tables are additive,
-  and downgrading after credential data exists discards the new access-control
-  state.
+- Prefer leaving migrations 14 through 17 in place during rollback. Downgrading
+  reintroduces the removed grant schema and can discard current access-control state.

@@ -327,13 +327,12 @@ type executeEnvelope struct {
 	InitiatedByActorID        string     `json:"initiatedByActorId,omitempty"`
 	AcknowledgedWarningCodes  []string   `json:"acknowledgedWarningCodes,omitempty"`
 	ProceedReason             string     `json:"proceedReason,omitempty"`
-	ApprovedByActorID         string     `json:"approvedByActorId"`
+	ApprovedByActorID         string     `json:"approvedByActorId,omitempty"`
 	ApprovedCommandHash       string     `json:"approvedCommandHash"`
 	DecisionSnapshotHash      string     `json:"decisionSnapshotHash,omitempty"`
 	StatementHash             string     `json:"statementHash,omitempty"`
 	ConversationRef           string     `json:"conversationRef,omitempty"`
 	ApprovedAt                *time.Time `json:"approvedAt,omitempty"`
-	ApprovalGrantToken        string     `json:"approvalGrantToken,omitempty"`
 }
 type automaticEnvelope struct {
 	ExpectedWorkspaceRevision int64  `json:"expectedWorkspaceRevision"`
@@ -354,7 +353,6 @@ type conditionalExecuteEnvelope struct {
 	StatementHash        string     `json:"statementHash,omitempty"`
 	ConversationRef      string     `json:"conversationRef,omitempty"`
 	ApprovedAt           *time.Time `json:"approvedAt,omitempty"`
-	ApprovalGrantToken   string     `json:"approvalGrantToken,omitempty"`
 }
 type runStartInput struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -642,9 +640,6 @@ func executeEnv(v executeEnvelope) map[string]any {
 		envelope["initiatedByActorId"] = v.InitiatedByActorID
 	}
 	envelope["humanApprovalAttestation"] = approvalAttestation(v.ApprovedByActorID, v.ApprovedCommandHash, v.DecisionSnapshotHash, v.StatementHash, v.ConversationRef, v.ApprovedAt)
-	if v.ApprovalGrantToken != "" {
-		envelope["approvalGrantToken"] = v.ApprovalGrantToken
-	}
 	return envelope
 }
 func automaticEnv(v automaticEnvelope) map[string]any {
@@ -669,13 +664,13 @@ func conditionalExecuteEnv(v conditionalExecuteEnvelope) map[string]any {
 	if v.ApprovedByActorID != "" || v.ApprovedCommandHash != "" || v.DecisionSnapshotHash != "" || v.StatementHash != "" || v.ConversationRef != "" || v.ApprovedAt != nil {
 		envelope["humanApprovalAttestation"] = approvalAttestation(v.ApprovedByActorID, v.ApprovedCommandHash, v.DecisionSnapshotHash, v.StatementHash, v.ConversationRef, v.ApprovedAt)
 	}
-	if v.ApprovalGrantToken != "" {
-		envelope["approvalGrantToken"] = v.ApprovalGrantToken
-	}
 	return envelope
 }
 func approvalAttestation(approvedByActorID, approvedCommandHash, decisionSnapshotHash, statementHash, conversationRef string, approvedAt *time.Time) map[string]any {
-	attestation := map[string]any{"approvedByActorId": approvedByActorID, "approvedCommandHash": approvedCommandHash}
+	attestation := map[string]any{"approvedCommandHash": approvedCommandHash}
+	if approvedByActorID != "" {
+		attestation["approvedByActorId"] = approvedByActorID
+	}
 	for key, value := range map[string]string{"decisionSnapshotHash": decisionSnapshotHash, "statementHash": statementHash, "conversationRef": conversationRef} {
 		if value != "" {
 			attestation[key] = value

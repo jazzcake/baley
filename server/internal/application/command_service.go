@@ -340,6 +340,12 @@ func (s *Service) Execute(ctx context.Context, request CommandRequest) (result E
 		}
 		request.Envelope.ExecutedByActorID = authenticatedActor
 		request.Envelope.InitiatedByActorID = authenticatedActor
+		if attestation := request.Envelope.HumanApprovalAttestation; attestation != nil && request.Principal.ApprovalActorID != "" {
+			if attestation.ApprovedByActorID != "" && attestation.ApprovedByActorID != request.Principal.ApprovalActorID {
+				return ExecutionResult{}, &CommandError{Code: "forbidden", Message: "approval Actor does not match the connected human"}
+			}
+			attestation.ApprovedByActorID = request.Principal.ApprovalActorID
+		}
 	}
 	workspaceRevisionRequired := request.Name != "run.heartbeat"
 	if strings.TrimSpace(request.Envelope.IdempotencyKey) == "" || strings.TrimSpace(request.Envelope.ExecutedByActorID) == "" || workspaceRevisionRequired && request.Envelope.ExpectedWorkspaceRevision == 0 {
@@ -351,7 +357,8 @@ func (s *Service) Execute(ctx context.Context, request CommandRequest) (result E
 		securityDigest := sha256.Sum256([]byte(strings.Join([]string{
 			request.Principal.Subject.ActorID,
 			request.Principal.CredentialID,
-			request.Envelope.ApprovalGrantToken,
+			request.Principal.ApprovalActorID,
+			approvalFingerprint(request.Envelope.HumanApprovalAttestation),
 			strings.Join(request.Envelope.AcknowledgedWarningCodes, "\x1f"),
 			strings.TrimSpace(request.Envelope.ProceedReason),
 		}, "\x00")))
@@ -1691,13 +1698,13 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 	result.EntityType, result.EntityID = plan.EntityType, plan.EntityID
 	result.CommandHash = hashCommand(request.Name, typed, request.Envelope.ExpectedWorkspaceRevision, decisionHash)
 	requiresHumanApproval := requiresHumanApproval(request.Name) || plan.ForceHumanApproval
-	if executing && !requiresHumanApproval && (request.Envelope.HumanApprovalAttestation != nil || request.Envelope.ApprovalGrantToken != "") {
+	if executing && !requiresHumanApproval && request.Envelope.HumanApprovalAttestation != nil {
 		result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeHumanApprovalMismatch, EntityID: plan.EntityID})
 	}
-	if requiresHumanApproval && (!executing || request.Envelope.HumanApprovalAttestation == nil && request.Envelope.ApprovalGrantToken == "") {
+	if requiresHumanApproval && (!executing || request.Envelope.HumanApprovalAttestation == nil) {
 		result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeHumanApprovalRequired, EntityID: plan.EntityID})
 	}
-	if executing && requiresHumanApproval && request.Envelope.ApprovalGrantToken == "" {
+	if executing && requiresHumanApproval {
 		att := request.Envelope.HumanApprovalAttestation
 		valid := att != nil && att.ApprovedCommandHash == result.CommandHash && (decisionHash == "" || att.DecisionSnapshotHash == decisionHash)
 		if valid {
@@ -1713,6 +1720,25 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		return result, plan, &CommandError{Code: result.Errors[0].Code, Message: "command evaluation failed: " + result.Errors[0].Code}
 	}
 	return result, plan, nil
+}
+
+func approvalFingerprint(attestation *HumanApprovalAttestation) string {
+	if attestation == nil {
+		return "absent"
+	}
+	approvedAt := ""
+	if attestation.ApprovedAt != nil {
+		approvedAt = attestation.ApprovedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return strings.Join([]string{
+		"present",
+		strings.TrimSpace(attestation.ApprovedByActorID),
+		strings.TrimSpace(attestation.ApprovedCommandHash),
+		strings.TrimSpace(attestation.DecisionSnapshotHash),
+		strings.TrimSpace(attestation.StatementHash),
+		strings.TrimSpace(attestation.ConversationRef),
+		approvedAt,
+	}, "\x1e")
 }
 
 func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
