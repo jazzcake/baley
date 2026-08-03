@@ -19,6 +19,10 @@ Run, Record, Task confirmation, and Gate approval rules.
    acceptance baseline. Do not invent membership by direct SQL.
 4. Verify that the account is an Owner or Participant and that the Operator
    credential is scoped to the exact Workspace.
+   When the first typed MCP read returns `workspace_connection_required`, give
+   the Owner its approval URL and retry that same read after approval. Do not
+   create a per-Workspace env file, copy a token, register another MCP server,
+   or request a new thread.
 5. Never put passwords, agent tokens, approval grants, Run lease tokens, or
    credential-bearing URLs in config, Task Records, commands, or logs.
 

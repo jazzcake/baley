@@ -89,8 +89,9 @@ VITE_BALEY_AUTH_MODE=enforced
 VITE_BALEY_API_URL=https://the-exact-api-origin.example
 ```
 
-Production Viewer builds default to enforced mode when the variable is omitted.
-Development builds retain legacy mode only for local compatibility.
+Viewer builds default to enforced mode when the variable is omitted. Legacy mode
+is available only through an explicit `VITE_BALEY_AUTH_MODE=legacy` opt-in for
+isolated visual tests that do not exercise Accounts or Workspace membership.
 
 After login, the Viewer lists only Workspaces with an active membership. An Owner
 can create a new local Account, attach an existing Account by login ID, change a
@@ -101,18 +102,8 @@ changing another Workspace's global Account access.
 
 ## 5. Connect an Agent
 
-An Owner issues a Workspace-scoped Agent token. Configure it only in the Agent/MCP
-process:
-
-```text
-BALEY_AGENT_TOKEN=<opaque token>
-```
-
-For a local Codex stdio registration, keep `BALEY_SERVER_URL` and
-`BALEY_AGENT_TOKEN` in the Git-ignored `.env.baley-mcp.local`. Generate or refresh
-that file through `scripts/prepare-local-pilot-agent.ps1`; do not edit or print the
-raw token manually. Register the loader rather than copying secret values into
-`config.toml`:
+Register the Baley MCP loader once. Individual Workspaces do not need separate MCP
+registrations, environment files, or Codex threads:
 
 ```toml
 [mcp_servers.baley]
@@ -120,18 +111,19 @@ command = "powershell.exe"
 args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", 'D:\Project_AI\baley\scripts\run-baley-mcp.ps1']
 ```
 
-The loader accepts only those two exact names and does not evaluate shell syntax.
-Every local token rotation receives a timestamped audit name so a lost previous
-raw token does not collide with the Workspace-unique token-name constraint. Old
-token rows remain visible for explicit Owner revocation; the preparation script
-does not silently revoke credentials.
-After issuing or rotating a token, open a new thread so a new MCP child reloads
-the file. If the client cached an older tool schema, the new thread also loads the
-current `approvalGrantToken` execute field. Never put the Agent token in the
-static `env` table, command arguments, command JSON, Task Records, Git, browser
-storage, or logs.
+The human logs in, creates or selects a Workspace, and sends its Viewer URL to the
+project LLM. The LLM extracts the Workspace UUID and makes its first typed MCP
+read. For an unknown Workspace, Baley returns a short-lived approval URL. The
+logged-in Workspace Owner opens it and approves one Operator connection. Retrying
+the same MCP call completes the connection and stores the Workspace-scoped token
+in the Git-ignored local credential store. The store is read at call time, so new
+Workspace connections do not require a new thread or schema reload.
 
-Rotation is issue-new, update the Agent process, verify it, then revoke-old.
+The granted identity has only the Operator capability catalog. Human-only Task
+confirmation, Gate passage, and policy approval remain unavailable to it. Raw
+tokens never enter chat, `config.toml`, command JSON, Task Records, browser
+storage, Git, or logs. `scripts/prepare-local-pilot-agent.ps1` remains only as a
+manual recovery/rotation tool; it is not the normal onboarding path.
 
 ## 6. Approve a human-only Agent command
 

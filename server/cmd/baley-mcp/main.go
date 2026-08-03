@@ -11,15 +11,20 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type client struct {
-	base       string
-	http       *http.Client
-	agentToken string
+	base                string
+	http                *http.Client
+	agentToken          string
+	credentialStorePath string
+	agentActorID        string
+	connectionMu        sync.Mutex
+	pendingConnections  map[string]pendingWorkspaceConnection
 }
 type workspaceInput struct {
 	WorkspaceID string `json:"workspaceId" jsonschema:"Baley workspace ID"`
@@ -481,9 +486,15 @@ func main() {
 		log.Fatal("BALEY_SERVER_URL must be a loopback http URL")
 	}
 	c := &client{
-		base:       strings.TrimRight(base, "/"),
-		http:       &http.Client{Timeout: 15 * time.Second},
-		agentToken: strings.TrimSpace(os.Getenv("BALEY_AGENT_TOKEN")),
+		base:                strings.TrimRight(base, "/"),
+		http:                &http.Client{Timeout: 15 * time.Second},
+		agentToken:          strings.TrimSpace(os.Getenv("BALEY_AGENT_TOKEN")),
+		credentialStorePath: strings.TrimSpace(os.Getenv("BALEY_MCP_CREDENTIAL_STORE")),
+		agentActorID:        strings.TrimSpace(os.Getenv("BALEY_AGENT_ACTOR_ID")),
+		pendingConnections:  map[string]pendingWorkspaceConnection{},
+	}
+	if c.agentActorID == "" {
+		c.agentActorID = "00000000-0000-4000-8000-000000000003"
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "baley", Version: "0.1.0"}, nil)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_workspace_get", Description: "Read Workspace metadata"}, c.workspaceGet)
@@ -560,6 +571,16 @@ func (c *client) get(ctx context.Context, path string) (*mcp.CallToolResult, any
 	return c.call(ctx, "GET", path, nil)
 }
 func (c *client) call(ctx context.Context, method, path string, payload any) (*mcp.CallToolResult, any, error) {
+	workspaceID := requestWorkspaceID(path, payload)
+	token := c.agentToken
+	if c.credentialStorePath != "" && workspaceID != "" {
+		var pending *mcp.CallToolResult
+		var err error
+		token, pending, err = c.workspaceCredential(ctx, workspaceID)
+		if err != nil || pending != nil {
+			return pending, pendingStructured(pending), err
+		}
+	}
 	var body io.Reader
 	if payload != nil {
 		raw, err := json.Marshal(payload)
@@ -575,8 +596,8 @@ func (c *client) call(ctx context.Context, method, path string, payload any) (*m
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.agentToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.agentToken)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -590,6 +611,13 @@ func (c *client) call(ctx context.Context, method, path string, payload any) (*m
 	var structured any
 	if err = json.Unmarshal(raw, &structured); err != nil {
 		structured = map[string]any{"httpStatus": res.StatusCode, "raw": string(raw)}
+	}
+	if res.StatusCode == http.StatusUnauthorized && c.credentialStorePath != "" && workspaceID != "" && token != "" {
+		if err = c.removeWorkspaceCredential(workspaceID); err != nil {
+			return nil, nil, err
+		}
+		_, pending, connectErr := c.workspaceCredential(ctx, workspaceID)
+		return pending, pendingStructured(pending), connectErr
 	}
 	summary := fmt.Sprintf("Baley HTTP %d", res.StatusCode)
 	if res.StatusCode >= 200 && res.StatusCode < 300 {

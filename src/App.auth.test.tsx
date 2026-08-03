@@ -5,9 +5,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachExistingAccount,
+  approveMCPConnection,
+  createWorkspace,
   createWorkspaceMember,
   disableMemberAccount,
   fetchSession,
+  fetchMCPConnection,
   fetchWorkspaceMembers,
   fetchWorkspaces,
   issueApprovalGrant,
@@ -32,12 +35,15 @@ vi.mock("./api/auth", () => ({
   fetchWorkspaces: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
+  createWorkspace: vi.fn(),
   fetchWorkspaceMembers: vi.fn(),
   createWorkspaceMember: vi.fn(),
   updateWorkspaceMember: vi.fn(),
   removeWorkspaceMember: vi.fn(),
   transferWorkspaceOwnership: vi.fn(),
   attachExistingAccount: vi.fn(),
+  fetchMCPConnection: vi.fn(),
+  approveMCPConnection: vi.fn(),
   disableMemberAccount: vi.fn(),
   resetMemberPassword: vi.fn(),
   previewCommand: vi.fn(),
@@ -87,6 +93,15 @@ describe("authenticated Workspace routing", () => {
     vi.mocked(fetchSession).mockResolvedValue(session);
     vi.mocked(fetchWorkspaces).mockResolvedValue(memberships);
     vi.mocked(logout).mockResolvedValue(undefined);
+    vi.mocked(createWorkspace).mockResolvedValue({
+      id: "w3",
+      name: "Day Tripper Pilot",
+      state: "active",
+      revision: 1,
+      role: "owner",
+      relationship: "owner",
+      capabilities: ["workspace:read", "workspace:admin"],
+    });
     vi.mocked(fetchWorkspaceMembers).mockResolvedValue([]);
     vi.mocked(createWorkspaceMember).mockResolvedValue({
       actorId: "new", displayName: "New", role: "operator", relationship: "participant", active: true,
@@ -102,6 +117,14 @@ describe("authenticated Workspace routing", () => {
     vi.mocked(disableMemberAccount).mockResolvedValue(undefined);
     vi.mocked(resetMemberPassword).mockResolvedValue(undefined);
     vi.mocked(revokeApprovalGrant).mockResolvedValue(undefined);
+    vi.mocked(fetchMCPConnection).mockResolvedValue({
+      id: "connection-1",
+      workspaceId: "w1",
+      agentActorId: "codex-operator",
+      status: "pending",
+      expiresAt: "2026-08-03T13:00:00Z",
+    });
+    vi.mocked(approveMCPConnection).mockResolvedValue(undefined);
     vi.mocked(previewCommand).mockResolvedValue({
       commandHash: "sha256:command",
       expectedWorkspaceRevision: 7,
@@ -153,6 +176,61 @@ describe("authenticated Workspace routing", () => {
     expect(password.value).toBe("");
     await waitFor(() => expect(login).toHaveBeenCalledWith("owner", "a sufficiently long password"));
     expect(await screen.findByRole("heading", { name: "Pilot Owner님의 Workspace" })).toBeTruthy();
+  });
+
+  it("lets the Owner approve a one-time Codex Operator connection", async () => {
+    window.history.replaceState({}, "", "/workspaces/w1/mcp-connect/connection-1");
+    vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Codex Operator 연결" })).toBeTruthy();
+    expect(screen.getByText(/사람 전용 승인은 할 수 없습니다/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Operator 연결 승인" }));
+
+    await waitFor(() => expect(approveMCPConnection).toHaveBeenCalledWith("w1", "connection-1", "csrf"));
+    expect(await screen.findByText("연결되었습니다.")).toBeTruthy();
+  });
+
+  it("offers Workspace creation from the account Workspace list", async () => {
+    const createdMembership = {
+      id: "w3",
+      name: "Day Tripper Pilot",
+      state: "active",
+      revision: 1,
+      role: "owner" as const,
+      relationship: "owner" as const,
+      capabilities: ["workspace:read", "workspace:admin"],
+    };
+    vi.mocked(fetchWorkspaces).mockResolvedValue([...memberships, createdMembership]);
+    vi.mocked(createWorkspace).mockResolvedValue(createdMembership);
+    vi.mocked(fetchGraph).mockResolvedValue(graph("w3", "Day Tripper Pilot"));
+    window.history.replaceState({}, "", "/workspaces");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "새 Workspace" }));
+    const name = screen.getByLabelText("Workspace 이름");
+    fireEvent.change(name, { target: { value: "Day Tripper Pilot" } });
+    fireEvent.submit(name.closest("form")!);
+
+    await waitFor(() => expect(createWorkspace).toHaveBeenCalledWith(
+      { workspaceId: expect.any(String), name: "Day Tripper Pilot" },
+      "csrf",
+    ));
+    expect(await screen.findByRole("heading", { name: "Day Tripper Pilot" })).toBeTruthy();
+  });
+
+  it("closes the Workspace menu before opening the creation form", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
+    window.history.replaceState({}, "", "/workspaces/w1");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace One Workspace 전환" }));
+    expect(screen.getByRole("menu", { name: "Workspace 전환" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: /새 Workspace/ }));
+
+    expect(screen.queryByRole("menu", { name: "Workspace 전환" })).toBeNull();
+    expect(screen.getByLabelText("Workspace 이름")).toBeTruthy();
   });
 
   it("aborts an old poll and prevents its late graph response from replacing the selected Workspace", async () => {

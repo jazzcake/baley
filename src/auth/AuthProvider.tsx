@@ -144,7 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function resolveAuthMode(configured: string | undefined, production: boolean): "legacy" | "enforced" {
   if (configured === "legacy" || configured === "enforced") return configured;
-  return production ? "enforced" : "legacy";
+  return "enforced";
 }
 
 export function useAuth() {

@@ -41,6 +41,13 @@ export type ApprovalGrant = {
   commandHash: string;
   workspaceRevision: number;
 };
+export type MCPConnection = {
+  id: string;
+  workspaceId: string;
+  agentActorId: string;
+  status: "pending" | "approved";
+  expiresAt: string;
+};
 
 export function fetchSession(signal?: AbortSignal): Promise<AuthSession> {
   return requestJSON<SessionDTO>("/v1/auth/session", { signal });
@@ -205,6 +212,29 @@ export function revokeApprovalGrant(
   return requestJSON<void>(
     `/v1/workspaces/${encodeURIComponent(workspaceId)}/approval-grants/${encodeURIComponent(grantId)}`,
     { method: "DELETE" },
+    csrfToken,
+  );
+}
+
+export function fetchMCPConnection(
+  workspaceId: string,
+  connectionId: string,
+  signal?: AbortSignal,
+): Promise<MCPConnection> {
+  return requestJSON<MCPConnection>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/mcp-connections/${encodeURIComponent(connectionId)}`,
+    { signal },
+  );
+}
+
+export function approveMCPConnection(
+  workspaceId: string,
+  connectionId: string,
+  csrfToken: string,
+): Promise<void> {
+  return requestJSON<void>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/mcp-connections/${encodeURIComponent(connectionId)}/approve`,
+    { method: "POST", body: "{}" },
     csrfToken,
   );
 }

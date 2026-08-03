@@ -34,15 +34,25 @@ $checks += Add-Check "clean-worktree" ($worktree.Count -eq 0) $(if ($worktree.Co
 $serverURL = "http://127.0.0.1:8080"
 $workspaceID = "00000000-0000-4000-8000-000000000001"
 $environmentPath = Join-Path $repoRoot ".env.baley-mcp.local"
+$credentialStorePath = Join-Path $repoRoot ".tmp\baley-mcp\credentials.json"
 . (Join-Path $PSScriptRoot "baley-mcp-env.ps1")
 $agentToken = $null
 try {
-  $localEnvironment = Read-BaleyMCPEnvironment -Path $environmentPath
-  $agentToken = $localEnvironment.BALEY_AGENT_TOKEN
-  $localEnvironment = $null
+  if (Test-Path -LiteralPath $credentialStorePath) {
+    $credentialStore = Get-Content -LiteralPath $credentialStorePath -Raw | ConvertFrom-Json
+    $credential = $credentialStore.workspaces.PSObject.Properties[$workspaceID].Value
+    $agentToken = $credential.agentToken
+    $credentialStore = $null
+  } elseif (Test-Path -LiteralPath $environmentPath) {
+    $localEnvironment = Read-BaleyMCPEnvironment -Path $environmentPath
+    $agentToken = $localEnvironment.BALEY_AGENT_TOKEN
+    $localEnvironment = $null
+  }
 } catch {}
 $environmentIgnored = @(& git -C $repoRoot check-ignore -- ".env.baley-mcp.local").Count -eq 1
 $checks += Add-Check "mcp-env-gitignored" $environmentIgnored ".env.baley-mcp.local"
+$credentialStoreIgnored = @(& git -C $repoRoot check-ignore -- ".tmp/baley-mcp/credentials.json").Count -eq 1
+$checks += Add-Check "mcp-credential-store-gitignored" $credentialStoreIgnored ".tmp/baley-mcp/credentials.json"
 $mcpEnvironmentLauncher = $false
 $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
 if ($null -ne $codexCommand) {
@@ -62,7 +72,7 @@ if ($null -ne $codexCommand) {
     }
   } catch {}
 }
-$checks += Add-Check "codex-mcp-local-env-launcher" $mcpEnvironmentLauncher "Launcher reads the Git-ignored environment without static token config"
+$checks += Add-Check "codex-mcp-local-env-launcher" $mcpEnvironmentLauncher "Launcher uses the live multi-Workspace credential store without static token config"
 $agentRead = $false
 $agentAdminDenied = $false
 $workspace = $null

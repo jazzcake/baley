@@ -174,6 +174,8 @@ function Start-Runtime {
     BALEY_HTTP_ADDR = "127.0.0.1:8080"
     BALEY_VIEWER_ORIGINS = $viewerURL
     BALEY_MIGRATIONS_DIR = (Join-Path $repoRoot "server\migrations")
+    VITE_BALEY_API_URL = $apiURL
+    VITE_BALEY_AUTH_MODE = "enforced"
   }
   $previous = Set-ChildEnvironment $serverEnvironment
   $serverProcess = $null
@@ -185,7 +187,6 @@ function Start-Runtime {
       -RedirectStandardError (Join-Path $logRoot "server.stderr.log")
     Wait-HTTP "$apiURL/readyz"
 
-    [Environment]::SetEnvironmentVariable("VITE_BALEY_API_URL", $apiURL, "Process")
     $node = (Get-Command node.exe -ErrorAction Stop).Source
     $vite = Join-Path $repoRoot "node_modules\vite\bin\vite.js"
     $viewerProcess = Start-Process -FilePath $node -ArgumentList @($vite, "--force", "--host", "127.0.0.1", "--port", "5174", "--strictPort") `

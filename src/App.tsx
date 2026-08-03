@@ -17,7 +17,7 @@ import { BacklogList, BacklogRail } from "./components/BacklogRail";
 import { LaneAnchorColumn } from "./components/LaneAnchorColumn";
 import { TaskSearch } from "./components/TaskSearch";
 import { laneColorMap } from "./components/lane-palette";
-import { LoginScreen, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
+import { LoginScreen, MCPConnectionApproval, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
 import { traceViewer } from "./debug/viewer-trace";
 import type { GateLinkKind, Task, WorkspaceFixture } from "./domain/model";
 
@@ -74,7 +74,12 @@ function AppRoutes() {
   }
   return <Routes>
     <Route path="/login" element={<Navigate to="/workspaces" replace />} />
-    <Route path="/workspaces" element={<WorkspaceChooser account={auth.state.account} memberships={auth.state.memberships} />} />
+    <Route path="/workspaces" element={<WorkspaceChooser
+      account={auth.state.account}
+      memberships={auth.state.memberships}
+      csrfToken={auth.state.csrfToken}
+      onMembershipsChanged={auth.refreshWorkspaces}
+    />} />
     <Route path="/workspaces/:workspaceId/*" element={<WorkspaceRoute />} />
     <Route path="*" element={<Navigate to={auth.state.memberships.length === 1 ? `/workspaces/${encodeURIComponent(auth.state.memberships[0]!.id)}` : "/workspaces"} replace />} />
   </Routes>;
@@ -136,6 +141,7 @@ function WorkspaceViewer({
     return gate ? { kind: "gate", id: gate.id } : routeView;
   }, [graph.gates, routeView]);
   const selectedId = useMemo(() => new URLSearchParams(location.search).get("task") ?? undefined, [location.search]);
+  const mcpConnectionId = useMemo(() => location.pathname.match(/\/mcp-connect\/([^/]+)$/)?.[1], [location.pathname]);
   const [layout, setLayout] = useState<GraphLayout | undefined>();
   const [layoutViewKey, setLayoutViewKey] = useState<string>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -412,6 +418,12 @@ function WorkspaceViewer({
           <Inspector fixture={graph} task={selectedTask} gateId={selectedGate?.id} onLane={(id) => navigate({ kind: "lane", id })} onGate={(id) => navigate({ kind: "gate", id })} />
         </div>}
       </section>
+      {mcpConnectionId && <MCPConnectionApproval
+        workspace={membership}
+        connectionId={decodeURIComponent(mcpConnectionId)}
+        csrfToken={csrfToken}
+        onClose={() => routeNavigate(workspaceBase, { replace: true })}
+      />}
     </main>
   );
 }

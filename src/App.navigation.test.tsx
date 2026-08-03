@@ -48,6 +48,7 @@ describe("Home navigation entry points", () => {
   };
 
   beforeEach(() => {
+    vi.stubEnv("VITE_BALEY_AUTH_MODE", "legacy");
     vi.stubEnv("VITE_BALEY_WORKSPACE_ID", pilotReadyFixture.workspace.id);
     window.history.replaceState({}, "", "/workspaces/pilot/lanes/client?task=pilot-ui");
     vi.mocked(fetchGraph).mockResolvedValue(pilotReadyFixture);

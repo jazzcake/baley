@@ -13,9 +13,16 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
 2. Resolve Task references using numeric public IDs. Accept `#104`, `task #104`, `task 104`, `task104`, and `104번 task`.
 3. Resolve Gate references using `G#<publicId>` first for human-facing instructions while accepting the stable internal `gateId` and optional alias. Keep all three in evidence when available. Treat canonical `G#[1-9][0-9]*` as a public-reference-only namespace: never create it as an internal `gateId`, and never fall back to an internal ID or alias when that public reference is absent.
 4. Do not interpret a bare ambiguous number as a Task ID without contextual evidence.
-5. Inspect the target Task, Lane, Phase, dependency, and Gate context before preparing a write command.
-6. Select exactly one command from `contracts/v1/commands.json` when possible. Read `references/commands.md` for payload patterns. Prefer relationship-aware `task.create` or `dependency.patch` over a multi-command sequence that can partially succeed.
-7. Validate obvious invariants before preview:
+5. When the user provides a Viewer URL shaped as `/workspaces/<uuid>`, use that UUID
+   as the target Workspace. If the first typed MCP call returns
+   `workspace_connection_required`, show its `approvalUrl` and ask the signed-in
+   Workspace Owner to approve the one-time Operator connection. After approval,
+   retry the same MCP call in the same thread. Do not request a Workspace-specific
+   env file, raw token, MCP registration, or new thread. This connection grants
+   Operator capability only and never supplies human approval authority.
+6. Inspect the target Task, Lane, Phase, dependency, and Gate context before preparing a write command.
+7. Select exactly one command from `contracts/v1/commands.json` when possible. Read `references/commands.md` for payload patterns. Prefer relationship-aware `task.create` or `dependency.patch` over a multi-command sequence that can partially succeed.
+8. Validate obvious invariants before preview:
    - Task exists.
    - dependency does not create a cycle.
    - multi-edge rewrites use one atomic dependency patch and validate the final graph.
@@ -29,10 +36,10 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
    - Gate pass and Gate Task pass/revoke target the current active Phase's outgoing Gate.
    - only detailed-planning Runs start in a future inactive Phase.
    - the requested action does not exercise human-only authority without an explicit matching `humanApprovalAttestation`.
-8. Show a concise preview for user-requested structural changes. Run lifecycle and Task Record registration happen automatically without repeated confirmation.
-9. Call the Baley MCP tool only when one is available and any required human approval has been obtained.
-10. If no Baley command tool is available, stop after the preview. Do not patch fixtures, application source, or a database as a substitute.
-11. Report the resulting Task IDs and Event IDs after execution.
+9. Show a concise preview for user-requested structural changes. Run lifecycle and Task Record registration happen automatically without repeated confirmation.
+10. Call the Baley MCP tool only when one is available and any required human approval has been obtained.
+11. If no Baley command tool is available, stop after the preview. Do not patch fixtures, application source, or a database as a substitute.
+12. Report the resulting Task IDs and Event IDs after execution.
 
 ## Read Requests
 

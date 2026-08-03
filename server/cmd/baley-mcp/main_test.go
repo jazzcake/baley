@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -47,6 +49,63 @@ func TestClientSendsConfiguredAgentTokenWithoutPuttingItInThePayload(t *testing.
 	}
 	if string(raw) == "" || containsJSONSecret(raw, token) {
 		t.Fatal("agent token leaked into the command payload")
+	}
+}
+
+func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
+	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
+	const token = "workspace-scoped-agent-token"
+	var connectionCreated, workspaceRead bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/mcp/connections":
+			connectionCreated = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"pending","connectionSecret":"secret","approvalUrl":"http://viewer/workspaces/` + workspaceID + `/mcp-connect/c1"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/mcp/connections/c1":
+			if r.Header.Get("X-Baley-Connection-Secret") != "secret" {
+				http.Error(w, "missing connection secret", http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"approved","agentToken":"` + token + `"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces/"+workspaceID:
+			workspaceRead = true
+			if r.Header.Get("Authorization") != "Bearer "+token {
+				http.Error(w, "missing workspace token", http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"` + workspaceID + `","revision":1}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	storePath := filepath.Join(t.TempDir(), "credentials.json")
+	c := &client{
+		base: server.URL, http: server.Client(), credentialStorePath: storePath,
+		agentActorID: "agent", pendingConnections: map[string]pendingWorkspaceConnection{},
+	}
+	result, _, err := c.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
+	if err != nil || result == nil || !result.IsError || !connectionCreated {
+		t.Fatalf("expected one-time connection request: result=%#v err=%v", result, err)
+	}
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok || structured["code"] != "workspace_connection_required" || structured["approvalUrl"] == "" {
+		t.Fatalf("missing actionable approval result: %#v", result.StructuredContent)
+	}
+
+	result, _, err = c.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
+	if err != nil || result.IsError || !workspaceRead {
+		t.Fatalf("approved request did not continue automatically: result=%#v err=%v", result, err)
+	}
+	raw, err := os.ReadFile(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsJSONSecret(raw, token) {
+		t.Fatal("Workspace token was not persisted")
 	}
 }
 

@@ -3,10 +3,12 @@ import { Check, ChevronDown, KeyRound, LayoutGrid, LogOut, Plus, Settings, X } f
 import { useNavigate } from "react-router-dom";
 import {
   attachExistingAccount,
+  approveMCPConnection,
   createWorkspace,
   createWorkspaceMember,
   disableMemberAccount,
   fetchWorkspaceMembers,
+  fetchMCPConnection,
   issueApprovalGrant,
   previewCommand,
   removeWorkspaceMember,
@@ -16,6 +18,7 @@ import {
   updateWorkspaceMember,
 } from "../api/auth";
 import type { ApprovalGrant, CommandPreview, CommandRequest } from "../api/auth";
+import type { MCPConnection } from "../api/auth";
 import { APIError } from "../api/http";
 import { traceViewer } from "../debug/viewer-trace";
 import type {
@@ -28,6 +31,95 @@ import type {
 type LoginScreenProps = {
   onLogin: (loginId: string, password: string) => Promise<void>;
 };
+
+export function MCPConnectionApproval({
+  workspace,
+  connectionId,
+  csrfToken,
+  onClose,
+}: {
+  workspace: WorkspaceMembership;
+  connectionId: string;
+  csrfToken: string;
+  onClose: () => void;
+}) {
+  const [connection, setConnection] = useState<MCPConnection>();
+  const [busy, setBusy] = useState(false);
+  const [approved, setApproved] = useState(false);
+  const [error, setError] = useState<string>();
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    traceViewer("mcp-connect:request", {
+      event: "load",
+      targetWorkspaceId: workspace.id,
+      connectionId,
+      authState: "authenticated",
+    });
+    void fetchMCPConnection(workspace.id, connectionId, controller.signal)
+      .then((next) => {
+        setConnection(next);
+        setApproved(next.status === "approved");
+        traceViewer("mcp-connect:state", {
+          targetWorkspaceId: workspace.id,
+          connectionId,
+          status: next.status,
+        });
+        window.requestAnimationFrame(() => traceViewer("mcp-connect:dom", {
+          targetWorkspaceId: workspace.id,
+          connectionId,
+          dialogPresent: Boolean(document.querySelector("[data-mcp-connection-id]")),
+        }));
+      })
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "연결 요청을 불러올 수 없습니다.");
+      });
+    window.setTimeout(() => closeRef.current?.focus(), 0);
+    return () => controller.abort();
+  }, [workspace.id, connectionId]);
+
+  const approve = async () => {
+    setBusy(true);
+    setError(undefined);
+    traceViewer("mcp-connect:approve", {
+      event: "click",
+      targetWorkspaceId: workspace.id,
+      connectionId,
+      calculatedTargetState: "approved",
+      currentState: connection?.status,
+    });
+    try {
+      await approveMCPConnection(workspace.id, connectionId, csrfToken);
+      setApproved(true);
+      setConnection((current) => current ? { ...current, status: "approved" } : current);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "연결을 승인하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <div className="admin-overlay">
+    <section className="mcp-connect-dialog" role="dialog" aria-modal="true" aria-labelledby="mcp-connect-title" data-mcp-connection-id={connectionId}>
+      <header>
+        <div><span>WORKSPACE CONNECTION</span><h2 id="mcp-connect-title">Codex Operator 연결</h2></div>
+        <button ref={closeRef} className="icon-button" type="button" aria-label="연결 창 닫기" onClick={onClose}><X size={18} /></button>
+      </header>
+      {error && <div className="form-error" role="alert">{error}</div>}
+      {!error && !connection && <p>연결 요청을 확인하는 중입니다.</p>}
+      {connection && !approved && <>
+        <p><strong>{workspace.name}</strong>에 Codex를 Operator로 연결합니다.</p>
+        <p className="mcp-connect-scope">Task와 Backlog를 실행할 수 있지만, Task 확인이나 Gate 통과 같은 사람 전용 승인은 할 수 없습니다.</p>
+        <dl><div><dt>권한</dt><dd>Operator</dd></div><div><dt>Agent</dt><dd><code>{connection.agentActorId}</code></dd></div></dl>
+        <button className="primary-button" type="button" disabled={busy} onClick={() => void approve()}>Operator 연결 승인</button>
+      </>}
+      {approved && <div className="mcp-connect-success" role="status">
+        <Check size={22} /><div><strong>연결되었습니다.</strong><p>LLM 세션으로 돌아가 같은 요청을 다시 실행하면 됩니다.</p></div>
+      </div>}
+    </section>
+  </div>;
+}
 
 function moveMenuFocus(event: React.KeyboardEvent<HTMLElement>) {
   if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
@@ -108,15 +200,90 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
 export function WorkspaceChooser({
   account,
   memberships,
+  csrfToken,
+  onMembershipsChanged,
 }: {
   account: Account;
   memberships: WorkspaceMembership[];
+  csrfToken: string;
+  onMembershipsChanged: () => Promise<void>;
 }) {
   const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createError, setCreateError] = useState<string>();
+  const createTriggerRef = useRef<HTMLButtonElement>(null);
+  const createNameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!creating) return;
+    const frame = window.requestAnimationFrame(() => {
+      traceViewer("workspace-create:dom-rendered", {
+        source: "workspace-chooser",
+        renderedCreateOpenState: createNameRef.current ? "open" : "closed",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [creating]);
+
+  const submitWorkspace = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = createNameRef.current?.value.trim() ?? "";
+    if (!name || createBusy) return;
+    setCreateBusy(true);
+    setCreateError(undefined);
+    try {
+      const created = await createWorkspace({ workspaceId: crypto.randomUUID(), name }, csrfToken);
+      traceViewer("workspace-create:completed", {
+        source: "workspace-chooser",
+        createdWorkspaceId: created.id,
+        calculatedTargetPath: `/workspaces/${encodeURIComponent(created.id)}`,
+      });
+      await onMembershipsChanged();
+      navigate(`/workspaces/${encodeURIComponent(created.id)}`);
+    } catch (reason) {
+      setCreateError(errorMessage(reason));
+    } finally {
+      setCreateBusy(false);
+    }
+  };
+
   return <main className="workspace-chooser-shell">
     <header>
       <div className="brand-mark">B</div>
       <div><span>BALEY WORKSPACES</span><h1>{account.displayName}님의 Workspace</h1></div>
+      <div className="workspace-chooser-create">
+        <button
+          ref={createTriggerRef}
+          type="button"
+          className="workspace-chooser-create-trigger"
+          aria-expanded={creating}
+          onClick={() => {
+            traceViewer("workspace-create:event", {
+              source: "workspace-chooser",
+              event: "trigger-click",
+              currentOpenState: creating,
+              calculatedOpenState: !creating,
+            });
+            setCreating((current) => !current);
+            setCreateError(undefined);
+            window.setTimeout(() => createNameRef.current?.focus(), 0);
+          }}
+        ><Plus size={16} aria-hidden="true" /> 새 Workspace</button>
+        {creating && <form className="workspace-create-popover workspace-chooser-create-popover" onSubmit={submitWorkspace}>
+          <label htmlFor="workspace-chooser-create-name">Workspace 이름</label>
+          <input ref={createNameRef} id="workspace-chooser-create-name" maxLength={120} required />
+          {createError && <span className="form-error" role="alert">{createError}</span>}
+          <span className="workspace-create-actions">
+            <button type="button" onClick={() => {
+              setCreating(false);
+              setCreateError(undefined);
+              createTriggerRef.current?.focus();
+            }}>취소</button>
+            <button type="submit" disabled={createBusy}>{createBusy ? "생성 중…" : "생성"}</button>
+          </span>
+        </form>}
+      </div>
     </header>
     {memberships.length === 0
       ? <section className="chooser-empty"><h2>소속된 Workspace가 없습니다</h2><p>Owner에게 참여 요청을 보내주세요.</p></section>
@@ -322,6 +489,19 @@ export function WorkspaceContextSwitcher({
   const createNameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (!creating) return;
+    const frame = window.requestAnimationFrame(() => {
+      traceViewer("workspace-create:dom-rendered", {
+        source: "workspace-context-menu",
+        renderedMenuOpenState: menuRef.current?.dataset.state ?? "closed",
+        renderedCreateOpenState: createNameRef.current ? "open" : "closed",
+        currentWorkspaceId: membership.id,
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [creating, membership.id]);
+
+  useEffect(() => {
     if (!open) return;
     traceViewer("workspace-menu:state-committed", {
       calculatedOpenState: true,
@@ -448,6 +628,15 @@ export function WorkspaceContextSwitcher({
         role="menuitem"
         tabIndex={-1}
         onClick={() => {
+          traceViewer("workspace-create:event", {
+            source: "workspace-context-menu",
+            event: "new-workspace-click",
+            currentMenuOpenState: open,
+            calculatedMenuOpenState: false,
+            calculatedCreateOpenState: true,
+            currentWorkspaceId: membership.id,
+          });
+          setOpen(false);
           setCreating(true);
           setCreateError(undefined);
           window.setTimeout(() => createNameRef.current?.focus(), 0);
