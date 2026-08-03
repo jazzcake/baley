@@ -86,8 +86,21 @@ function Stop-RecordedProcess {
   if ($null -eq $process) { return }
   $expected = if ($Kind -eq "server") { $serverBinary } else { $repoRoot }
   $actual = if ($Kind -eq "server") { [string]$process.ExecutablePath } else { [string]$process.CommandLine }
-  if ([string]::IsNullOrWhiteSpace($actual) -or $actual.IndexOf($expected, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
-    throw "refusing to stop PID $ProcessID because it no longer matches the recorded $Kind process"
+  $commandMatches = ![string]::IsNullOrWhiteSpace($actual) -and
+    $actual.IndexOf($expected, [StringComparison]::OrdinalIgnoreCase) -ge 0
+  if (!$commandMatches) {
+    # Some Windows launch contexts hide ExecutablePath and CommandLine even for
+    # same-user children. Fall back only when the recorded PID still has the
+    # exact expected process name and owns the managed loopback listener.
+    $runtimeProcess = Get-Process -Id $ProcessID -ErrorAction SilentlyContinue
+    $expectedName = if ($Kind -eq "server") { "baley-server" } else { "node" }
+    $expectedPort = if ($Kind -eq "server") { 8080 } else { 5174 }
+    $ownsExpectedListener = @(
+      Get-Listener $expectedPort | Where-Object { $_.OwningProcess -eq $ProcessID }
+    ).Count -gt 0
+    if ($null -eq $runtimeProcess -or $runtimeProcess.ProcessName -ne $expectedName -or !$ownsExpectedListener) {
+      throw "refusing to stop PID $ProcessID because it no longer matches the recorded $Kind process"
+    }
   }
   Stop-Process -Id $ProcessID -Force
 }
