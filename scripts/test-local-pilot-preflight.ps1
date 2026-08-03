@@ -40,10 +40,13 @@ $agentToken = $null
 try {
   if (Test-Path -LiteralPath $credentialStorePath) {
     $credentialStore = Get-Content -LiteralPath $credentialStorePath -Raw | ConvertFrom-Json
-    $credential = $credentialStore.workspaces.PSObject.Properties[$workspaceID].Value
-    $agentToken = $credential.agentToken
+    $credentialProperty = $credentialStore.workspaces.PSObject.Properties[$workspaceID]
+    if ($null -ne $credentialProperty) {
+      $agentToken = $credentialProperty.Value.agentToken
+    }
     $credentialStore = $null
-  } elseif (Test-Path -LiteralPath $environmentPath) {
+  }
+  if ([string]::IsNullOrWhiteSpace($agentToken) -and (Test-Path -LiteralPath $environmentPath)) {
     $localEnvironment = Read-BaleyMCPEnvironment -Path $environmentPath
     $agentToken = $localEnvironment.BALEY_AGENT_TOKEN
     $localEnvironment = $null
