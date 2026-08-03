@@ -73,6 +73,25 @@ if ($null -ne $codexCommand) {
   } catch {}
 }
 $checks += Add-Check "codex-mcp-local-env-launcher" $mcpEnvironmentLauncher "Launcher uses the live multi-Workspace credential store without static token config"
+$baleyPluginInstalled = $false
+$baleyPluginSkills = $false
+if ($null -ne $codexCommand) {
+  try {
+    $pluginList = (& codex plugin list --json 2>$null | Out-String) | ConvertFrom-Json
+    $baleyPlugin = @($pluginList.installed | Where-Object {
+      $_.pluginId -eq "baley@personal" -and $_.enabled
+    }) | Select-Object -First 1
+    if ($null -ne $baleyPlugin) {
+      $baleyPluginInstalled = $true
+      $pluginCache = Join-Path $env:USERPROFILE ".codex\plugins\cache\personal\baley\$($baleyPlugin.version)\skills"
+      $baleyPluginSkills =
+        (Test-Path -LiteralPath (Join-Path $pluginCache "baley-manage-work\SKILL.md") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $pluginCache "baley-adopt-project\SKILL.md") -PathType Leaf)
+    }
+  } catch {}
+}
+$checks += Add-Check "baley-plugin-installed" $baleyPluginInstalled "baley@personal enabled"
+$checks += Add-Check "baley-plugin-skills" $baleyPluginSkills "baley:baley-manage-work and baley:baley-adopt-project"
 $agentRead = $false
 $agentAdminDenied = $false
 $workspace = $null

@@ -15,10 +15,13 @@ target_task: "#125"
 2. PostgreSQL은 `127.0.0.1:54329`에만 공개되고 ready 상태다.
 3. 최근 logical backup의 별도 DB 복원 검증이 성공했다.
 4. Baley MCP는 전역 `baley` 등록 하나만 사용한다.
-5. fresh read에서 #124는 `confirmed`, G#4는 `passed`, active Phase는
+5. 개인 Codex marketplace의 `baley@personal` plugin이 enabled 상태이며 새
+   Day Tripper 세션에 `baley:baley-manage-work`와
+   `baley:baley-adopt-project`가 모두 노출된다.
+6. fresh read에서 #124는 `confirmed`, G#4는 `passed`, active Phase는
    `embedding-pilot`이다.
-6. Owner가 로그인하고 Baley Pilot graph 표시를 확인한다.
-7. 작업에 사용할 commit은 전체 Go/Viewer acceptance를 통과한다.
+7. Owner가 로그인하고 Baley Pilot graph 표시를 확인한다.
+8. 작업에 사용할 commit은 전체 Go/Viewer acceptance를 통과한다.
 
 ## 준비 명령
 
@@ -29,6 +32,7 @@ cd D:\Project_AI\baley
 $backup = .\scripts\local-pilot-db.ps1 backup
 .\scripts\local-pilot-db.ps1 verify $backup
 
+.\scripts\install-baley-codex-plugin.ps1
 .\scripts\test-local-pilot-preflight.ps1
 ```
 

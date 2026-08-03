@@ -1,0 +1,27 @@
+{
+  "name": "baley",
+  "version": "0.1.0",
+  "description": "Operate Baley Workspaces, Tasks, Backlogs, Runs, Gates, and project adoption from Codex.",
+  "author": {
+    "name": "Baley"
+  },
+  "homepage": "https://github.com/jazzcake/baley",
+  "repository": "https://github.com/jazzcake/baley",
+  "license": "MIT",
+  "keywords": ["baley", "task-management", "project-adoption", "mcp"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Baley",
+    "shortDescription": "Manage project work through Baley.",
+    "longDescription": "Use Baley as the operational ledger for project Backlogs, Tasks, Runs, evidence, dependencies, Gates, and controlled adoption without crossing human approval boundaries.",
+    "developerName": "Baley",
+    "category": "Productivity",
+    "capabilities": ["Task management", "Project adoption", "Human approval boundaries"],
+    "defaultPrompt": [
+      "Show the actionable work in my Baley Workspace.",
+      "Adopt this repository into its Baley Workspace.",
+      "Plan and execute this work with Baley evidence."
+    ],
+    "brandColor": "#00A887"
+  }
+}
