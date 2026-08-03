@@ -3,6 +3,8 @@ type: task-manifest
 status: pm-approved-baseline
 workspace_id: "00000000-0000-4000-8000-000000000001"
 workspace_revision_observed: 182
+last_validated_revision: 591
+last_validated_at: "2026-08-03"
 lane_id: adoption
 phases:
   - embedding-contract
@@ -135,7 +137,13 @@ For each cross-Phase dependency, the matching Gate condition is the authoritativ
   their own fresh preview and explicit human approval. The future delegated policy changes
   only Task confirmation and never Gate/Lane/Workspace approval boundaries.
 
-## 6. Current confirmation recommendation at revision 163
+## 6. Current Pilot entry state at revision 591
 
-- Recommend human approval for #111, #114, and #115 based on their committed evidence and warning-free fresh previews.
-- Hold #116 confirmation until #116 is attached to `embedding-contract-entry`; then regenerate the confirmation preview. Do not acknowledge its current `dangling_path` as an intentional terminal warning because this manifest gives it a Gate successor.
+- #124 `Embedding Enablement 수용 검증`: `confirmed`
+- G#4 `embedding-pilot-entry`: `passed`
+- active Phase: `embedding-pilot`
+- #125 `Day Tripper Pilot 온보딩`: `pending`
+
+위 상태는 2026-08-03 Workspace-scoped authenticated read로 재검증했다. 이전 revision 163의
+#111/#114/#115/#116 확인 권고는 모두 종료된 과거 판단이므로 현재 실행 지침으로 사용하지
+않는다.

@@ -394,4 +394,5 @@ Hosted deployment의 repository baseline과 runbook은 구현했지만, Owner는
 - [x] 대체 독립 리뷰와 리뷰 응답이 완료됐고 남은 High/Medium finding이 없다.
 - [x] `task-records/gate-transition-vertical-slice/completion-report-01.md`를 작성했다.
 - [x] 실제 Repository와 Task Record root를 Baley command로 등록했다.
-- [ ] 권한이 다른 legacy 8080 process 정리는 owning launch context에서 대기 중이다. 새 MCP process의 current-source runtime은 18080으로 정렬했다.
+- [x] legacy 8080 process를 정리하고 current-source local Pilot API와 MCP를
+  `127.0.0.1:8080`으로 정렬했다.
