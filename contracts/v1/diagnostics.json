@@ -31,7 +31,10 @@
     "backlog_order_mismatch",
     "backlog_order_unchanged",
     "invalid_backlog_filter",
-    "lane_has_active_backlog"
+    "lane_has_active_backlog",
+    "external_execution_already_active",
+    "external_execution_invalid_transition",
+    "external_execution_task_mismatch"
   ],
   "warnings": [
     "missing_detailed_plan_record",
@@ -44,12 +47,14 @@
     "workspace_close_active_lane",
     "stale_branch_observation",
     "record_hash_changed",
-    "workspace_close_residual_backlog"
+    "workspace_close_residual_backlog",
+    "external_execution_lost"
   ],
   "advisories": [
     "residual_risk_reported",
     "predecessor_reworked",
     "commit_remote_unverified",
-    "independent_review_provenance_missing"
+    "independent_review_provenance_missing",
+    "external_execution_stale_observation"
   ]
 }

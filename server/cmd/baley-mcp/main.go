@@ -441,6 +441,20 @@ type gitObserveInput struct {
 	Dirty         *bool     `json:"dirty,omitempty"`
 	automaticEnvelope
 }
+type externalExecutionInput struct {
+	WorkspaceID         string `json:"workspaceId"`
+	ExternalExecutionID string `json:"externalExecutionId"`
+	TaskID              int    `json:"taskId,omitempty"`
+	ClientExecutionID   string `json:"clientExecutionId,omitempty"`
+	Provider            string `json:"provider,omitempty"`
+	ContextSnapshotHash string `json:"contextSnapshotHash,omitempty"`
+	ExternalID          string `json:"externalId,omitempty"`
+	ProviderInstanceID  string `json:"providerInstanceId,omitempty"`
+	HostID              string `json:"hostId,omitempty"`
+	TerminalHandle      string `json:"terminalHandle,omitempty"`
+	SettlementReason    string `json:"settlementReason,omitempty"`
+	automaticEnvelope
+}
 type taskConfirmPreviewInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	TaskID      int    `json:"taskId"`
@@ -520,6 +534,15 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_record_attach_commit", Description: "Attach commit and blob evidence to a Task Record"}, c.recordAttachCommit)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_commit_attach", Description: "Attach a Git commit reference to a Task"}, c.commitAttach)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_git_observe", Description: "Record non-authoritative Run Git metadata"}, c.gitObserve)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_external_execution_get", Description: "Read one external execution"}, c.externalExecutionGet)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_external_execution_list", Description: "List Workspace external executions"}, c.externalExecutionList)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_external_execution_resolve_for_task", Description: "Resolve the current external execution for a Task"}, c.externalExecutionResolveForTask)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_external_execution_reserve", Description: "Reserve the one active Orca execution slot for a Task"}, c.externalExecutionReserve)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_external_execution_attach", Description: "Attach an Orca worktree to a reserved execution"}, c.externalExecutionAttach)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_external_execution_mark_review", Description: "Keep an Orca execution locked while its result is reviewed"}, c.externalExecutionMarkReview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_external_execution_settle", Description: "Explicitly settle an Orca execution and release its Task lock"}, c.externalExecutionSettle)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_external_execution_mark_lost", Description: "Mark an Orca execution lost without releasing its Task lock"}, c.externalExecutionMarkLost)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_external_execution_reconnect", Description: "Reconnect a lost Orca execution to its existing worktree"}, c.externalExecutionReconnect)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_report_implemented", Description: "Report implementation complete with assessment and explicit warning acknowledgement"}, c.taskReportImplemented)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_evidence_report", Description: "Append typed acceptance evidence and atomically auto-confirm an eligible delegated Task"}, c.taskEvidenceReport)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_policy_change_preview", Description: "Preview a human-approved future-Task acceptance policy change"}, c.acceptancePolicyChangePreview)
@@ -694,6 +717,15 @@ func (c *client) taskGet(ctx context.Context, _ *mcp.CallToolRequest, in taskInp
 func (c *client) taskAcceptanceGet(ctx context.Context, _ *mcp.CallToolRequest, in taskInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, fmt.Sprintf("/v1/workspaces/%s/tasks/%d/acceptance", url.PathEscape(in.WorkspaceID), in.TaskID))
 }
+func (c *client) externalExecutionGet(ctx context.Context, _ *mcp.CallToolRequest, in externalExecutionInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, fmt.Sprintf("/v1/workspaces/%s/external-executions/%s", url.PathEscape(in.WorkspaceID), url.PathEscape(in.ExternalExecutionID)))
+}
+func (c *client) externalExecutionList(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/external-executions")
+}
+func (c *client) externalExecutionResolveForTask(ctx context.Context, _ *mcp.CallToolRequest, in externalExecutionInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, fmt.Sprintf("/v1/workspaces/%s/tasks/%d/external-execution", url.PathEscape(in.WorkspaceID), in.TaskID))
+}
 func (c *client) laneBrief(ctx context.Context, _ *mcp.CallToolRequest, in laneBriefInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/lanes/"+url.PathEscape(in.LaneID)+"/brief")
 }
@@ -759,6 +791,28 @@ func (c *client) recordList(ctx context.Context, _ *mcp.CallToolRequest, in work
 func (c *client) runStart(ctx context.Context, _ *mcp.CallToolRequest, in runStartInput) (*mcp.CallToolResult, any, error) {
 	arguments := map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "clientRunId": in.ClientRunID, "kind": in.Kind, "sessionRef": in.SessionRef, "parentRunId": in.ParentRunID, "targetRunId": in.TargetRunID}
 	return c.call(ctx, "POST", "/v1/commands/execute", command("run.start", arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) externalExecutionCommand(ctx context.Context, name string, in externalExecutionInput) (*mcp.CallToolResult, any, error) {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "externalExecutionId": in.ExternalExecutionID, "taskId": in.TaskID, "clientExecutionId": in.ClientExecutionID, "provider": in.Provider, "contextSnapshotHash": in.ContextSnapshotHash, "externalId": in.ExternalID, "providerInstanceId": in.ProviderInstanceID, "hostId": in.HostID, "terminalHandle": in.TerminalHandle, "settlementReason": in.SettlementReason}
+	return c.call(ctx, "POST", "/v1/commands/execute", command(name, arguments, automaticEnv(in.automaticEnvelope)))
+}
+func (c *client) externalExecutionReserve(ctx context.Context, _ *mcp.CallToolRequest, in externalExecutionInput) (*mcp.CallToolResult, any, error) {
+	return c.externalExecutionCommand(ctx, "external_execution.reserve", in)
+}
+func (c *client) externalExecutionAttach(ctx context.Context, _ *mcp.CallToolRequest, in externalExecutionInput) (*mcp.CallToolResult, any, error) {
+	return c.externalExecutionCommand(ctx, "external_execution.attach", in)
+}
+func (c *client) externalExecutionMarkReview(ctx context.Context, _ *mcp.CallToolRequest, in externalExecutionInput) (*mcp.CallToolResult, any, error) {
+	return c.externalExecutionCommand(ctx, "external_execution.mark_review", in)
+}
+func (c *client) externalExecutionSettle(ctx context.Context, _ *mcp.CallToolRequest, in externalExecutionInput) (*mcp.CallToolResult, any, error) {
+	return c.externalExecutionCommand(ctx, "external_execution.settle", in)
+}
+func (c *client) externalExecutionMarkLost(ctx context.Context, _ *mcp.CallToolRequest, in externalExecutionInput) (*mcp.CallToolResult, any, error) {
+	return c.externalExecutionCommand(ctx, "external_execution.mark_lost", in)
+}
+func (c *client) externalExecutionReconnect(ctx context.Context, _ *mcp.CallToolRequest, in externalExecutionInput) (*mcp.CallToolResult, any, error) {
+	return c.externalExecutionCommand(ctx, "external_execution.reconnect", in)
 }
 func (c *client) runHeartbeat(ctx context.Context, _ *mcp.CallToolRequest, in runHeartbeatInput) (*mcp.CallToolResult, any, error) {
 	arguments := map[string]any{"workspaceId": in.WorkspaceID, "runId": in.RunID, "leaseToken": in.LeaseToken, "expectedRunVersion": in.ExpectedRunVersion, "extensionSeconds": in.ExtensionSeconds}

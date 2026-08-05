@@ -381,6 +381,12 @@ var auditEventImportance = map[string]bool{
 	"record.commit_attached":              false,
 	"commit.attached":                     false,
 	"git.observed":                        false,
+	"external_execution.reserved":         true,
+	"external_execution.attached":         true,
+	"external_execution.review_started":   true,
+	"external_execution.settled":          true,
+	"external_execution.marked_lost":      true,
+	"external_execution.reconnected":      true,
 	"human_approval_attestation.recorded": false,
 }
 

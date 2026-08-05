@@ -42,13 +42,15 @@ type MutationContext struct {
 	AcceptanceEvidence   TaskAcceptanceEvidence
 	AcceptanceEvaluation AcceptanceEvaluation
 
-	Repository      Repository
-	Record          TaskRecord
-	Registration    RecordRegistration
-	ExistingRecords map[string]TaskRecord
-	TaskRecordsRoot string
-	Commit          CommitReference
-	GitObservation  RunGitObservation
+	Repository         Repository
+	Record             TaskRecord
+	Registration       RecordRegistration
+	ExistingRecords    map[string]TaskRecord
+	TaskRecordsRoot    string
+	Commit             CommitReference
+	GitObservation     RunGitObservation
+	ExternalExecution  ExternalExecution
+	ExternalExecutions []ExternalExecution
 
 	Run             Run
 	RunStartRequest RunStartRequest
@@ -94,57 +96,93 @@ type HumanApprovalAttestation struct {
 // the registry total makes a contract addition fail tests until a planner is
 // supplied, instead of silently accepting metadata-only coverage.
 var MutationHandlers = map[string]MutationHandler{
-	"project.bootstrap":             planProjectBootstrap,
-	"repository.register":           planRepositoryRegister,
-	"workspace.create":              planWorkspaceCreate,
-	"workspace.activate":            planWorkspaceActivation,
-	"workspace.close":               planWorkspaceClose,
-	"phase.create":                  planPhaseCreation,
-	"lane.create":                   planLaneCreation,
-	"lane.update":                   planLaneUpdateMutation,
-	"lane.close_out":                planLaneTerminationMutation("lane.close_out"),
-	"lane.discard":                  planLaneTerminationMutation("lane.discard"),
-	"gate.create":                   planGateCreation,
-	"task.create":                   planTaskCreation,
-	"backlog.create":                planBacklogMutation("backlog.create"),
-	"backlog.update":                planBacklogMutation("backlog.update"),
-	"backlog.move":                  planBacklogMutation("backlog.move"),
-	"backlog.reorder":               planBacklogMutation("backlog.reorder"),
-	"backlog.discard":               planBacklogMutation("backlog.discard"),
-	"backlog.promote":               planBacklogMutation("backlog.promote"),
-	"task.update":                   planTaskUpdateMutation,
-	"task.set_terminal":             planTaskTerminalMutation(true),
-	"task.clear_terminal":           planTaskTerminalMutation(false),
-	"task.block":                    planTaskLifecycleMutation("task.block"),
-	"task.unblock":                  planTaskLifecycleMutation("task.unblock"),
-	"task.report_implemented":       planTaskImplementedMutation,
-	"task.confirm":                  planTaskConfirm,
-	"task.acceptance_policy.change": planAcceptancePolicyChange,
-	"task.acceptance_mode.escalate": planAcceptanceModeEscalation,
-	"task.evidence.report":          planAcceptanceEvidenceReport,
-	"task.discard":                  planTaskLifecycleMutation("task.discard"),
-	"task.rework":                   planTaskLifecycleMutation("task.rework"),
-	"dependency.connect":            planDependencyMutation("dependency.connect"),
-	"dependency.disconnect":         planDependencyMutation("dependency.disconnect"),
-	"dependency.patch":              planDependencyMutation("dependency.patch"),
-	"gate.attach_task":              planGateAttachmentMutation(true),
-	"gate.detach_task":              planGateAttachmentMutation(false),
-	"gate.attach_entry_task":        planGateEntryTaskMutation(true),
-	"gate.detach_entry_task":        planGateEntryTaskMutation(false),
-	"gate.pass_task":                planGateConditionMutation(true),
-	"gate.revoke_task_pass":         planGateConditionMutation(false),
-	"gate.pass":                     planGatePassMutation,
-	"run.start":                     planRunStartMutation,
-	"run.heartbeat":                 planRunHeartbeatMutation,
-	"run.succeed":                   planRunTerminationMutation("run.succeed", RunSucceeded),
-	"run.fail":                      planRunTerminationMutation("run.fail", RunFailed),
-	"run.cancel":                    planRunTerminationMutation("run.cancel", RunCancelled),
-	"run.interrupt":                 planRunTerminationMutation("run.interrupt", RunInterrupted),
-	"run.correct":                   planRunCorrectionMutation,
-	"record.register":               planRecordRegistration,
-	"record.attach_commit":          planRecordCommitAttachment,
-	"commit.attach":                 planCommitAttachment,
-	"git.observe":                   planGitObservation,
+	"project.bootstrap":              planProjectBootstrap,
+	"repository.register":            planRepositoryRegister,
+	"workspace.create":               planWorkspaceCreate,
+	"workspace.activate":             planWorkspaceActivation,
+	"workspace.close":                planWorkspaceClose,
+	"phase.create":                   planPhaseCreation,
+	"lane.create":                    planLaneCreation,
+	"lane.update":                    planLaneUpdateMutation,
+	"lane.close_out":                 planLaneTerminationMutation("lane.close_out"),
+	"lane.discard":                   planLaneTerminationMutation("lane.discard"),
+	"gate.create":                    planGateCreation,
+	"task.create":                    planTaskCreation,
+	"backlog.create":                 planBacklogMutation("backlog.create"),
+	"backlog.update":                 planBacklogMutation("backlog.update"),
+	"backlog.move":                   planBacklogMutation("backlog.move"),
+	"backlog.reorder":                planBacklogMutation("backlog.reorder"),
+	"backlog.discard":                planBacklogMutation("backlog.discard"),
+	"backlog.promote":                planBacklogMutation("backlog.promote"),
+	"task.update":                    planTaskUpdateMutation,
+	"task.set_terminal":              planTaskTerminalMutation(true),
+	"task.clear_terminal":            planTaskTerminalMutation(false),
+	"task.block":                     planTaskLifecycleMutation("task.block"),
+	"task.unblock":                   planTaskLifecycleMutation("task.unblock"),
+	"task.report_implemented":        planTaskImplementedMutation,
+	"task.confirm":                   planTaskConfirm,
+	"task.acceptance_policy.change":  planAcceptancePolicyChange,
+	"task.acceptance_mode.escalate":  planAcceptanceModeEscalation,
+	"task.evidence.report":           planAcceptanceEvidenceReport,
+	"task.discard":                   planTaskLifecycleMutation("task.discard"),
+	"task.rework":                    planTaskLifecycleMutation("task.rework"),
+	"dependency.connect":             planDependencyMutation("dependency.connect"),
+	"dependency.disconnect":          planDependencyMutation("dependency.disconnect"),
+	"dependency.patch":               planDependencyMutation("dependency.patch"),
+	"gate.attach_task":               planGateAttachmentMutation(true),
+	"gate.detach_task":               planGateAttachmentMutation(false),
+	"gate.attach_entry_task":         planGateEntryTaskMutation(true),
+	"gate.detach_entry_task":         planGateEntryTaskMutation(false),
+	"gate.pass_task":                 planGateConditionMutation(true),
+	"gate.revoke_task_pass":          planGateConditionMutation(false),
+	"gate.pass":                      planGatePassMutation,
+	"run.start":                      planRunStartMutation,
+	"run.heartbeat":                  planRunHeartbeatMutation,
+	"run.succeed":                    planRunTerminationMutation("run.succeed", RunSucceeded),
+	"run.fail":                       planRunTerminationMutation("run.fail", RunFailed),
+	"run.cancel":                     planRunTerminationMutation("run.cancel", RunCancelled),
+	"run.interrupt":                  planRunTerminationMutation("run.interrupt", RunInterrupted),
+	"run.correct":                    planRunCorrectionMutation,
+	"record.register":                planRecordRegistration,
+	"record.attach_commit":           planRecordCommitAttachment,
+	"commit.attach":                  planCommitAttachment,
+	"git.observe":                    planGitObservation,
+	"external_execution.reserve":     planExternalExecutionMutation("external_execution.reserve"),
+	"external_execution.attach":      planExternalExecutionMutation("external_execution.attach"),
+	"external_execution.mark_review": planExternalExecutionMutation("external_execution.mark_review"),
+	"external_execution.settle":      planExternalExecutionMutation("external_execution.settle"),
+	"external_execution.mark_lost":   planExternalExecutionMutation("external_execution.mark_lost"),
+	"external_execution.reconnect":   planExternalExecutionMutation("external_execution.reconnect"),
+}
+
+func planExternalExecutionMutation(command string) MutationHandler {
+	return func(context MutationContext) DomainMutationPlan {
+		plan := newDomainPlan(command, false)
+		execution := context.ExternalExecution
+		if context.Workspace.State == WorkspaceClosed || execution.WorkspaceID != context.Workspace.ID || execution.ID == "" || execution.TaskID == "" || execution.Provider != "orca" {
+			return invalidPlan(plan, execution.ID, CodeInvalidStateTransition)
+		}
+		if command == "external_execution.reserve" {
+			if evaluation := ValidateExternalExecutionLock(context.ExternalExecutions, execution.TaskID, execution.Provider); evaluation.HasErrors() {
+				plan.Evaluation = evaluation
+				return plan
+			}
+			if execution.Status != ExternalExecutionCreating || execution.AttemptNumber <= 0 || execution.ClientExecutionID == "" {
+				return invalidPlan(plan, execution.ID, CodeExternalExecutionInvalidTransition)
+			}
+		}
+		policy, _ := policyFor(command, false)
+		payload := map[string]any{"externalExecutionId": execution.ID, "taskId": execution.TaskID, "provider": execution.Provider, "status": execution.Status}
+		if execution.ExternalID != "" {
+			payload["externalId"] = execution.ExternalID
+		}
+		if execution.SettlementReason != "" {
+			payload["settlementReason"] = execution.SettlementReason
+		}
+		plan.ProjectedDiff = execution
+		plan.Events = []PlannedEvent{{Type: policy.EventType, EntityType: "external_execution", EntityID: execution.ID, Payload: payload}}
+		return plan
+	}
 }
 
 func PlanMutation(command string, context MutationContext) DomainMutationPlan {

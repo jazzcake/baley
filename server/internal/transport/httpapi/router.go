@@ -82,6 +82,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/mutation-attempts", a.mutationAttempts)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/runs", a.runs)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/records", a.records)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/external-executions", a.externalExecutions)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/external-executions/{executionId}", a.externalExecution)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/tasks/{publicId}/external-execution", a.taskExternalExecution)
 	mux.HandleFunc("POST /v1/commands/preview", a.preview)
 	mux.HandleFunc("POST /v1/commands/execute", a.execute)
 	return a.observability(a.cors(a.authentication(mux)))
@@ -624,7 +627,7 @@ func (a *API) graph(w http.ResponseWriter, r *http.Request) {
 			activeBacklog = append(activeBacklog, item)
 		}
 	}
-	writeJSON(w, 200, map[string]any{"workspace": s.Workspace, "phases": s.Phases, "lanes": s.Lanes, "tasks": s.Tasks, "backlogItems": activeBacklog, "dependencies": s.Dependencies, "gates": s.Gates, "runs": s.Runs, "repositories": s.Repositories, "records": s.Records, "commits": s.Commits, "gitObservations": s.GitObservations, "acceptancePolicy": s.AcceptancePolicy, "evidenceProfiles": s.EvidenceProfiles, "acceptanceAssignments": s.AcceptanceAssignments, "acceptanceEvidence": s.AcceptanceEvidence, "decisions": projectDecisions(s)})
+	writeJSON(w, 200, map[string]any{"workspace": s.Workspace, "phases": s.Phases, "lanes": s.Lanes, "tasks": s.Tasks, "backlogItems": activeBacklog, "dependencies": s.Dependencies, "gates": s.Gates, "runs": s.Runs, "externalExecutions": s.ExternalExecutions, "repositories": s.Repositories, "records": s.Records, "commits": s.Commits, "gitObservations": s.GitObservations, "acceptancePolicy": s.AcceptancePolicy, "evidenceProfiles": s.EvidenceProfiles, "acceptanceAssignments": s.AcceptanceAssignments, "acceptanceEvidence": s.AcceptanceEvidence, "decisions": projectDecisions(s)})
 }
 
 func (a *API) taskAcceptance(w http.ResponseWriter, r *http.Request) {
@@ -721,6 +724,59 @@ func (a *API) task(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, v)
+}
+func (a *API) externalExecutions(w http.ResponseWriter, r *http.Request) {
+	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": s.ExternalExecutions})
+}
+func (a *API) externalExecution(w http.ResponseWriter, r *http.Request) {
+	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	for _, value := range s.ExternalExecutions {
+		if value.ID == r.PathValue("executionId") {
+			writeJSON(w, 200, value)
+			return
+		}
+	}
+	writeJSON(w, 404, map[string]any{"error": map[string]string{"code": "not_found", "message": "external execution not found"}})
+}
+func (a *API) taskExternalExecution(w http.ResponseWriter, r *http.Request) {
+	publicID, err := strconv.Atoi(r.PathValue("publicId"))
+	if err != nil || publicID <= 0 {
+		writeJSON(w, 400, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "publicId must be positive"}})
+		return
+	}
+	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	taskID := ""
+	for _, task := range s.Tasks {
+		if task.PublicID == publicID {
+			taskID = task.ID
+			break
+		}
+	}
+	if taskID == "" {
+		writeJSON(w, 404, map[string]any{"error": map[string]string{"code": "not_found", "message": "task not found"}})
+		return
+	}
+	for index := len(s.ExternalExecutions) - 1; index >= 0; index-- {
+		value := s.ExternalExecutions[index]
+		if value.TaskID == taskID && value.Status != "settled" {
+			writeJSON(w, 200, map[string]any{"taskId": taskID, "execution": value})
+			return
+		}
+	}
+	writeJSON(w, 200, map[string]any{"taskId": taskID, "execution": nil})
 }
 func (a *API) gate(w http.ResponseWriter, r *http.Request) {
 	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))

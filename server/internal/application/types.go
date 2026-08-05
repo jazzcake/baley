@@ -156,6 +156,24 @@ type RunProjection struct {
 	ResultSummary   string     `json:"resultSummary,omitempty"`
 	ErrorSummary    string     `json:"errorSummary,omitempty"`
 }
+type ExternalExecutionProjection struct {
+	ID                  string     `json:"id"`
+	TaskID              string     `json:"taskId"`
+	Provider            string     `json:"provider"`
+	ExternalID          string     `json:"externalId,omitempty"`
+	ProviderInstanceID  string     `json:"providerInstanceId,omitempty"`
+	HostID              string     `json:"hostId,omitempty"`
+	Status              string     `json:"status"`
+	AttemptNumber       int        `json:"attemptNumber"`
+	ClientExecutionID   string     `json:"clientExecutionId"`
+	ContextSnapshotHash string     `json:"contextSnapshotHash,omitempty"`
+	LastTerminalHandle  string     `json:"lastTerminalHandle,omitempty"`
+	StartedAt           time.Time  `json:"startedAt"`
+	LastObservedAt      *time.Time `json:"lastObservedAt,omitempty"`
+	SettledAt           *time.Time `json:"settledAt,omitempty"`
+	SettlementReason    string     `json:"settlementReason,omitempty"`
+	CreatedByActorID    string     `json:"createdByActorId"`
+}
 type RepositoryProjection struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
@@ -252,6 +270,7 @@ type Snapshot struct {
 	Dependencies          []DependencyProjection            `json:"dependencies"`
 	Gates                 []GateProjection                  `json:"gates"`
 	Runs                  []RunProjection                   `json:"runs"`
+	ExternalExecutions    []ExternalExecutionProjection     `json:"externalExecutions"`
 	Repositories          []RepositoryProjection            `json:"repositories"`
 	Records               []TaskRecordProjection            `json:"records"`
 	Commits               []CommitReferenceProjection       `json:"commits"`
@@ -333,6 +352,8 @@ type MutationPlan struct {
 	Record                  *domain.TaskRecord
 	CommitReference         *domain.CommitReference
 	GitObservation          *domain.RunGitObservation
+	ExternalExecutionCreate *domain.ExternalExecution
+	ExternalExecutionUpdate *domain.ExternalExecution
 	NoWorkspaceRevision     bool
 	IdempotentNoMutation    bool
 	AcceptancePolicy        *domain.AcceptancePolicy

@@ -396,6 +396,26 @@ func validMutationContext(t *testing.T, command string) MutationContext {
 		context.Commit = CommitReference{ID: "commit", WorkspaceID: workspace.ID, TaskID: task.ID, RepositoryID: "repository", CommitSHA: repeatHex("a", 40), Relation: CommitProduced}
 	case "git.observe":
 		context.GitObservation = RunGitObservation{ID: "observation", WorkspaceID: workspace.ID, RunID: "run", RepositoryID: "repository", ObservedAt: now}
+	case "external_execution.reserve":
+		context.ExternalExecution, _ = ReserveExternalExecution("execution", workspace.ID, task.ID, "11111111-1111-4111-8111-111111111111", "orca", "sha256:context", "agent", 1, now)
+	case "external_execution.attach":
+		context.ExternalExecution, _ = ReserveExternalExecution("execution", workspace.ID, task.ID, "11111111-1111-4111-8111-111111111111", "orca", "", "agent", 1, now)
+		context.ExternalExecution, _ = context.ExternalExecution.Attach("worktree", "instance", "local", "terminal", now)
+	case "external_execution.mark_review":
+		context.ExternalExecution, _ = ReserveExternalExecution("execution", workspace.ID, task.ID, "11111111-1111-4111-8111-111111111111", "orca", "", "agent", 1, now)
+		context.ExternalExecution, _ = context.ExternalExecution.Attach("worktree", "instance", "local", "terminal", now)
+		context.ExternalExecution, _ = context.ExternalExecution.MarkReview(now)
+	case "external_execution.settle":
+		context.ExternalExecution, _ = ReserveExternalExecution("execution", workspace.ID, task.ID, "11111111-1111-4111-8111-111111111111", "orca", "", "agent", 1, now)
+		context.ExternalExecution, _ = context.ExternalExecution.Attach("worktree", "instance", "local", "terminal", now)
+		context.ExternalExecution, _ = context.ExternalExecution.Settle(ExternalExecutionCompleted, now)
+	case "external_execution.mark_lost":
+		context.ExternalExecution, _ = ReserveExternalExecution("execution", workspace.ID, task.ID, "11111111-1111-4111-8111-111111111111", "orca", "", "agent", 1, now)
+		context.ExternalExecution, _ = context.ExternalExecution.MarkLost(now)
+	case "external_execution.reconnect":
+		context.ExternalExecution, _ = ReserveExternalExecution("execution", workspace.ID, task.ID, "11111111-1111-4111-8111-111111111111", "orca", "", "agent", 1, now)
+		context.ExternalExecution, _ = context.ExternalExecution.MarkLost(now)
+		context.ExternalExecution, _ = context.ExternalExecution.Reconnect("worktree", "instance", "local", "terminal", now)
 	default:
 		t.Fatalf("missing valid fixture for %s", command)
 	}

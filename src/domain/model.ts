@@ -43,6 +43,7 @@ export type BacklogItem = {
   promotedTaskPublicId: number | null;
 };
 export type Run = { id: string; taskId: string; kind: string; status: string; startedAt: string; endedAt?: string; resultSummary?: string; errorSummary?: string };
+export type ExternalExecution = { id: string; taskId: string; provider: "orca"; externalId?: string; providerInstanceId?: string; hostId?: string; status: "creating" | "active" | "review" | "settled" | "lost"; attemptNumber: number; lastTerminalHandle?: string; startedAt: string; lastObservedAt?: string; settledAt?: string; settlementReason?: string };
 export type TaskRecord = { id: string; taskId: string; runId?: string; recordType: string; repositoryId: string; relativePath: string; state: string; shortSummary: string; commitSha?: string };
 export type AcceptanceEvidence = {
   id: string;
@@ -80,6 +81,7 @@ export type WorkspaceFixture = {
   gateLinks: GateLink[];
 	decisions: Array<{ action: string; entityType: string; entityId: string | number; expectedWorkspaceRevision: number }>;
 	runs?: Run[];
+	externalExecutions?: ExternalExecution[];
 	records?: TaskRecord[];
 	acceptanceEvidence?: AcceptanceEvidence[];
 };

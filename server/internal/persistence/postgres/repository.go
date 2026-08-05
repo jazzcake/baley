@@ -96,7 +96,7 @@ func (r *Repository) LoadSnapshot(ctx context.Context, wid string) (application.
 }
 
 func loadSnapshot(ctx context.Context, q querier, wid string, locked bool) (application.Snapshot, error) {
-	s := application.Snapshot{Phases: []application.PhaseProjection{}, Lanes: []application.LaneProjection{}, Tasks: []application.TaskProjection{}, BacklogItems: []application.BacklogItemProjection{}, Dependencies: []application.DependencyProjection{}, Gates: []application.GateProjection{}, Runs: []application.RunProjection{}, Repositories: []application.RepositoryProjection{}, Records: []application.TaskRecordProjection{}, Commits: []application.CommitReferenceProjection{}, GitObservations: []application.GitObservationProjection{}, EvidenceProfiles: []domain.EvidenceProfile{}, AcceptanceAssignments: []domain.TaskAcceptanceAssignment{}, AcceptanceEvidence: []domain.TaskAcceptanceEvidence{}, HumanActorIDs: map[string]bool{}, ActorIDs: map[string]bool{}}
+	s := application.Snapshot{Phases: []application.PhaseProjection{}, Lanes: []application.LaneProjection{}, Tasks: []application.TaskProjection{}, BacklogItems: []application.BacklogItemProjection{}, Dependencies: []application.DependencyProjection{}, Gates: []application.GateProjection{}, Runs: []application.RunProjection{}, ExternalExecutions: []application.ExternalExecutionProjection{}, Repositories: []application.RepositoryProjection{}, Records: []application.TaskRecordProjection{}, Commits: []application.CommitReferenceProjection{}, GitObservations: []application.GitObservationProjection{}, EvidenceProfiles: []domain.EvidenceProfile{}, AcceptanceAssignments: []domain.TaskAcceptanceAssignment{}, AcceptanceEvidence: []domain.TaskAcceptanceEvidence{}, HumanActorIDs: map[string]bool{}, ActorIDs: map[string]bool{}}
 	lock := ""
 	if locked {
 		lock = " FOR UPDATE"
@@ -195,6 +195,20 @@ func loadSnapshot(ctx context.Context, q querier, wid string, locked bool) (appl
 			return s, err
 		}
 		s.Runs = append(s.Runs, v)
+	}
+	rows.Close()
+	rows, err = q.Query(ctx, `SELECT id::text,task_id,provider,COALESCE(external_id,''),COALESCE(provider_instance_id,''),COALESCE(host_id,''),status,attempt_number,client_execution_id::text,COALESCE(context_snapshot_hash,''),COALESCE(last_terminal_handle,''),started_at,last_observed_at,settled_at,COALESCE(settlement_reason,''),created_by_actor_id
+		FROM external_executions WHERE workspace_id=$1 ORDER BY task_id,provider,attempt_number`, wid)
+	if err != nil {
+		return s, err
+	}
+	for rows.Next() {
+		var v application.ExternalExecutionProjection
+		if err = rows.Scan(&v.ID, &v.TaskID, &v.Provider, &v.ExternalID, &v.ProviderInstanceID, &v.HostID, &v.Status, &v.AttemptNumber, &v.ClientExecutionID, &v.ContextSnapshotHash, &v.LastTerminalHandle, &v.StartedAt, &v.LastObservedAt, &v.SettledAt, &v.SettlementReason, &v.CreatedByActorID); err != nil {
+			rows.Close()
+			return s, err
+		}
+		s.ExternalExecutions = append(s.ExternalExecutions, v)
 	}
 	rows.Close()
 	rows, err = q.Query(ctx, "SELECT id,name,remote_url,COALESCE(default_branch,''),is_record_repository,COALESCE(task_records_root,'') FROM repositories WHERE workspace_id=$1 ORDER BY id", wid)
@@ -1138,6 +1152,19 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO run_git_observations(workspace_id,id,run_id,repository_id,observed_at,head_commit_sha,branch_hint,worktree_label,dirty)
 			VALUES($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9)`, wid, observation.ID, observation.RunID, observation.RepositoryID, observation.ObservedAt, observation.HeadCommitSHA, observation.BranchHint, observation.WorktreeLabel, observation.Dirty)
+	case "external_execution.reserve":
+		execution := plan.ExternalExecutionCreate
+		if execution == nil {
+			return result, fmt.Errorf("external_execution.reserve plan is missing execution")
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO external_executions(workspace_id,id,task_id,provider,status,attempt_number,client_execution_id,context_snapshot_hash,started_at,created_by_actor_id)
+			VALUES($1,$2::uuid,$3,$4,$5,$6,$7::uuid,NULLIF($8,''),$9,$10)`, wid, execution.ID, execution.TaskID, execution.Provider, execution.Status, execution.AttemptNumber, execution.ClientExecutionID, execution.ContextSnapshotHash, execution.StartedAt, execution.CreatedByActorID)
+	case "external_execution.attach", "external_execution.mark_review", "external_execution.settle", "external_execution.mark_lost", "external_execution.reconnect":
+		execution := plan.ExternalExecutionUpdate
+		if execution == nil {
+			return result, fmt.Errorf("%s plan is missing execution", plan.CommandName)
+		}
+		_, err = tx.Exec(ctx, `UPDATE external_executions SET external_id=NULLIF($1,''),provider_instance_id=NULLIF($2,''),host_id=NULLIF($3,''),status=$4,last_terminal_handle=NULLIF($5,''),last_observed_at=$6,settled_at=$7,settlement_reason=NULLIF($8,''),updated_at=$9 WHERE workspace_id=$10 AND id=$11::uuid`, execution.ExternalID, execution.ProviderInstanceID, execution.HostID, execution.Status, execution.LastTerminalHandle, execution.LastObservedAt, execution.SettledAt, execution.SettlementReason, now, wid, execution.ID)
 	}
 	if err != nil {
 		return result, err

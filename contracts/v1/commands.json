@@ -79,7 +79,10 @@
     "decision.list",
     "backlog.list",
     "backlog.get",
-    "mutation-attempt.list"
+    "mutation-attempt.list",
+    "external_execution.get",
+    "external_execution.list",
+    "external_execution.resolve_for_task"
   ],
   "mutations": {
     "project.bootstrap": { "capability": "workspace:operate", "humanApproval": "none" },
@@ -132,6 +135,12 @@
     "record.register": { "capability": "record:operate", "humanApproval": "none" },
     "record.attach_commit": { "capability": "record:operate", "humanApproval": "none" },
     "commit.attach": { "capability": "record:operate", "humanApproval": "none" },
-    "git.observe": { "capability": "record:operate", "humanApproval": "none" }
+    "git.observe": { "capability": "record:operate", "humanApproval": "none" },
+    "external_execution.reserve": { "capability": "workspace:operate", "humanApproval": "none" },
+    "external_execution.attach": { "capability": "workspace:operate", "humanApproval": "none" },
+    "external_execution.mark_review": { "capability": "workspace:operate", "humanApproval": "none" },
+    "external_execution.settle": { "capability": "workspace:operate", "humanApproval": "none" },
+    "external_execution.mark_lost": { "capability": "workspace:operate", "humanApproval": "none" },
+    "external_execution.reconnect": { "capability": "workspace:operate", "humanApproval": "none" }
   }
 }
