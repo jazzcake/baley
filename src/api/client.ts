@@ -11,7 +11,6 @@ type GraphDTO = {
   gates: Array<{ id: string; publicId?: number; alias?: string; name: string; fromPhaseId: string; toPhaseId: string; status: "open" | "ready" | "passed"; conditions: Array<{ id: string; taskId: string; satisfied: boolean; satisfactionReason: string }>; entryTasks: Array<{ taskId: string; selectionSource: "explicit" | "automatic" }> }>;
   decisions: WorkspaceFixture["decisions"];
   runs: NonNullable<WorkspaceFixture["runs"]>;
-  externalExecutions?: NonNullable<WorkspaceFixture["externalExecutions"]>;
   records: NonNullable<WorkspaceFixture["records"]>;
   acceptanceEvidence?: NonNullable<WorkspaceFixture["acceptanceEvidence"]>;
 };
@@ -46,7 +45,6 @@ export async function fetchGraph(workspaceId: string, signal?: AbortSignal): Pro
     ]),
     decisions: dto.decisions,
     runs: dto.runs ?? [],
-    externalExecutions: dto.externalExecutions ?? [],
     records: dto.records ?? [],
     acceptanceEvidence: dto.acceptanceEvidence ?? [],
   };

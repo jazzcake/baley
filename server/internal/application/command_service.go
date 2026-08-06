@@ -270,19 +270,6 @@ type gitObserveArgs struct {
 	WorktreeLabel string    `json:"worktreeLabel,omitempty"`
 	Dirty         *bool     `json:"dirty,omitempty"`
 }
-type externalExecutionArgs struct {
-	WorkspaceID         string                                   `json:"workspaceId"`
-	ExternalExecutionID string                                   `json:"externalExecutionId"`
-	TaskID              int                                      `json:"taskId,omitempty"`
-	ClientExecutionID   string                                   `json:"clientExecutionId,omitempty"`
-	Provider            string                                   `json:"provider,omitempty"`
-	ContextSnapshotHash string                                   `json:"contextSnapshotHash,omitempty"`
-	ExternalID          string                                   `json:"externalId,omitempty"`
-	ProviderInstanceID  string                                   `json:"providerInstanceId,omitempty"`
-	HostID              string                                   `json:"hostId,omitempty"`
-	TerminalHandle      string                                   `json:"terminalHandle,omitempty"`
-	SettlementReason    domain.ExternalExecutionSettlementReason `json:"settlementReason,omitempty"`
-}
 
 func (s *Service) Preview(ctx context.Context, request CommandRequest) (PreviewResult, error) {
 	wid, typed, err := decodeArguments(request.Name, request.Arguments)
@@ -1704,74 +1691,6 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		plan.GitObservation = &observation
 		plan.Events = []EventWrite{{Type: "git.observed", Payload: map[string]any{"observationId": observation.ID, "runId": observation.RunID, "repositoryId": observation.RepositoryID, "observedAt": observation.ObservedAt}}}
 		result.ProjectedDiff = map[string]any{"observation": gitObservationProjection(observation), "outcome": domain.RunTransitionApplied}
-	case externalExecutionArgs:
-		result.RequiredCapability = "workspace:operate"
-		plan.EntityType, plan.EntityID = "external_execution", args.ExternalExecutionID
-		if !isUUID(args.ExternalExecutionID) {
-			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.ExternalExecutionID})
-			break
-		}
-		now := s.now().UTC()
-		if request.Name == "external_execution.reserve" {
-			task := findTaskByPublicID(snapshot.Tasks, args.TaskID)
-			if task == nil {
-				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: fmt.Sprint(args.TaskID)})
-				break
-			}
-			existing := externalExecutionDomains(snapshot.ExternalExecutions, args.WorkspaceID)
-			provider := strings.ToLower(strings.TrimSpace(args.Provider))
-			if evaluation := domain.ValidateExternalExecutionLock(existing, task.ID, provider); evaluation.HasErrors() {
-				result.Errors = append(result.Errors, evaluation.Errors...)
-				break
-			}
-			attempt := 1
-			for _, value := range existing {
-				if value.TaskID == task.ID && value.Provider == provider && value.AttemptNumber >= attempt {
-					attempt = value.AttemptNumber + 1
-				}
-			}
-			execution, transitionErr := domain.ReserveExternalExecution(args.ExternalExecutionID, args.WorkspaceID, task.ID, args.ClientExecutionID, provider, args.ContextSnapshotHash, request.Envelope.ExecutedByActorID, attempt, now)
-			if transitionErr != nil {
-				result.Errors = append(result.Errors, Diagnostic{Code: violationCode(transitionErr), EntityID: args.ExternalExecutionID})
-				break
-			}
-			plan.ExternalExecutionCreate = &execution
-			plan.Events = []EventWrite{{Type: "external_execution.reserved", EntityType: "external_execution", EntityID: execution.ID, Payload: externalExecutionEventPayload(execution)}}
-			result.ProjectedDiff = externalExecutionProjection(execution)
-			break
-		}
-		existing := findExternalExecution(snapshot.ExternalExecutions, args.ExternalExecutionID)
-		if existing == nil {
-			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: args.ExternalExecutionID})
-			break
-		}
-		execution := domainExternalExecution(*existing, args.WorkspaceID)
-		var transitionErr error
-		eventType := ""
-		switch request.Name {
-		case "external_execution.attach":
-			execution, transitionErr = execution.Attach(args.ExternalID, args.ProviderInstanceID, args.HostID, args.TerminalHandle, now)
-			eventType = "external_execution.attached"
-		case "external_execution.mark_review":
-			execution, transitionErr = execution.MarkReview(now)
-			eventType = "external_execution.review_started"
-		case "external_execution.settle":
-			execution, transitionErr = execution.Settle(args.SettlementReason, now)
-			eventType = "external_execution.settled"
-		case "external_execution.mark_lost":
-			execution, transitionErr = execution.MarkLost(now)
-			eventType = "external_execution.marked_lost"
-		case "external_execution.reconnect":
-			execution, transitionErr = execution.Reconnect(args.ExternalID, args.ProviderInstanceID, args.HostID, args.TerminalHandle, now)
-			eventType = "external_execution.reconnected"
-		}
-		if transitionErr != nil {
-			result.Errors = append(result.Errors, Diagnostic{Code: violationCode(transitionErr), EntityID: args.ExternalExecutionID})
-			break
-		}
-		plan.ExternalExecutionUpdate = &execution
-		plan.Events = []EventWrite{{Type: eventType, EntityType: "external_execution", EntityID: execution.ID, Payload: externalExecutionEventPayload(execution)}}
-		result.ProjectedDiff = externalExecutionProjection(execution)
 	default:
 		return result, plan, &CommandError{Code: "invalid_request", Message: "unsupported command"}
 	}
@@ -1881,8 +1800,6 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 		target = &commitAttachArgs{}
 	case "git.observe":
 		target = &gitObserveArgs{}
-	case "external_execution.reserve", "external_execution.attach", "external_execution.mark_review", "external_execution.settle", "external_execution.mark_lost", "external_execution.reconnect":
-		target = &externalExecutionArgs{}
 	default:
 		return "", nil, &CommandError{Code: "invalid_request", Message: "unsupported command: " + name}
 	}
@@ -1973,8 +1890,6 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 	case *commitAttachArgs:
 		return v.WorkspaceID, *v, nil
 	case *gitObserveArgs:
-		return v.WorkspaceID, *v, nil
-	case *externalExecutionArgs:
 		return v.WorkspaceID, *v, nil
 	}
 	panic("unreachable")
@@ -2372,42 +2287,6 @@ func findRun(v []RunProjection, id string) *RunProjection {
 		}
 	}
 	return nil
-}
-
-func findExternalExecution(values []ExternalExecutionProjection, id string) *ExternalExecutionProjection {
-	for index := range values {
-		if values[index].ID == id {
-			return &values[index]
-		}
-	}
-	return nil
-}
-
-func domainExternalExecution(v ExternalExecutionProjection, workspaceID string) domain.ExternalExecution {
-	return domain.ExternalExecution{ID: v.ID, WorkspaceID: workspaceID, TaskID: v.TaskID, Provider: v.Provider, ExternalID: v.ExternalID, ProviderInstanceID: v.ProviderInstanceID, HostID: v.HostID, Status: domain.ExternalExecutionStatus(v.Status), AttemptNumber: v.AttemptNumber, ClientExecutionID: v.ClientExecutionID, ContextSnapshotHash: v.ContextSnapshotHash, LastTerminalHandle: v.LastTerminalHandle, StartedAt: v.StartedAt, LastObservedAt: v.LastObservedAt, SettledAt: v.SettledAt, SettlementReason: domain.ExternalExecutionSettlementReason(v.SettlementReason), CreatedByActorID: v.CreatedByActorID}
-}
-
-func externalExecutionDomains(values []ExternalExecutionProjection, workspaceID string) []domain.ExternalExecution {
-	result := make([]domain.ExternalExecution, 0, len(values))
-	for _, value := range values {
-		result = append(result, domainExternalExecution(value, workspaceID))
-	}
-	return result
-}
-
-func externalExecutionProjection(v domain.ExternalExecution) ExternalExecutionProjection {
-	return ExternalExecutionProjection{ID: v.ID, TaskID: v.TaskID, Provider: v.Provider, ExternalID: v.ExternalID, ProviderInstanceID: v.ProviderInstanceID, HostID: v.HostID, Status: string(v.Status), AttemptNumber: v.AttemptNumber, ClientExecutionID: v.ClientExecutionID, ContextSnapshotHash: v.ContextSnapshotHash, LastTerminalHandle: v.LastTerminalHandle, StartedAt: v.StartedAt, LastObservedAt: v.LastObservedAt, SettledAt: v.SettledAt, SettlementReason: string(v.SettlementReason), CreatedByActorID: v.CreatedByActorID}
-}
-
-func externalExecutionEventPayload(v domain.ExternalExecution) map[string]any {
-	payload := map[string]any{"externalExecutionId": v.ID, "taskId": v.TaskID, "provider": v.Provider, "status": v.Status}
-	if v.ExternalID != "" {
-		payload["externalId"] = v.ExternalID
-	}
-	if v.SettlementReason != "" {
-		payload["settlementReason"] = v.SettlementReason
-	}
-	return payload
 }
 
 func domainTask(v TaskProjection, workspaceID string) domain.Task {

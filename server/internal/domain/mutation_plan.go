@@ -53,12 +53,6 @@ var MutationPolicies = []MutationPolicy{
 	{Name: "gate.pass_task", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.task_passed"}, {Name: "gate.revoke_task_pass", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.task_pass_revoked"}, {Name: "gate.pass", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.passed"},
 	{Name: "run.start", Capability: "run:operate", EventType: "run.started"}, {Name: "run.heartbeat", Capability: "run:operate", OperationalNoEvent: true}, {Name: "run.succeed", Capability: "run:operate", EventType: "run.succeeded"}, {Name: "run.fail", Capability: "run:operate", EventType: "run.failed"}, {Name: "run.cancel", Capability: "run:operate", EventType: "run.cancelled"}, {Name: "run.interrupt", Capability: "run:operate", EventType: "run.interrupted"}, {Name: "run.correct", Capability: "run:operate", EventType: "run.corrected"},
 	{Name: "record.register", Capability: "record:operate", EventType: "record.registered"}, {Name: "record.attach_commit", Capability: "record:operate", EventType: "record.commit_attached"}, {Name: "commit.attach", Capability: "record:operate", EventType: "commit.attached"}, {Name: "git.observe", Capability: "record:operate", EventType: "git.observed"},
-	{Name: "external_execution.reserve", Capability: "workspace:operate", EventType: "external_execution.reserved"},
-	{Name: "external_execution.attach", Capability: "workspace:operate", EventType: "external_execution.attached"},
-	{Name: "external_execution.mark_review", Capability: "workspace:operate", EventType: "external_execution.review_started"},
-	{Name: "external_execution.settle", Capability: "workspace:operate", EventType: "external_execution.settled"},
-	{Name: "external_execution.mark_lost", Capability: "workspace:operate", EventType: "external_execution.marked_lost"},
-	{Name: "external_execution.reconnect", Capability: "workspace:operate", EventType: "external_execution.reconnected"},
 }
 
 type DomainMutationPlan struct {

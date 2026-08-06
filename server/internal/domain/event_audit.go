@@ -38,7 +38,6 @@ func buildEventEvidenceRules() []EventEvidenceRule {
 		"gate.created": {"gateId", "publicId", "fromPhaseId", "toPhaseId"}, "gate.task_attached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.task_detached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.entry_task_attached": {"gateId", "taskId", "selectionSource"}, "gate.entry_task_detached": {"gateId", "taskId", "selectionSource"}, "gate.task_passed": {"gateTaskId", "reason"}, "gate.task_pass_revoked": {"gateTaskId", "reason"}, "gate.passed": {"gateId", "conditions", "entryTasks", "humanApprovalAttestationId", "workspaceRevision", "decisionSnapshotHash"},
 		"run.started": {"runId", "taskId", "clientRunId", "kind"}, "run.succeeded": {"runId", "resultSummary"}, "run.failed": {"runId", "errorSummary"}, "run.cancelled": {"runId", "errorSummary"}, "run.interrupted": {"runId", "errorSummary"}, "run.corrected": {"runId", "previousStatus", "previousResultSummary", "previousErrorSummary", "previousEndedAt", "newStatus", "newResultSummary", "newErrorSummary", "newEndedAt", "reason"},
 		"record.registered": {"recordId", "taskId", "repositoryId", "relativePath"}, "record.commit_attached": {"recordId", "commitSha", "blobSha"}, "commit.attached": {"commitId", "taskId", "repositoryId", "commitSha", "relation"}, "git.observed": {"observationId", "runId", "repositoryId", "observedAt"},
-		"external_execution.reserved": {"externalExecutionId", "taskId", "provider", "status"}, "external_execution.attached": {"externalExecutionId", "taskId", "provider", "status", "externalId"}, "external_execution.review_started": {"externalExecutionId", "taskId", "provider", "status"}, "external_execution.settled": {"externalExecutionId", "taskId", "provider", "status", "settlementReason"}, "external_execution.marked_lost": {"externalExecutionId", "taskId", "provider", "status"}, "external_execution.reconnected": {"externalExecutionId", "taskId", "provider", "status", "externalId"},
 		"human_approval_attestation.recorded": {"action", "entityType", "entityId", "workspaceRevision", "approvedByActorId", "approvedCommandHash"},
 	}
 	rules := make([]EventEvidenceRule, 0, len(keys))
@@ -281,7 +280,6 @@ func eventEntityPayloadKey(eventType string) string {
 		"gate.created": "gateId", "gate.task_attached": "gateId", "gate.task_detached": "gateId", "gate.entry_task_attached": "gateId", "gate.entry_task_detached": "gateId", "gate.task_passed": "gateTaskId", "gate.task_pass_revoked": "gateTaskId", "gate.passed": "gateId",
 		"run.started": "runId", "run.succeeded": "runId", "run.failed": "runId", "run.cancelled": "runId", "run.interrupted": "runId", "run.corrected": "runId",
 		"record.registered": "recordId", "record.commit_attached": "recordId", "commit.attached": "commitId", "git.observed": "observationId",
-		"external_execution.reserved": "externalExecutionId", "external_execution.attached": "externalExecutionId", "external_execution.review_started": "externalExecutionId", "external_execution.settled": "externalExecutionId", "external_execution.marked_lost": "externalExecutionId", "external_execution.reconnected": "externalExecutionId",
 	}
 	return keys[eventType]
 }

@@ -74,8 +74,7 @@ var queryNames = map[string]bool{
 	"gate.status": true, "run.list": true, "record.list": true,
 	"event.list": true, "decision.list": true,
 	"backlog.list": true, "backlog.get": true,
-	"mutation-attempt.list":  true,
-	"external_execution.get": true, "external_execution.list": true, "external_execution.resolve_for_task": true,
+	"mutation-attempt.list": true,
 }
 
 var primaryArgument = map[string]string{
@@ -91,8 +90,6 @@ var primaryArgument = map[string]string{
 	"gate.pass_task": "gateTaskId", "gate.revoke_task_pass": "gateTaskId",
 	"run.start": "taskId", "run.heartbeat": "runId", "run.succeed": "runId", "run.fail": "runId", "run.cancel": "runId", "run.interrupt": "runId", "run.correct": "runId",
 	"record.register": "recordId", "record.attach_commit": "recordId",
-	"external_execution.get": "externalExecutionId", "external_execution.resolve_for_task": "taskId",
-	"external_execution.attach": "externalExecutionId", "external_execution.mark_review": "externalExecutionId", "external_execution.settle": "externalExecutionId", "external_execution.mark_lost": "externalExecutionId", "external_execution.reconnect": "externalExecutionId",
 }
 
 func Parse(args []string) (Invocation, error) {

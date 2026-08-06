@@ -42,13 +42,6 @@
     "terminal": ["succeeded", "failed", "interrupted", "cancelled"],
     "kinds": ["detailed_planning", "implementation", "independent_agent_review", "review_response", "completion_reporting"]
   },
-  "externalExecution": {
-    "providers": ["orca"],
-    "values": ["creating", "active", "review", "settled", "lost"],
-    "terminal": ["settled"],
-    "lockHolding": ["creating", "active", "review", "lost"],
-    "settlementReasons": ["completed", "abandoned", "rejected", "superseded", "creation_failed", "external_deleted_after_recovery"]
-  },
   "taskRecord": {
     "values": ["reported_uncommitted", "committed_unverified", "verified"],
     "types": ["detailed-plan", "handoff", "independent-agent-review", "review-response", "completion-report", "pilot-measurement"]
