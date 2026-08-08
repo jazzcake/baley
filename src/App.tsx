@@ -19,7 +19,7 @@ import { TaskSearch } from "./components/TaskSearch";
 import { laneColorMap } from "./components/lane-palette";
 import { LoginScreen, MCPConnectionApproval, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
 import { traceViewer } from "./debug/viewer-trace";
-import type { GateLinkKind, Task, WorkspaceFixture } from "./domain/model";
+import type { BacklogItem, GateLinkKind, Task, WorkspaceFixture } from "./domain/model";
 
 const nodeTypes = { task: TaskNode, gate: GateNode };
 const MIN_ZOOM = 0.55;
@@ -141,6 +141,7 @@ function WorkspaceViewer({
     return gate ? { kind: "gate", id: gate.id } : routeView;
   }, [graph.gates, routeView]);
   const selectedId = useMemo(() => new URLSearchParams(location.search).get("task") ?? undefined, [location.search]);
+  const selectedBacklogId = useMemo(() => new URLSearchParams(location.search).get("backlog") ?? undefined, [location.search]);
   const mcpConnectionId = useMemo(() => location.pathname.match(/\/mcp-connect\/([^/]+)$/)?.[1], [location.pathname]);
   const [layout, setLayout] = useState<GraphLayout | undefined>();
   const [layoutViewKey, setLayoutViewKey] = useState<string>();
@@ -261,6 +262,11 @@ function WorkspaceViewer({
     if (!stage) return;
     if (backlogListOpen) stage.setAttribute("inert", "");
     else stage.removeAttribute("inert");
+    window.requestAnimationFrame(() => traceViewer("backlog-list:rendered", {
+      open: backlogListOpen,
+      stageInert: stage.hasAttribute("inert"),
+      listPresent: Boolean(document.querySelector(".backlog-list")),
+    }));
   }, [backlogListOpen]);
   const nodes = useMemo<Node[]>(() => {
     const taskNodes: Node[] = graph.tasks.filter((task) => visible.has(task.id)).map((task) => ({
@@ -320,6 +326,7 @@ function WorkspaceViewer({
 
   const selectedTask = graph.tasks.find((task) => task.id === selectedId);
   const selectedGate = graph.gates.find((gate) => gate.id === selectedId);
+  const selectedBacklog = graph.backlogItems.find((item) => item.id === selectedBacklogId);
   const defaultLaneId = graph.lanes.find((lane) => lane.name === "Client")?.id ?? graph.lanes[0]?.id;
   const defaultGateId = defaultGateFocusId(graph);
   const workspaceBase = `/workspaces/${encodeURIComponent(workspaceId)}`;
@@ -339,6 +346,35 @@ function WorkspaceViewer({
       search: nextSelectedId ? `?task=${encodeURIComponent(nextSelectedId)}` : "",
     }, { replace: true });
   };
+  const setSelectedBacklog = (item: BacklogItem) => {
+    traceViewer("backlog:select", {
+      itemId: item.id,
+      publicId: item.publicId,
+      calculatedTarget: "backlog-inspector",
+      listOpen: backlogListOpen,
+    });
+    routeNavigate({ pathname: location.pathname, search: `?backlog=${encodeURIComponent(item.id)}` }, { replace: true });
+  };
+  const openBacklogList = (source: "canvas" | "header" | "rail") => {
+    traceViewer("backlog-list:open", {
+      source,
+      currentOpen: backlogListOpen,
+      calculatedOpen: true,
+      activeItems: graph.backlogItems.filter((item) => item.status === "active").length,
+    });
+    setBacklogListOpen(true);
+  };
+  const selectBacklogFromRail = (item: BacklogItem) => {
+    traceViewer("backlog-rail:item-click", {
+      itemId: item.id,
+      publicId: item.publicId,
+      calculatedListOpen: true,
+      calculatedInspector: "backlog-inspector",
+      currentListOpen: backlogListOpen,
+    });
+    setSelectedBacklog(item);
+    openBacklogList("rail");
+  };
   const navigate = (next: ViewSpec) => {
     const path = next.kind === "multi"
       ? workspaceBase
@@ -352,6 +388,7 @@ function WorkspaceViewer({
     setBacklogListOpen(false);
   };
   const closeBacklogList = () => {
+    traceViewer("backlog-list:close", { currentOpen: backlogListOpen, calculatedOpen: false });
     setBacklogListOpen(false);
     window.setTimeout(() => backlogExpandButtonRef.current?.focus(), 0);
   };
@@ -386,6 +423,7 @@ function WorkspaceViewer({
           <button className={view.kind === "gate" ? "active" : ""} disabled={!defaultGateId} onClick={() => defaultGateId && navigate({ kind: "gate", id: view.kind === "gate" ? view.id : defaultGateId })}>Gate focus</button>
         </nav>
         <div className="topbar-actions">
+          <button type="button" className="quiet-button" aria-label="Open full backlog" onClick={() => openBacklogList("header")}>Backlog</button>
           <WorkspaceAccessControls
             account={account}
             membership={membership}
@@ -404,18 +442,18 @@ function WorkspaceViewer({
             <div ref={graphStageRef} className="graph-stage" aria-hidden={backlogListOpen || undefined}>
               <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} onMoveEnd={(_, nextViewport) => traceCanvas("move:end", nextViewport)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
                 <Background color="#d8d6ce" gap={24} size={1} />
-                <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} laneColors={laneColors} onOpenBacklog={() => setBacklogListOpen(true)} setBacklogExpandButton={(node) => { backlogExpandButtonRef.current = node; }} /></ViewportPortal>
+                <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} laneColors={laneColors} onOpenBacklog={() => openBacklogList("canvas")} onSelectBacklog={selectBacklogFromRail} setBacklogExpandButton={(node) => { backlogExpandButtonRef.current = node; }} /></ViewportPortal>
                 <CanvasControls layout={layout} />
                 <Panel position="bottom-center" className="task-search-panel"><TaskSearch tasks={graph.tasks} onSelect={selectSearchResult} /></Panel>
                 <TaskFocusController request={taskFocusRequest} layout={layoutViewKey === canvasKey(view) ? layout : undefined} />
               </ReactFlow>
             </div>
-            {backlogListOpen && <BacklogList lanes={graph.lanes} items={graph.backlogItems} laneColors={laneColors} onClose={closeBacklogList} />}
+            {backlogListOpen && <BacklogList lanes={graph.lanes} items={graph.backlogItems} laneColors={laneColors} onClose={closeBacklogList} onSelect={setSelectedBacklog} />}
           </div>
         </div>
         {inspectorOpen && <div className="inspector-panel">
           <InspectorResizeHandle width={inspectorWidth} onWidth={setInspectorWidth} />
-          <Inspector fixture={graph} task={selectedTask} gateId={selectedGate?.id} onLane={(id) => navigate({ kind: "lane", id })} onGate={(id) => navigate({ kind: "gate", id })} />
+          <Inspector fixture={graph} task={selectedTask} backlog={selectedBacklog} gateId={selectedGate?.id} onLane={(id) => navigate({ kind: "lane", id })} onGate={(id) => navigate({ kind: "gate", id })} />
         </div>}
       </section>
       {mcpConnectionId && <MCPConnectionApproval
@@ -548,7 +586,11 @@ function InspectorResizeHandle({ width, onWidth }: { width: number; onWidth: (wi
   />;
 }
 
-function Inspector({ fixture, task, gateId, onLane, onGate }: { fixture: WorkspaceFixture; task?: Task; gateId?: string; onLane: (id: string) => void; onGate: (id: string) => void }) {
+function Inspector({ fixture, task, backlog, gateId, onLane, onGate }: { fixture: WorkspaceFixture; task?: Task; backlog?: BacklogItem; gateId?: string; onLane: (id: string) => void; onGate: (id: string) => void }) {
+  if (backlog) {
+    const lane = fixture.lanes.find((item) => item.id === backlog.laneId);
+    return <aside className="inspector"><div className="inspector-kicker">BACKLOG INSPECTOR</div><div className="inspector-id">BACKLOG B#{backlog.publicId}</div><h2>{backlog.title}</h2><span className={`status-pill status-${backlog.status}`}>{backlog.status}</span><p>{backlog.description}</p><Section title="Context"><button className="text-link" onClick={() => lane && onLane(lane.id)}>{lane?.name ?? "Unknown"} lane</button><span className="meta-value">Phase unassigned</span></Section><Section title="Planning"><span className="meta-value">Position {backlog.position ?? "unranked"}</span>{backlog.promotedTaskPublicId && <span className="evidence-copy">Promoted to Task #{backlog.promotedTaskPublicId}</span>}</Section><section className="command-hint"><strong>LLM command only</strong><p>Use Baley Skill commands to update backlog B#{backlog.publicId}.</p></section></aside>;
+  }
   if (gateId) {
     const gate = fixture.gates.find((item) => item.id === gateId)!;
     const links = fixture.gateLinks.filter((link) => link.gateId === gateId);
@@ -653,7 +695,7 @@ function CanvasControls({ layout }: { layout?: GraphLayout }) {
   </Panel>;
 }
 
-function CanvasOverlay({ graph, layout, view, navigate, laneColors, onOpenBacklog, setBacklogExpandButton }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void; laneColors: Record<string, string>; onOpenBacklog: () => void; setBacklogExpandButton: React.RefCallback<HTMLButtonElement> }) {
+function CanvasOverlay({ graph, layout, view, navigate, laneColors, onOpenBacklog, onSelectBacklog, setBacklogExpandButton }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void; laneColors: Record<string, string>; onOpenBacklog: () => void; onSelectBacklog: (item: BacklogItem) => void; setBacklogExpandButton: React.RefCallback<HTMLButtonElement> }) {
   const focusedLaneId = view.kind === "lane" ? view.id : undefined;
   const band = focusedLaneId && layout ? laneBandRect(layout, focusedLaneId) : undefined;
   return <div className="graph-overlay" style={{ width: layout?.width, height: layout?.height }}>
@@ -670,10 +712,10 @@ function CanvasOverlay({ graph, layout, view, navigate, laneColors, onOpenBacklo
       return <div key={`${gate.id}-corridor`} className="gate-corridor" style={{ left: previousPhase.x + previousPhase.width, top: 0, width: nextPhase.x - (previousPhase.x + previousPhase.width), height: layout.height }} />;
     })}
     {layout && view.kind !== "gate" && <LaneAnchorColumn lanes={graph.lanes} layout={layout} />}
-    {layout && view.kind !== "gate" && <BacklogRail lanes={graph.lanes} items={graph.backlogItems} layout={layout} focusedLaneId={focusedLaneId} laneColors={laneColors} onExpand={onOpenBacklog} expandButtonRef={setBacklogExpandButton} />}
+    {layout && view.kind !== "gate" && <BacklogRail lanes={graph.lanes} items={graph.backlogItems} layout={layout} focusedLaneId={focusedLaneId} laneColors={laneColors} onExpand={onOpenBacklog} onSelect={onSelectBacklog} expandButtonRef={setBacklogExpandButton} />}
     {view.kind !== "gate" && graph.lanes.map((lane, index) => {
       const focused = view.kind === "lane" && lane.id === view.id;
-      return <button type="button" key={lane.id} className={`lane-label ${focused ? "focused" : ""} ${view.kind === "lane" && !focused ? "dimmed" : ""}`} aria-label={`Open ${lane.name} lane`} aria-current={focused ? "true" : undefined} style={{ top: layout ? laneLabelTop(layout, lane.id) : 0, "--lane-color": laneColors[lane.id] } as React.CSSProperties} onClick={() => navigate({ kind: "lane", id: lane.id })}><span>LANE {String(index + 1).padStart(2, "0")}</span><strong>{lane.name}</strong><small>{lane.lifecycle}</small><ChevronRight size={15} /></button>;
+      return <button type="button" key={lane.id} className={`lane-label ${focused ? "focused" : ""} ${view.kind === "lane" && !focused ? "dimmed" : ""}`} aria-label={`Open ${lane.name} lane`} aria-current={focused ? "true" : undefined} style={{ top: layout ? laneLabelTop(layout, lane.id) : 0, "--lane-color": laneColors[lane.id] } as React.CSSProperties} onClick={() => navigate({ kind: "lane", id: lane.id })}><span className="lane-number">LANE {String(index + 1).padStart(2, "0")}</span><strong className="lane-name">{lane.name}</strong><small className="lane-lifecycle">{lane.lifecycle}</small><ChevronRight size={15} /></button>;
     })}
   </div>;
 }

@@ -36,7 +36,7 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
    - Gate pass and Gate Task pass/revoke target the current active Phase's outgoing Gate.
    - only detailed-planning Runs start in a future inactive Phase.
    - the requested action does not exercise human-only authority without an explicit matching `humanApprovalAttestation`.
-9. Show a concise preview for user-requested structural changes. Run lifecycle and Task Record registration happen automatically without repeated confirmation.
+9. For routine Operator mutations, treat the user's clear request as authorization: prepare the concise preview internally, execute immediately, and report the result without asking a confirmation question. This includes Task and Backlog create/update/move/reorder, normal dependency changes, Run lifecycle, and Task Record registration. Ask for a human decision only for the human-only authority boundaries below.
 10. Call the Baley MCP tool only when one is available and any required human approval has been obtained.
 11. If no Baley command tool is available, stop after the preview. Do not patch fixtures, application source, or a database as a substitute.
 12. Report the resulting Task IDs and Event IDs after execution.
@@ -56,7 +56,7 @@ Treat multiple predecessor/successor edges and disconnected DAG components as va
 
 ## Write Requests
 
-Translate natural language into a typed command and preview it.
+Translate natural language into a typed command. For routine Operator writes, create the required preview internally and execute seamlessly; do not expose it as a blocking approval step. Keep the preview as an audit/checkpoint artifact and report the resulting IDs and Events after execution.
 
 For lane Backlog intake, do not ask for or infer a Phase. Resolve only the target
 lane and use `backlog.create`; if the lane cannot be established from context,

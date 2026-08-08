@@ -99,7 +99,7 @@ Inspector에서 alias와 내부 gateId를 함께 보여준다.
 정규형 `G#[1-9][0-9]*`은 public reference 전용 namespace다. 새 내부 `gateId`로
 사용할 수 없고, 존재하지 않는 `G#<n>`은 내부 ID나 alias로 fallback하지 않는다.
 
-새 Task는 `task.create`의 `predecessorTaskIds`와 `successorTaskIds`로 초기 관계까지 같은 transaction에서 만든다. Task를 먼저 만들고 나중에 연결하다 실패하는 부분 성공을 피한다.
+새 Task는 `task.create`의 `predecessorTaskIds`와 `successorTaskIds`로 초기 관계까지 같은 transaction에서 만든다. 두 집합 사이에 기존 direct edge가 있으면 새 Task가 그 route에 삽입된 것으로 해석하여 기존 edge를 제거하고 새 두 edge로 원자적으로 대체한다. Task를 먼저 만들고 나중에 연결하다 실패하는 부분 성공을 피한다.
 
 후행 Task와 Gate 조건이 없는 경로는 `task.set_terminal`의 사유가 없으면 `dangling_path` warning이다. Operator는 후행 연결, Gate 합류 또는 intentional leaf 중 하나를 선택한다.
 

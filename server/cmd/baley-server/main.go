@@ -126,7 +126,9 @@ func main() {
 	}
 	addr := env("BALEY_HTTP_ADDR", "127.0.0.1:8080")
 	host, _, err := net.SplitHostPort(addr)
-	if err != nil || !(host == "127.0.0.1" || host == "localhost" || host == "::1") {
+	isLoopback := host == "127.0.0.1" || host == "localhost" || host == "::1"
+	allowContainerBind := env("BALEY_ALLOW_CONTAINER_BIND", "false") == "true"
+	if err != nil || (!isLoopback && !(allowContainerBind && host == "0.0.0.0")) {
 		log.Fatal("BALEY_HTTP_ADDR must bind to loopback")
 	}
 	service := application.NewService(repo)

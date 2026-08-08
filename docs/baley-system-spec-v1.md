@@ -384,7 +384,7 @@ pending → in_progress → implemented → confirmed
 
 `task.block`은 업무상 blocker를 기록하는 metadata command다. 새 `implementation`과 `review_response` Run 및 `task.report_implemented`를 차단하지만, 상세계획·독립 Agent 리뷰·완료보고 Run과 일반 조회는 허용한다. 이미 실행 중인 Run은 자동 중단하지 않는다. `task.unblock`은 blocker를 명시적으로 해제하고 두 command 모두 사유와 Event를 남긴다. Gate readiness를 직접 바꾸지는 않지만 blocked Task가 `confirmed`까지 진행하지 못하므로 간접적으로 영향을 줄 수 있다.
 
-`task.update`는 title, description, current summary와 next action만 바꾼다. 상태는 전용 lifecycle command로만 바꾸며 Lane, Phase와 parent 이동은 V1에서 지원하지 않는다. `task.create`는 선택적 `parentTaskId`, 복수 `predecessorTaskIds`, 복수 `successorTaskIds`와 `terminalReason`을 받아 Task 생성과 초기 관계를 한 transaction에서 검증한다. 의도적인 독립 경로 종료는 이후 별도 `task.set_terminal`로도 기록할 수 있다.
+`task.update`는 title과 description만 바꾼다. 둘 중 하나는 반드시 제공해야 하며 상태·Lane·Phase·parent·summary·next action은 이 command로 바꿀 수 없다. pending, in_progress, implemented Task만 수정할 수 있고 confirmed·discarded Task는 후속 Task를 만들어야 한다. 일반 Operator command로 preview→execute와 revision CAS를 거치며 사람 승인은 필요하지 않다. `task.updated` append-only Event는 변경 전후의 title과 description을 모두 기록한다. `task.create`는 선택적 `parentTaskId`, 복수 `predecessorTaskIds`, 복수 `successorTaskIds`와 `terminalReason`을 받아 Task 생성과 초기 관계를 한 transaction에서 검증한다. 새 Task에 predecessor와 successor를 함께 지정해 기존 direct dependency 사이에 삽입하면, 해당 predecessor→successor direct edge는 같은 transaction에서 자동 제거하고 predecessor→새 Task→successor로 대체한다. 의도적인 독립 경로 종료는 이후 별도 `task.set_terminal`로도 기록할 수 있다.
 
 ### 8.4 구현완료 판단
 

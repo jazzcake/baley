@@ -1,0 +1,20 @@
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY server/go.mod server/go.sum ./
+RUN go mod download
+COPY server/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/baley-server ./cmd/baley-server
+
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates
+WORKDIR /app
+COPY --from=build /out/baley-server /app/baley-server
+COPY server/migrations /app/migrations
+COPY docker/server-entrypoint.sh /usr/local/bin/baley-server-entrypoint
+RUN chmod 0755 /usr/local/bin/baley-server-entrypoint && mkdir -p /var/lib/baley
+ENV BALEY_ENV=development \
+    BALEY_AUTH_MODE=enforced \
+    BALEY_ALLOW_CONTAINER_BIND=true \
+    BALEY_HTTP_ADDR=0.0.0.0:8080 \
+    BALEY_MIGRATIONS_DIR=/app/migrations
+ENTRYPOINT ["/usr/local/bin/baley-server-entrypoint"]

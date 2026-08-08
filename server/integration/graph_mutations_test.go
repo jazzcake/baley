@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -51,7 +52,7 @@ func TestTaskAndDependencyMutationsAgainstPostgres(t *testing.T) {
 	}
 	execute("task.block", map[string]any{"workspaceId": wid, "taskId": 110, "reason": "Waiting for an external fixture"}, "task-block", 2)
 	execute("task.unblock", map[string]any{"workspaceId": wid, "taskId": 110, "reason": "Fixture is available"}, "task-unblock", 3)
-	execute("task.update", map[string]any{"workspaceId": wid, "taskId": 110, "title": "User acceptance", "description": "Validate the Viewer", "currentSummary": "Ready to execute", "nextAction": "Start validation"}, "task-update", 4)
+	execute("task.update", map[string]any{"workspaceId": wid, "taskId": 110, "title": "User acceptance", "description": "Validate the Viewer"}, "task-update", 4)
 	execute("task.set_terminal", map[string]any{"workspaceId": wid, "taskId": 110, "reason": "Intentional validation leaf"}, "task-terminal", 5)
 	_, err = service.Execute(ctx, request("dependency.connect", map[string]any{"workspaceId": wid, "predecessorTaskId": 110, "successorTaskId": 101}, "terminal-conflict", 6))
 	assertCode(t, err, domain.CodeTerminalPathConflict)
@@ -65,6 +66,22 @@ func TestTaskAndDependencyMutationsAgainstPostgres(t *testing.T) {
 	task := taskByPublicID(snapshot.Tasks, 110)
 	if snapshot.Workspace.Revision != 7 || len(snapshot.Dependencies) != 3 || task == nil || task.TerminalReason != "" || task.Title != "User acceptance" {
 		t.Fatalf("graph mutation snapshot mismatch: %#v", snapshot)
+	}
+	events, err := repo.Events(ctx, wid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var taskUpdated map[string]any
+	for _, event := range events {
+		if event.EventType == "task.updated" && event.EntityID == task.ID {
+			if err := json.Unmarshal(event.Payload, &taskUpdated); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if taskUpdated == nil || taskUpdated["before"] == nil || taskUpdated["after"] == nil {
+		t.Fatalf("task.update audit does not retain before/after content: %#v", taskUpdated)
 	}
 	execute("phase.create", map[string]any{"workspaceId": wid, "phaseId": "deploy", "name": "Deploy"}, "phase-create", 7)
 	if _, err = repo.Pool.Exec(ctx, "UPDATE workspace_counters SET next_task_public_id=150 WHERE workspace_id=$1", wid); err != nil {

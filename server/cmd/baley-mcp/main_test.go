@@ -287,6 +287,89 @@ func TestTaskCreatePreviewAndExecuteForwardTypedPayloads(t *testing.T) {
 	}
 }
 
+func TestTaskUpdatePreviewAndExecuteForwardOnlyContentFields(t *testing.T) {
+	type capturedRequest struct {
+		path string
+		body map[string]any
+	}
+	requests := make(chan capturedRequest, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests <- capturedRequest{path: r.URL.Path, body: body}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"commandHash":"sha256:test","workspaceRevision":12}`))
+	}))
+	defer server.Close()
+
+	c := &client{base: server.URL, http: server.Client()}
+	description := "Updated description"
+	fields := taskUpdateFields{WorkspaceID: "workspace", TaskID: 22, Description: &description}
+	_, _, err := c.taskUpdatePreview(context.Background(), nil, taskUpdatePreviewInput{taskUpdateFields: fields, previewEnvelope: previewEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "preview-key", ExecutedByActorID: "agent"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := <-requests
+	arguments := preview.body["arguments"].(map[string]any)
+	if preview.path != "/v1/commands/preview" || preview.body["name"] != "task.update" || arguments["taskId"] != float64(22) || arguments["description"] != description || arguments["title"] != nil {
+		t.Fatalf("task.update preview was not limited to content fields: %#v", preview)
+	}
+	_, _, err = c.taskUpdateExecute(context.Background(), nil, taskUpdateExecuteInput{taskUpdateFields: fields, mutationExecuteEnvelope: mutationExecuteEnvelope{automaticEnvelope: automaticEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "execute-key", ExecutedByActorID: "agent"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execute := <-requests
+	if execute.path != "/v1/commands/execute" || execute.body["name"] != "task.update" {
+		t.Fatalf("task.update execute was not forwarded: %#v", execute)
+	}
+}
+
+func TestDependencyPatchPreviewAndExecuteForwardAtomicRewrite(t *testing.T) {
+	type capturedRequest struct {
+		path string
+		body map[string]any
+	}
+	requests := make(chan capturedRequest, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests <- capturedRequest{path: r.URL.Path, body: body}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"commandHash":"sha256:test","workspaceRevision":13}`))
+	}))
+	defer server.Close()
+
+	c := &client{base: server.URL, http: server.Client()}
+	fields := dependencyPatchFields{WorkspaceID: "workspace", Remove: []dependencyRefInput{{PredecessorTaskID: 16, SuccessorTaskID: 17}, {PredecessorTaskID: 16, SuccessorTaskID: 13}}}
+	preview := dependencyPatchPreviewInput{dependencyPatchFields: fields, previewEnvelope: previewEnvelope{ExpectedWorkspaceRevision: 12, IdempotencyKey: "preview-key", ExecutedByActorID: "agent"}}
+	if result, _, err := c.dependencyPatchPreview(context.Background(), nil, preview); err != nil || result.IsError {
+		t.Fatalf("dependency patch preview failed: %#v %v", result, err)
+	}
+	previewRequest := <-requests
+	if previewRequest.path != "/v1/commands/preview" || previewRequest.body["name"] != "dependency.patch" {
+		t.Fatalf("dependency preview routing mismatch: %#v", previewRequest)
+	}
+	arguments := previewRequest.body["arguments"].(map[string]any)
+	if _, exists := arguments["add"]; exists || len(arguments["remove"].([]any)) != 2 {
+		t.Fatalf("dependency rewrite arguments mismatch: %#v", arguments)
+	}
+
+	execute := dependencyPatchExecuteInput{dependencyPatchFields: fields, mutationExecuteEnvelope: mutationExecuteEnvelope{automaticEnvelope: automaticEnvelope{ExpectedWorkspaceRevision: 12, IdempotencyKey: "execute-key", ExecutedByActorID: "agent"}}}
+	if result, _, err := c.dependencyPatchExecute(context.Background(), nil, execute); err != nil || result.IsError {
+		t.Fatalf("dependency patch execute failed: %#v %v", result, err)
+	}
+	executeRequest := <-requests
+	if executeRequest.path != "/v1/commands/execute" || executeRequest.body["name"] != "dependency.patch" {
+		t.Fatalf("dependency execute routing mismatch: %#v", executeRequest)
+	}
+}
+
 func TestTaskCreateExecuteOmitsEmptyOptionalWarningEvidence(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

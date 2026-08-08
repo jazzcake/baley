@@ -580,15 +580,42 @@ func TestPlanTaskCreateBuildsInitialRelationsAtomically(t *testing.T) {
 	}
 }
 
+func TestInsertTaskIntoRoutesReplacesOnlyExistingDirectRoute(t *testing.T) {
+	workspace := Workspace{ID: "workspace", State: WorkspaceActive}
+	tasks := []Task{
+		{ID: "a", WorkspaceID: workspace.ID, LaneID: "lane", PhaseID: "phase", Status: TaskConfirmed},
+		{ID: "b", WorkspaceID: workspace.ID, LaneID: "lane", PhaseID: "phase", Status: TaskPending},
+		{ID: "unrelated", WorkspaceID: workspace.ID, LaneID: "lane", PhaseID: "phase", Status: TaskPending},
+	}
+	graph, evaluation := NewWorkspaceGraph(tasks, []Dependency{{FromTaskID: "a", ToTaskID: "b"}, {FromTaskID: "a", ToTaskID: "unrelated"}}, nil)
+	if evaluation.HasErrors() {
+		t.Fatal(evaluation)
+	}
+	patch := graph.InsertTaskIntoRoutes("c", DependencyPatch{Add: []Dependency{{FromTaskID: "a", ToTaskID: "c"}, {FromTaskID: "c", ToTaskID: "b"}}})
+	if len(patch.Remove) != 1 || patch.Remove[0] != (Dependency{FromTaskID: "a", ToTaskID: "b"}) {
+		t.Fatalf("expected only replaced direct route to be removed: %#v", patch.Remove)
+	}
+	inserted := Task{ID: "c", PublicID: 3, WorkspaceID: workspace.ID, LaneID: "lane", PhaseID: "phase", PhasePosition: 1, Title: "Inserted", Status: TaskPending}
+	plan := PlanTaskCreate(workspace, Lane{ID: "lane", WorkspaceID: workspace.ID, State: LaneActive}, Phase{ID: "phase", WorkspaceID: workspace.ID, Position: 1, State: PhaseActive}, graph, inserted, patch)
+	if plan.Evaluation.HasErrors() {
+		t.Fatalf("route insertion should remain valid: %+v", plan.Evaluation)
+	}
+	relations := plan.ProjectedDiff.(map[string]any)["relations"].(DependencyPatchDiff)
+	if len(relations.RemovedDependencies) != 1 || relations.RemovedDependencies[0] != (Dependency{FromTaskID: "a", ToTaskID: "b"}) {
+		t.Fatalf("removed route missing from projected diff: %#v", relations)
+	}
+}
+
 func TestPlanTaskUpdateProtectsTerminalTask(t *testing.T) {
 	task := Task{ID: "task", Title: "old", Status: TaskInProgress}
 	workspace := Workspace{ID: task.WorkspaceID, State: WorkspaceActive}
-	next, plan := PlanTaskUpdate(workspace, task, "new", "description", "summary", "next")
+	title, description := "new", "description"
+	next, plan := PlanTaskUpdate(workspace, task, &title, &description)
 	if plan.Evaluation.HasErrors() || next.Title != "new" || plan.Events[0].Type != "task.updated" {
 		t.Fatalf("update failed: %+v", plan)
 	}
 	task.Status = TaskConfirmed
-	_, plan = PlanTaskUpdate(workspace, task, "new", "", "", "")
+	_, plan = PlanTaskUpdate(workspace, task, &title, nil)
 	if !plan.Evaluation.HasErrors() {
 		t.Fatal("terminal Task updated")
 	}

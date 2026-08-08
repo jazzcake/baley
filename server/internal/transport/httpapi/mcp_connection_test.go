@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestMCPConnectionBrokerRequiresSecretAndConsumesApprovedToken(t *testing.T) {
@@ -23,5 +24,18 @@ func TestMCPConnectionBrokerRequiresSecretAndConsumesApprovedToken(t *testing.T)
 	}
 	if _, _, err = broker.Poll(view.ID, secret); !errors.Is(err, errMCPConnectionNotFound) {
 		t.Fatalf("token should only be delivered once: %v", err)
+	}
+}
+
+func TestMCPConnectionBrokerKeepsApprovalRequestForThirtyMinutes(t *testing.T) {
+	broker := NewMCPConnectionBroker()
+	now := time.Date(2026, 8, 8, 6, 30, 0, 0, time.UTC)
+	broker.now = func() time.Time { return now }
+	view, _, err := broker.Create("410f335e-ddb2-443f-be3c-7d1d18ccd534", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := view.ExpiresAt.Sub(now); got != 30*time.Minute {
+		t.Fatalf("approval TTL = %s, want 30m", got)
 	}
 }

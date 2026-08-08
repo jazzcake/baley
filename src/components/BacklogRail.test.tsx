@@ -30,19 +30,19 @@ describe("live lane backlog rail", () => {
   afterEach(cleanup);
 
   it("renders ordered phase-unassigned items for every lane", () => {
-    const { container } = render(<BacklogRail lanes={lanes} items={items} layout={layout} laneColors={{ client: "#579bfc", server: "#00a887" }} onExpand={() => undefined} />);
+    const { container } = render(<BacklogRail lanes={lanes} items={items} layout={layout} laneColors={{ client: "#579bfc", server: "#00a887" }} onExpand={() => undefined} onSelect={() => undefined} />);
 
     expect(container.querySelector(".backlog-rail-column-heading")?.classList.contains("graph-column-heading")).toBe(true);
     expect(container.querySelector("[data-lane-id='client']")).toBeTruthy();
     expect(container.querySelector("[data-lane-id='server']")).toBeTruthy();
     expect(container.textContent).toContain("PHASE 미정");
-    expect(container.querySelectorAll(".backlog-rail-item")).toHaveLength(3);
-    expect(container.textContent).toContain("+1 MORE");
+    expect(container.querySelectorAll(".backlog-rail-item")).toHaveLength(4);
+    expect(container.textContent).not.toContain("+1 MORE");
     expect(container.textContent).toContain("B#1");
   });
 
   it("dims rails outside the focused lane", () => {
-    const { container } = render(<BacklogRail lanes={lanes} items={items} layout={layout} focusedLaneId="client" laneColors={{}} onExpand={() => undefined} />);
+    const { container } = render(<BacklogRail lanes={lanes} items={items} layout={layout} focusedLaneId="client" laneColors={{}} onExpand={() => undefined} onSelect={() => undefined} />);
 
     expect(container.querySelector("[data-lane-id='client']")?.classList.contains("dimmed")).toBe(false);
     expect(container.querySelector("[data-lane-id='server']")?.classList.contains("dimmed")).toBe(true);
@@ -50,15 +50,23 @@ describe("live lane backlog rail", () => {
 
   it("opens the expanded backlog list from the rail heading", () => {
     const onExpand = vi.fn();
-    render(<BacklogRail lanes={lanes} items={items} layout={layout} laneColors={{}} onExpand={onExpand} />);
+    render(<BacklogRail lanes={lanes} items={items} layout={layout} laneColors={{}} onExpand={onExpand} onSelect={() => undefined} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Open backlog list" }));
     expect(onExpand).toHaveBeenCalledOnce();
   });
 
+  it("opens a rail item as a selected backlog", () => {
+    const onSelect = vi.fn();
+    render(<BacklogRail lanes={lanes} items={items} layout={layout} laneColors={{}} onExpand={() => undefined} onSelect={onSelect} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open backlog B#2" }));
+    expect(onSelect).toHaveBeenCalledWith(items[1]);
+  });
+
   it("renders every live item by lane in list mode and returns to the graph", () => {
     const onClose = vi.fn();
-    render(<BacklogList lanes={lanes} items={items} laneColors={{}} onClose={onClose} />);
+    render(<BacklogList lanes={lanes} items={items} laneColors={{}} onClose={onClose} onSelect={() => undefined} />);
 
     expect(screen.getByRole("heading", { name: "Lane backlogs" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Client" })).toBeTruthy();
@@ -70,9 +78,17 @@ describe("live lane backlog rail", () => {
 
   it("closes list mode from its button", () => {
     const onClose = vi.fn();
-    render(<BacklogList lanes={lanes} items={items} laneColors={{}} onClose={onClose} />);
+    render(<BacklogList lanes={lanes} items={items} laneColors={{}} onClose={onClose} onSelect={() => undefined} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Back to graph" }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("selects a backlog item for the Inspector", () => {
+    const onSelect = vi.fn();
+    render(<BacklogList lanes={lanes} items={items} laneColors={{}} onClose={() => undefined} onSelect={onSelect} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open backlog B#2" }));
+    expect(onSelect).toHaveBeenCalledWith(items[1]);
   });
 });

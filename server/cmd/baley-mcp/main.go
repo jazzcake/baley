@@ -69,6 +69,37 @@ type taskCreateExecuteInput struct {
 	ProceedReason            string   `json:"proceedReason,omitempty"`
 	automaticEnvelope
 }
+type taskUpdateFields struct {
+	WorkspaceID string  `json:"workspaceId"`
+	TaskID      int     `json:"taskId"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+type taskUpdatePreviewInput struct {
+	taskUpdateFields
+	previewEnvelope
+}
+type taskUpdateExecuteInput struct {
+	taskUpdateFields
+	mutationExecuteEnvelope
+}
+type dependencyRefInput struct {
+	PredecessorTaskID int `json:"predecessorTaskId"`
+	SuccessorTaskID   int `json:"successorTaskId"`
+}
+type dependencyPatchFields struct {
+	WorkspaceID string               `json:"workspaceId"`
+	Add         []dependencyRefInput `json:"add,omitempty"`
+	Remove      []dependencyRefInput `json:"remove,omitempty"`
+}
+type dependencyPatchPreviewInput struct {
+	dependencyPatchFields
+	previewEnvelope
+}
+type dependencyPatchExecuteInput struct {
+	dependencyPatchFields
+	mutationExecuteEnvelope
+}
 type backlogInput struct {
 	WorkspaceID     string `json:"workspaceId"`
 	BacklogPublicID int    `json:"backlogPublicId"`
@@ -528,6 +559,10 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_mode_escalate_execute", Description: "Execute an approved monotonic acceptance escalation"}, c.acceptanceModeEscalateExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_preview", Description: "Preview atomic Task creation and initial relationships without writing"}, c.taskCreatePreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_execute", Description: "Create a Task and its initial relationships after reviewing the preview"}, c.taskCreateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_update_preview", Description: "Preview changing a Task title and/or description without writing"}, c.taskUpdatePreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_update_execute", Description: "Update a non-terminal Task title and/or description after preview"}, c.taskUpdateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_dependency_patch_preview", Description: "Preview an atomic dependency graph rewrite without writing"}, c.dependencyPatchPreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_dependency_patch_execute", Description: "Atomically apply dependency additions and removals after preview"}, c.dependencyPatchExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_create_preview", Description: "Preview creating a phase-free lane Backlog item"}, c.backlogCreatePreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_create_execute", Description: "Create a phase-free lane Backlog item"}, c.backlogCreateExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_update_preview", Description: "Preview updating an active Backlog item"}, c.backlogUpdatePreview)
@@ -861,6 +896,38 @@ func (c *client) taskCreateExecute(ctx context.Context, _ *mcp.CallToolRequest, 
 		envelope["proceedReason"] = in.ProceedReason
 	}
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.create", taskCreateArguments(in.taskCreateFields), envelope))
+}
+func taskUpdateArguments(in taskUpdateFields) map[string]any {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID}
+	if in.Title != nil {
+		arguments["title"] = *in.Title
+	}
+	if in.Description != nil {
+		arguments["description"] = *in.Description
+	}
+	return arguments
+}
+func (c *client) taskUpdatePreview(ctx context.Context, _ *mcp.CallToolRequest, in taskUpdatePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("task.update", taskUpdateArguments(in.taskUpdateFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) taskUpdateExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskUpdateExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.update", taskUpdateArguments(in.taskUpdateFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
+}
+func dependencyPatchArguments(in dependencyPatchFields) map[string]any {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID}
+	if in.Add != nil {
+		arguments["add"] = in.Add
+	}
+	if in.Remove != nil {
+		arguments["remove"] = in.Remove
+	}
+	return arguments
+}
+func (c *client) dependencyPatchPreview(ctx context.Context, _ *mcp.CallToolRequest, in dependencyPatchPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("dependency.patch", dependencyPatchArguments(in.dependencyPatchFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) dependencyPatchExecute(ctx context.Context, _ *mcp.CallToolRequest, in dependencyPatchExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("dependency.patch", dependencyPatchArguments(in.dependencyPatchFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
 }
 func backlogArguments(in backlogMutationFields) map[string]any {
 	out := map[string]any{"workspaceId": in.WorkspaceID}

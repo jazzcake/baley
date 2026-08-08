@@ -791,6 +791,12 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 			_, err = tx.Exec(ctx, `INSERT INTO task_acceptance_assignments(workspace_id,id,task_id,assignment_version,requested_mode,effective_mode,policy_version,evidence_profile_id,reason)
 				VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''))`, wid, assignment.ID, task.ID, assignment.Version, assignment.RequestedMode, assignment.EffectiveMode, assignment.PolicyVersion, assignment.EvidenceProfileID, assignment.Reason)
 		}
+		for _, edge := range plan.DependencyRemove {
+			if err != nil {
+				break
+			}
+			_, err = tx.Exec(ctx, "DELETE FROM task_dependencies WHERE workspace_id=$1 AND from_task_id=$2 AND to_task_id=$3", wid, edge.FromTaskID, edge.ToTaskID)
+		}
 		for _, edge := range plan.DependencyAdd {
 			if err != nil {
 				break
@@ -857,6 +863,12 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		if err == nil {
 			_, err = tx.Exec(ctx, `INSERT INTO task_acceptance_assignments(workspace_id,id,task_id,assignment_version,requested_mode,effective_mode,policy_version,evidence_profile_id,reason)
 				VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''))`, wid, assignment.ID, task.ID, assignment.Version, assignment.RequestedMode, assignment.EffectiveMode, assignment.PolicyVersion, assignment.EvidenceProfileID, assignment.Reason)
+		}
+		for _, edge := range plan.DependencyRemove {
+			if err != nil {
+				break
+			}
+			_, err = tx.Exec(ctx, "DELETE FROM task_dependencies WHERE workspace_id=$1 AND from_task_id=$2 AND to_task_id=$3", wid, edge.FromTaskID, edge.ToTaskID)
 		}
 		for _, edge := range plan.DependencyAdd {
 			if err != nil {

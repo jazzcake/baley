@@ -36,15 +36,20 @@ type Task struct {
 	ImplementedAssessment string
 }
 
-func (t Task) Update(title, description, currentSummary, nextAction string) (Task, error) {
-	if t.Status == TaskConfirmed || t.Status == TaskDiscarded || strings.TrimSpace(title) == "" {
+func (t Task) Update(title, description *string) (Task, error) {
+	if title == nil && description == nil || (t.Status != TaskPending && t.Status != TaskInProgress && t.Status != TaskImplemented) {
 		return t, &Violation{Code: CodeInvalidStateTransition}
 	}
 	next := t
-	next.Title = strings.TrimSpace(title)
-	next.Description = strings.TrimSpace(description)
-	next.CurrentSummary = strings.TrimSpace(currentSummary)
-	next.NextAction = strings.TrimSpace(nextAction)
+	if title != nil {
+		next.Title = strings.TrimSpace(*title)
+		if next.Title == "" {
+			return t, &Violation{Code: CodeInvalidStateTransition}
+		}
+	}
+	if description != nil {
+		next.Description = strings.TrimSpace(*description)
+	}
 	return next, nil
 }
 

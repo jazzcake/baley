@@ -34,13 +34,11 @@ type taskReportImplementedArgs struct {
 	Assessment  string `json:"assessment"`
 }
 type taskMutationArgs struct {
-	WorkspaceID    string `json:"workspaceId"`
-	TaskID         int    `json:"taskId"`
-	Title          string `json:"title,omitempty"`
-	Description    string `json:"description,omitempty"`
-	CurrentSummary string `json:"currentSummary,omitempty"`
-	NextAction     string `json:"nextAction,omitempty"`
-	Reason         string `json:"reason,omitempty"`
+	WorkspaceID string  `json:"workspaceId"`
+	TaskID      int     `json:"taskId"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
 }
 type taskCreateArgs struct {
 	WorkspaceID             string `json:"workspaceId"`
@@ -549,6 +547,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		if len(result.Errors) > 0 {
 			break
 		}
+		patch = graph.InsertTaskIntoRoutes(task.ID, patch)
 		domainPlan := domain.PlanTaskCreate(domainWorkspace(snapshot), domain.Lane{ID: lane.ID, WorkspaceID: args.WorkspaceID, Name: lane.Name, Goal: lane.Goal, Summary: lane.Summary, State: domain.LaneState(lane.State)}, domainPhase(*phase, args.WorkspaceID), graph, task, patch)
 		result.Errors = append(result.Errors, domainPlan.Evaluation.Errors...)
 		result.Warnings = append(result.Warnings, domainPlan.Evaluation.Warnings...)
@@ -564,7 +563,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			result.Errors = append(result.Errors, Diagnostic{Code: violationCode(assignmentErr), EntityID: task.ID})
 			break
 		}
-		plan.TaskCreate, plan.ExpectedTaskPublicID, plan.DependencyAdd = &task, publicID, patch.Add
+		plan.TaskCreate, plan.ExpectedTaskPublicID, plan.DependencyAdd, plan.DependencyRemove = &task, publicID, patch.Add, patch.Remove
 		plan.AcceptanceAssignment = &assignment
 		result.ProjectedDiff = map[string]any{"task": domainPlan.ProjectedDiff, "acceptanceAssignment": assignment}
 		for _, event := range domainPlan.Events {
@@ -711,6 +710,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			if len(result.Errors) > 0 {
 				break
 			}
+			patch = graph.InsertTaskIntoRoutes(task.ID, patch)
 			taskPlan := domain.PlanTaskCreate(domainWorkspace(snapshot), domainLane(*lane, args.WorkspaceID), domainPhase(*phase, args.WorkspaceID), graph, task, patch)
 			result.Errors = append(result.Errors, taskPlan.Evaluation.Errors...)
 			result.Warnings = append(result.Warnings, taskPlan.Evaluation.Warnings...)
@@ -731,7 +731,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 				break
 			}
 			values := domain.CompactBacklog(replaceDomainBacklog(snapshot.BacklogItems, promoted, args.WorkspaceID), current.LaneID)
-			plan.TaskCreate, plan.ExpectedTaskPublicID, plan.DependencyAdd = &task, task.PublicID, patch.Add
+			plan.TaskCreate, plan.ExpectedTaskPublicID, plan.DependencyAdd, plan.DependencyRemove = &task, task.PublicID, patch.Add, patch.Remove
 			plan.AcceptanceAssignment = &assignment
 			plan.BacklogUpdate, plan.BacklogPositions = &promoted, values
 			result.ProjectedDiff = map[string]any{"backlogPublicId": current.PublicID, "laneId": current.LaneID, "phaseId": args.PhaseID, "taskId": task.ID, "taskPublicId": task.PublicID, "relations": taskPlan.ProjectedDiff, "acceptanceAssignment": assignment}
@@ -922,7 +922,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		var domainPlan domain.DomainMutationPlan
 		switch request.Name {
 		case "task.update":
-			next, domainPlan = domain.PlanTaskUpdate(domainWorkspace(snapshot), current, args.Title, args.Description, args.CurrentSummary, args.NextAction)
+			next, domainPlan = domain.PlanTaskUpdate(domainWorkspace(snapshot), current, args.Title, args.Description)
 		case "task.block", "task.unblock", "task.rework", "task.discard":
 			next, domainPlan = domain.PlanTaskMutation(domainWorkspace(snapshot), request.Name, current, args.Reason, s.now().UTC())
 		case "task.set_terminal", "task.clear_terminal":

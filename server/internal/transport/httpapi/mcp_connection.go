@@ -12,7 +12,9 @@ import (
 	"time"
 )
 
-const mcpConnectionTTL = 10 * time.Minute
+// Owner approval often involves crossing from an Agent surface to a signed-in
+// browser. Keep the one-time request long enough for that hand-off.
+const mcpConnectionTTL = 30 * time.Minute
 
 var (
 	errMCPConnectionNotFound = errors.New("MCP connection request not found")

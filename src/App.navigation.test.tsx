@@ -104,6 +104,31 @@ describe("Home navigation entry points", () => {
     expect(screen.getByTestId("graph")).toBe(graph);
   });
 
+  it("opens the full backlog from the header and shows the selected item in Inspector", async () => {
+    const backlogItem = { id: "backlog-brief", publicId: 1, laneId: "client", title: "Pilot backlog brief", description: "Review the pilot backlog.", status: "active" as const, position: 1, promotedTaskId: null, promotedTaskPublicId: null };
+    vi.mocked(fetchGraph).mockResolvedValue({ ...pilotReadyFixture, backlogItems: [backlogItem] });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open full backlog" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open backlog B#1" }));
+
+    expect(await screen.findByText("BACKLOG INSPECTOR")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: backlogItem.title })).toBeTruthy();
+    await waitFor(() => expect(window.location.search).toBe(`?backlog=${backlogItem.id}`));
+  });
+
+  it("opens the full backlog and Inspector together from a rail item", async () => {
+    const backlogItem = { id: "backlog-rail", publicId: 2, laneId: "client", title: "Rail backlog brief", description: "Open from the rail.", status: "active" as const, position: 1, promotedTaskId: null, promotedTaskPublicId: null };
+    vi.mocked(fetchGraph).mockResolvedValue({ ...pilotReadyFixture, backlogItems: [backlogItem] });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open backlog B#2" }));
+
+    expect(await screen.findByRole("heading", { name: "Lane backlogs" })).toBeTruthy();
+    expect(screen.getByText("BACKLOG INSPECTOR")).toBeTruthy();
+    await waitFor(() => expect(window.location.search).toBe(`?backlog=${backlogItem.id}`));
+  });
+
   it("exposes each lane anchor as a native navigation button", async () => {
     render(<App />);
     const artLane = await screen.findByRole("button", { name: "Open Art lane" });

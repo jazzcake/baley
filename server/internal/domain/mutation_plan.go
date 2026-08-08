@@ -152,19 +152,23 @@ func PlanTaskCreate(workspace Workspace, lane Lane, phase Phase, graph *Workspac
 	return plan
 }
 
-func PlanTaskUpdate(workspace Workspace, task Task, title, description, summary, nextAction string) (Task, DomainMutationPlan) {
+func PlanTaskUpdate(workspace Workspace, task Task, title, description *string) (Task, DomainMutationPlan) {
 	plan := newDomainPlan("task.update", false)
 	if workspace.State == WorkspaceClosed || task.WorkspaceID != workspace.ID {
 		plan.Evaluation.Errors = []Diagnostic{{Code: CodeInvalidStateTransition, EntityID: task.WorkspaceID}}
 		return task, plan
 	}
-	next, err := task.Update(title, description, summary, nextAction)
+	next, err := task.Update(title, description)
 	if err != nil {
 		plan.Evaluation.Errors = []Diagnostic{{Code: violationCode(err), EntityID: task.ID}}
 		return task, plan
 	}
 	plan.ProjectedDiff = map[string]any{"before": task, "after": next}
-	plan.Events = []PlannedEvent{{Type: "task.updated", EntityType: "task", EntityID: task.ID, Payload: map[string]any{"taskId": task.ID}}}
+	plan.Events = []PlannedEvent{{Type: "task.updated", EntityType: "task", EntityID: task.ID, Payload: map[string]any{
+		"taskId": task.ID,
+		"before": map[string]any{"title": task.Title, "description": task.Description},
+		"after":  map[string]any{"title": next.Title, "description": next.Description},
+	}}}
 	return next, plan
 }
 

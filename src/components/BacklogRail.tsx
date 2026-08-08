@@ -14,10 +14,11 @@ type BacklogRailProps = {
   focusedLaneId?: string;
   laneColors: Record<string, string>;
   onExpand: () => void;
+  onSelect: (item: BacklogItem) => void;
   expandButtonRef?: RefCallback<HTMLButtonElement>;
 };
 
-export function BacklogRail({ lanes, items, layout, focusedLaneId, laneColors, onExpand, expandButtonRef }: BacklogRailProps) {
+export function BacklogRail({ lanes, items, layout, focusedLaneId, laneColors, onExpand, onSelect, expandButtonRef }: BacklogRailProps) {
   return <div className="backlog-rail-layer">
     <div
       className="graph-column-heading backlog-rail-column-heading"
@@ -28,12 +29,15 @@ export function BacklogRail({ lanes, items, layout, focusedLaneId, laneColors, o
         <Maximize2 size={13} />
       </button>
     </div>
-    <div aria-hidden="true">
+    <div>
       {lanes.map((lane) => {
       const laneItems = items.filter((item) => item.status === "active" && item.laneId === lane.id).sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.publicId - b.publicId);
       const top = layout.lanePositions.get(lane.id);
       const laneHeight = layout.laneHeights.get(lane.id);
       if (top === undefined || laneHeight === undefined) return null;
+      // Respect the actual lane height instead of hiding work after two rows.
+      const railHeight = laneHeight - 36;
+      const visibleItemCount = Math.max(1, Math.floor((railHeight - 38) / 20));
 
       const dimmed = Boolean(focusedLaneId && focusedLaneId !== lane.id);
       return <section
@@ -53,14 +57,14 @@ export function BacklogRail({ lanes, items, layout, focusedLaneId, laneColors, o
           <span>{laneItems.length} ITEMS</span>
         </header>
         <div className="backlog-rail-items">
-          {laneItems.slice(0, 2).map((item) =>
-            <div className="backlog-rail-item" key={item.id}>
+          {laneItems.slice(0, visibleItemCount).map((item) =>
+            <button type="button" className="backlog-rail-item" key={item.id} aria-label={`Open backlog B#${item.publicId}`} onClick={() => onSelect(item)}>
               <i aria-hidden="true" />
               <span>{item.title}</span>
               <small>B#{item.publicId}</small>
-            </div>
+            </button>
           )}
-          {laneItems.length > 2 && <small className="backlog-rail-more">+{laneItems.length - 2} MORE</small>}
+          {laneItems.length > visibleItemCount && <small className="backlog-rail-more">+{laneItems.length - visibleItemCount} MORE</small>}
           {laneItems.length === 0 && <small className="backlog-rail-empty">No backlog items</small>}
         </div>
       </section>;
@@ -74,9 +78,10 @@ type BacklogListProps = {
   items: BacklogItem[];
   laneColors: Record<string, string>;
   onClose: () => void;
+  onSelect: (item: BacklogItem) => void;
 };
 
-export function BacklogList({ lanes, items, laneColors, onClose }: BacklogListProps) {
+export function BacklogList({ lanes, items, laneColors, onClose, onSelect }: BacklogListProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => closeButtonRef.current?.focus(), []);
 
@@ -114,8 +119,10 @@ export function BacklogList({ lanes, items, laneColors, onClose }: BacklogListPr
           <ul>
             {laneItems.map((item) =>
               <li key={item.id}>
+                <button type="button" className="backlog-list-item" aria-label={`Open backlog B#${item.publicId}`} onClick={() => onSelect(item)}>
                 <span>{item.title}</span>
                 <small>B#{item.publicId} · PHASE 미정</small>
+                </button>
               </li>
             )}
             {laneItems.length === 0 && <li className="backlog-list-empty"><span>No backlog items</span><small>PHASE 미정</small></li>}

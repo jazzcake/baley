@@ -367,7 +367,8 @@ func dereferencePosition(position *int) int {
 }
 
 func planTaskUpdateMutation(context MutationContext) DomainMutationPlan {
-	_, plan := PlanTaskUpdate(context.Workspace, context.Task, context.Title, context.Description, context.Summary, context.NextAction)
+	title, description := context.Title, context.Description
+	_, plan := PlanTaskUpdate(context.Workspace, context.Task, &title, &description)
 	return plan
 }
 

@@ -1,6 +1,9 @@
 package domain
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 type DependencyRef = Dependency
 
@@ -13,6 +16,49 @@ type DependencyPatch struct {
 	Remove          []DependencyRef
 	Add             []DependencyRef
 	TerminalUpdates []TerminalUpdate
+}
+
+// InsertTaskIntoRoutes removes only the existing direct edges that are replaced
+// when a new Task is explicitly placed between their predecessor and successor.
+// It leaves all other graph relationships untouched.
+func (g *WorkspaceGraph) InsertTaskIntoRoutes(taskID string, patch DependencyPatch) DependencyPatch {
+	predecessors := map[string]struct{}{}
+	successors := map[string]struct{}{}
+	for _, edge := range patch.Add {
+		switch {
+		case edge.ToTaskID == taskID && edge.FromTaskID != taskID:
+			predecessors[edge.FromTaskID] = struct{}{}
+		case edge.FromTaskID == taskID && edge.ToTaskID != taskID:
+			successors[edge.ToTaskID] = struct{}{}
+		}
+	}
+	if len(predecessors) == 0 || len(successors) == 0 {
+		return patch
+	}
+
+	alreadyRemoved := map[DependencyKey]struct{}{}
+	for _, edge := range patch.Remove {
+		alreadyRemoved[dependencyKey(edge)] = struct{}{}
+	}
+	for predecessor := range predecessors {
+		for successor := range successors {
+			edge := Dependency{FromTaskID: predecessor, ToTaskID: successor}
+			key := dependencyKey(edge)
+			if _, exists := g.Dependencies[key]; exists {
+				if _, removed := alreadyRemoved[key]; !removed {
+					patch.Remove = append(patch.Remove, edge)
+					alreadyRemoved[key] = struct{}{}
+				}
+			}
+		}
+	}
+	sort.Slice(patch.Remove, func(i, j int) bool {
+		if patch.Remove[i].FromTaskID != patch.Remove[j].FromTaskID {
+			return patch.Remove[i].FromTaskID < patch.Remove[j].FromTaskID
+		}
+		return patch.Remove[i].ToTaskID < patch.Remove[j].ToTaskID
+	})
+	return patch
 }
 
 type TerminalReasonChange struct {
