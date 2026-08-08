@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Background, Panel, ReactFlow, ViewportPortal, useStore, useStoreApi, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ChevronRight, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, RotateCcw } from "lucide-react";
+import { ChevronRight, Copy, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, RotateCcw } from "lucide-react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { fetchGraph } from "./api/client";
 import { APIError } from "./api/http";
@@ -437,7 +437,7 @@ function WorkspaceViewer({
 
       <section className={`workspace ${inspectorOpen ? "with-inspector" : ""}`} style={{ "--inspector-width": `${inspectorWidth}px` } as React.CSSProperties}>
         <div className="graph-wrap">
-          <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1 className="workspace-context-title"><WorkspaceContextSwitcher membership={membership} memberships={memberships} currentWorkspaceName={graph.workspace.name} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} />{workspaceContextLabel && <span className="workspace-view-context">/ {workspaceContextLabel}</span>}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
+          <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1 className="workspace-context-title"><WorkspaceContextSwitcher membership={membership} memberships={memberships} currentWorkspaceName={graph.workspace.name} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} /><button type="button" className="workspace-id-copy" aria-label="Copy Workspace UUID" title="Copy Workspace UUID" onClick={() => void navigator.clipboard.writeText(graph.workspace.id)}><Copy size={14} /></button>{workspaceContextLabel && <span className="workspace-view-context">/ {workspaceContextLabel}</span>}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas">
             <div ref={graphStageRef} className="graph-stage" aria-hidden={backlogListOpen || undefined}>
               <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} onMoveEnd={(_, nextViewport) => traceCanvas("move:end", nextViewport)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>

@@ -31,7 +31,6 @@ type API struct {
 	CookieSecure   bool
 	Build          BuildInfo
 	ReadyCheck     func(context.Context) (int64, error)
-	MCPConnections *MCPConnectionBroker
 }
 
 type BuildInfo struct {
@@ -42,9 +41,6 @@ type BuildInfo struct {
 }
 
 func (a *API) Handler() http.Handler {
-	if a.MCPConnections == nil {
-		a.MCPConnections = NewMCPConnectionBroker()
-	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /readyz", a.readiness)
@@ -69,6 +65,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/agent-tokens/{tokenId}", a.revokeAgentToken)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}", a.getMCPConnection)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}/approve", a.approveMCPConnection)
+	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}/reject", a.rejectMCPConnection)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}", a.workspace)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/graph", a.graph)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/tasks/{publicId}", a.task)

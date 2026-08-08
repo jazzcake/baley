@@ -677,6 +677,22 @@ func DigestSecret(value string) []byte {
 }
 
 func (r *Repository) IssueAgentToken(ctx context.Context, workspaceID, actorID, name, createdByActorID string, scopes []authz.Capability, expiresAt *time.Time) (AgentTokenResult, error) {
+	tx, err := r.Pool.Begin(ctx)
+	if err != nil {
+		return AgentTokenResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	result, err := r.issueAgentTokenTx(ctx, tx, workspaceID, actorID, name, createdByActorID, scopes, expiresAt)
+	if err != nil {
+		return AgentTokenResult{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return AgentTokenResult{}, err
+	}
+	return result, nil
+}
+
+func (r *Repository) issueAgentTokenTx(ctx context.Context, tx pgx.Tx, workspaceID, actorID, name, createdByActorID string, scopes []authz.Capability, expiresAt *time.Time) (AgentTokenResult, error) {
 	allowed := map[authz.Capability]bool{}
 	for _, capability := range authz.DefaultCatalog.Roles[authz.RoleOperator] {
 		allowed[capability] = true
@@ -702,11 +718,6 @@ func (r *Repository) IssueAgentToken(ctx context.Context, workspaceID, actorID, 
 		prefix = prefix[:10]
 	}
 	rawScopes, _ := json.Marshal(scopes)
-	tx, err := r.Pool.Begin(ctx)
-	if err != nil {
-		return AgentTokenResult{}, err
-	}
-	defer tx.Rollback(ctx)
 	var kind string
 	if err = tx.QueryRow(ctx, "SELECT actor_type FROM actors WHERE id=$1", actorID).Scan(&kind); err != nil || kind != "agent" {
 		return AgentTokenResult{}, errors.New("Agent token requires an Agent actor")
@@ -722,9 +733,6 @@ func (r *Repository) IssueAgentToken(ctx context.Context, workspaceID, actorID, 
 		return AgentTokenResult{}, err
 	}
 	if err = insertSecurityEvent(ctx, tx, workspaceID, "", createdByActorID, "agent_token.issued", "agent_token", id, map[string]any{"agentActorId": actorID, "name": strings.TrimSpace(name), "scopes": scopes, "expiresAt": expiresAt}); err != nil {
-		return AgentTokenResult{}, err
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return AgentTokenResult{}, err
 	}
 	return AgentTokenResult{ID: id, Token: token, Prefix: prefix}, nil
