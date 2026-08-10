@@ -105,7 +105,11 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			}
 			// A not-found connection request has expired or been consumed. Start
 			// a replacement in this call rather than leaving this MCP process stuck.
-		} else if response.Status == "approved" && response.AgentToken != "" {
+		} else if response.AgentToken != "" {
+			// Polling issues a one-time Agent token and atomically marks the
+			// connection consumed. The response can therefore be either approved
+			// (before a repository implementation marks consumption) or consumed.
+			// The token itself is the authoritative successful hand-off.
 			store.Workspaces[workspaceID] = workspaceCredential{AgentToken: response.AgentToken, ConnectedAt: time.Now().UTC()}
 			delete(store.PendingConnections, workspaceID)
 			if err = c.writeCredentialStore(store); err != nil {

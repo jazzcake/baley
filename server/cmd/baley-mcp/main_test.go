@@ -68,7 +68,7 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 				http.Error(w, "missing connection secret", http.StatusForbidden)
 				return
 			}
-			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"approved","agentToken":"` + token + `"}`))
+			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"consumed","agentToken":"` + token + `"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces/"+workspaceID:
 			workspaceRead = true
 			if r.Header.Get("Authorization") != "Bearer "+token {
