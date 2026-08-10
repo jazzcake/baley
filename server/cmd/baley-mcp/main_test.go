@@ -327,6 +327,42 @@ func TestTaskUpdatePreviewAndExecuteForwardOnlyContentFields(t *testing.T) {
 	}
 }
 
+func TestTaskClearTerminalPreviewAndExecuteForwardTaskOnly(t *testing.T) {
+	type capturedRequest struct {
+		path string
+		body map[string]any
+	}
+	requests := make(chan capturedRequest, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		requests <- capturedRequest{r.URL.Path, body}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"commandHash":"sha256:test","workspaceRevision":12}`))
+	}))
+	defer server.Close()
+	c := &client{base: server.URL, http: server.Client()}
+	fields := taskClearTerminalFields{WorkspaceID: "workspace", TaskID: 23}
+	_, _, err := c.taskClearTerminalPreview(context.Background(), nil, taskClearTerminalPreviewInput{taskClearTerminalFields: fields, previewEnvelope: previewEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "preview-key", ExecutedByActorID: "agent"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := <-requests
+	if preview.path != "/v1/commands/preview" || preview.body["name"] != "task.clear_terminal" || preview.body["arguments"].(map[string]any)["taskId"] != float64(23) {
+		t.Fatalf("clear terminal preview was not forwarded: %#v", preview)
+	}
+	_, _, err = c.taskClearTerminalExecute(context.Background(), nil, taskClearTerminalExecuteInput{taskClearTerminalFields: fields, mutationExecuteEnvelope: mutationExecuteEnvelope{automaticEnvelope: automaticEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "execute-key", ExecutedByActorID: "agent"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execute := <-requests
+	if execute.path != "/v1/commands/execute" || execute.body["name"] != "task.clear_terminal" {
+		t.Fatalf("clear terminal execute was not forwarded: %#v", execute)
+	}
+}
+
 func TestDependencyPatchPreviewAndExecuteForwardAtomicRewrite(t *testing.T) {
 	type capturedRequest struct {
 		path string

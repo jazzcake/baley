@@ -83,6 +83,18 @@ type taskUpdateExecuteInput struct {
 	taskUpdateFields
 	mutationExecuteEnvelope
 }
+type taskClearTerminalFields struct {
+	WorkspaceID string `json:"workspaceId"`
+	TaskID      int    `json:"taskId"`
+}
+type taskClearTerminalPreviewInput struct {
+	taskClearTerminalFields
+	previewEnvelope
+}
+type taskClearTerminalExecuteInput struct {
+	taskClearTerminalFields
+	mutationExecuteEnvelope
+}
 type dependencyRefInput struct {
 	PredecessorTaskID int `json:"predecessorTaskId"`
 	SuccessorTaskID   int `json:"successorTaskId"`
@@ -561,6 +573,8 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_execute", Description: "Create a Task and its initial relationships after reviewing the preview"}, c.taskCreateExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_update_preview", Description: "Preview changing a Task title and/or description without writing"}, c.taskUpdatePreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_update_execute", Description: "Update a non-terminal Task title and/or description after preview"}, c.taskUpdateExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_clear_terminal_preview", Description: "Preview removing a Task terminal reason so a successor can be connected"}, c.taskClearTerminalPreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_clear_terminal_execute", Description: "Remove a Task terminal reason after preview"}, c.taskClearTerminalExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_dependency_patch_preview", Description: "Preview an atomic dependency graph rewrite without writing"}, c.dependencyPatchPreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_dependency_patch_execute", Description: "Atomically apply dependency additions and removals after preview"}, c.dependencyPatchExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_create_preview", Description: "Preview creating a phase-free lane Backlog item"}, c.backlogCreatePreview)
@@ -912,6 +926,15 @@ func (c *client) taskUpdatePreview(ctx context.Context, _ *mcp.CallToolRequest, 
 }
 func (c *client) taskUpdateExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskUpdateExecuteInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.update", taskUpdateArguments(in.taskUpdateFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
+}
+func taskClearTerminalArguments(in taskClearTerminalFields) map[string]any {
+	return map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID}
+}
+func (c *client) taskClearTerminalPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskClearTerminalPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("task.clear_terminal", taskClearTerminalArguments(in.taskClearTerminalFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) taskClearTerminalExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskClearTerminalExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.clear_terminal", taskClearTerminalArguments(in.taskClearTerminalFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
 }
 func dependencyPatchArguments(in dependencyPatchFields) map[string]any {
 	arguments := map[string]any{"workspaceId": in.WorkspaceID}
