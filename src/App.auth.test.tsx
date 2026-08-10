@@ -166,6 +166,20 @@ describe("authenticated Workspace routing", () => {
     expect(await screen.findByText("연결되었습니다.")).toBeTruthy();
   });
 
+  it("copies the Workspace UUID with the HTTP selection fallback and acknowledges it", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execCommand });
+    window.history.replaceState({}, "", "/workspaces/w1");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Workspace UUID" }));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(screen.getByRole("status").textContent).toBe("UUID copied");
+  });
+
   it("offers Workspace creation from the account Workspace list", async () => {
     const createdMembership = {
       id: "w3",

@@ -149,7 +149,7 @@ function WorkspaceViewer({
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
   const [backlogListOpen, setBacklogListOpen] = useState(false);
   const [taskFocusRequest, setTaskFocusRequest] = useState<{ taskId: string; requestId: number }>();
-  const [workspaceIDCopied, setWorkspaceIDCopied] = useState(false);
+  const [workspaceIDCopyState, setWorkspaceIDCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const backlogExpandButtonRef = useRef<HTMLButtonElement | null>(null);
   const graphStageRef = useRef<HTMLDivElement>(null);
   const requestGenerationRef = useRef(0);
@@ -157,10 +157,37 @@ function WorkspaceViewer({
   const workspaceIDCopyTimerRef = useRef<number>();
 
   const copyWorkspaceID = async () => {
-    await navigator.clipboard.writeText(graph.workspace.id);
-    setWorkspaceIDCopied(true);
+    const workspaceID = graph.workspace.id;
+    traceViewer("workspace-id-copy:event", {
+      workspaceIdPresent: Boolean(workspaceID),
+      clipboardAvailable: Boolean(navigator.clipboard?.writeText),
+      secureContext: window.isSecureContext,
+    });
+    if (!workspaceID) return;
+    try {
+      let method = "clipboard";
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(workspaceID);
+      } else {
+        method = "selection-fallback";
+        const input = document.createElement("textarea");
+        input.value = workspaceID;
+        input.setAttribute("readonly", "");
+        input.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+        document.body.append(input);
+        input.select();
+        const copied = document.execCommand("copy");
+        input.remove();
+        if (!copied) throw new Error("Clipboard fallback was rejected");
+      }
+      setWorkspaceIDCopyState("copied");
+      traceViewer("workspace-id-copy:state", { state: "copied", method });
+    } catch (error) {
+      setWorkspaceIDCopyState("failed");
+      traceViewer("workspace-id-copy:state", { state: "failed", error: error instanceof Error ? error.name : "unknown" });
+    }
     window.clearTimeout(workspaceIDCopyTimerRef.current);
-    workspaceIDCopyTimerRef.current = window.setTimeout(() => setWorkspaceIDCopied(false), 1600);
+    workspaceIDCopyTimerRef.current = window.setTimeout(() => setWorkspaceIDCopyState("idle"), 1600);
   };
 
   useEffect(() => () => window.clearTimeout(workspaceIDCopyTimerRef.current), []);
@@ -448,7 +475,7 @@ function WorkspaceViewer({
 
       <section className={`workspace ${inspectorOpen ? "with-inspector" : ""}`} style={{ "--inspector-width": `${inspectorWidth}px` } as React.CSSProperties}>
         <div className="graph-wrap">
-          <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1 className="workspace-context-title"><WorkspaceContextSwitcher membership={membership} memberships={memberships} currentWorkspaceName={graph.workspace.name} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} /><button type="button" className="workspace-id-copy" aria-label="Copy Workspace UUID" title="Copy Workspace UUID" onClick={() => void copyWorkspaceID()}><Copy size={14} /></button>{workspaceIDCopied && <span className="workspace-id-copied" role="status">UUID copied</span>}{workspaceContextLabel && <span className="workspace-view-context">/ {workspaceContextLabel}</span>}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
+          <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1 className="workspace-context-title"><WorkspaceContextSwitcher membership={membership} memberships={memberships} currentWorkspaceName={graph.workspace.name} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} /><button type="button" className="workspace-id-copy" aria-label="Copy Workspace UUID" title="Copy Workspace UUID" onClick={() => void copyWorkspaceID()}><Copy size={14} /></button>{workspaceIDCopyState !== "idle" && <span className={`workspace-id-copied ${workspaceIDCopyState === "failed" ? "workspace-id-copy-failed" : ""}`} role="status">{workspaceIDCopyState === "copied" ? "UUID copied" : "Copy failed"}</span>}{workspaceContextLabel && <span className="workspace-view-context">/ {workspaceContextLabel}</span>}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
           <div className="graph-canvas">
             <div ref={graphStageRef} className="graph-stage" aria-hidden={backlogListOpen || undefined}>
               <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} onMoveEnd={(_, nextViewport) => traceCanvas("move:end", nextViewport)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
