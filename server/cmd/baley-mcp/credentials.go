@@ -22,13 +22,22 @@ type workspaceCredential struct {
 }
 
 type credentialStore struct {
-	Version    int                            `json:"version"`
-	ServerURL  string                         `json:"serverUrl"`
-	Workspaces map[string]workspaceCredential `json:"workspaces"`
+	Version            int                                   `json:"version"`
+	ServerURL          string                                `json:"serverUrl"`
+	Workspaces         map[string]workspaceCredential        `json:"workspaces"`
+	PendingConnections map[string]pendingWorkspaceConnection `json:"pendingConnections,omitempty"`
 }
 
 type pendingWorkspaceConnection struct {
 	ID, Secret, ApprovalURL string
+}
+
+type connectionHTTPStatusError struct {
+	StatusCode int
+}
+
+func (e connectionHTTPStatusError) Error() string {
+	return fmt.Sprintf("Baley Workspace connection failed with HTTP %d", e.StatusCode)
 }
 
 type connectionResponse struct {
@@ -75,10 +84,6 @@ func requestWorkspaceID(path string, payload any) string {
 func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (string, *mcp.CallToolResult, error) {
 	c.connectionMu.Lock()
 	defer c.connectionMu.Unlock()
-	if c.pendingConnections == nil {
-		c.pendingConnections = map[string]pendingWorkspaceConnection{}
-	}
-
 	store, err := c.readCredentialStore()
 	if err != nil {
 		return "", nil, err
@@ -87,28 +92,39 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 		return credential.AgentToken, nil, nil
 	}
 
-	if pending, ok := c.pendingConnections[workspaceID]; ok {
+	if pending, ok := store.PendingConnections[workspaceID]; ok {
 		response, err := c.pollWorkspaceConnection(ctx, pending)
 		if err != nil {
-			delete(c.pendingConnections, workspaceID)
-			return "", nil, err
-		}
-		if response.Status == "approved" && response.AgentToken != "" {
+			var statusError connectionHTTPStatusError
+			if !errors.As(err, &statusError) || statusError.StatusCode != http.StatusNotFound {
+				return "", nil, err
+			}
+			delete(store.PendingConnections, workspaceID)
+			if writeErr := c.writeCredentialStore(store); writeErr != nil {
+				return "", nil, writeErr
+			}
+			// A not-found connection request has expired or been consumed. Start
+			// a replacement in this call rather than leaving this MCP process stuck.
+		} else if response.Status == "approved" && response.AgentToken != "" {
 			store.Workspaces[workspaceID] = workspaceCredential{AgentToken: response.AgentToken, ConnectedAt: time.Now().UTC()}
+			delete(store.PendingConnections, workspaceID)
 			if err = c.writeCredentialStore(store); err != nil {
 				return "", nil, err
 			}
-			delete(c.pendingConnections, workspaceID)
 			return response.AgentToken, nil, nil
+		} else {
+			return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
 		}
-		return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
 	}
 
 	pending, err := c.createWorkspaceConnection(ctx, workspaceID)
 	if err != nil {
 		return "", nil, err
 	}
-	c.pendingConnections[workspaceID] = pending
+	store.PendingConnections[workspaceID] = pending
+	if err = c.writeCredentialStore(store); err != nil {
+		return "", nil, err
+	}
 	return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
 }
 
@@ -154,7 +170,7 @@ func (c *client) connectionRequest(req *http.Request, expected int, target any) 
 		return err
 	}
 	if res.StatusCode != expected {
-		return fmt.Errorf("Baley Workspace connection failed with HTTP %d", res.StatusCode)
+		return connectionHTTPStatusError{StatusCode: res.StatusCode}
 	}
 	if err = json.Unmarshal(raw, target); err != nil {
 		return errors.New("Baley returned an invalid Workspace connection response")
@@ -185,7 +201,7 @@ func pendingStructured(result *mcp.CallToolResult) any {
 }
 
 func (c *client) readCredentialStore() (credentialStore, error) {
-	store := credentialStore{Version: 1, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}}
+	store := credentialStore{Version: 2, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
 	raw, err := os.ReadFile(c.credentialStorePath)
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
@@ -202,6 +218,12 @@ func (c *client) readCredentialStore() (credentialStore, error) {
 	store.ServerURL = c.base
 	if store.Workspaces == nil {
 		store.Workspaces = map[string]workspaceCredential{}
+	}
+	if store.PendingConnections == nil {
+		store.PendingConnections = map[string]pendingWorkspaceConnection{}
+	}
+	if store.Version < 2 {
+		store.Version = 2
 	}
 	return store, nil
 }
@@ -243,6 +265,6 @@ func (c *client) removeWorkspaceCredential(workspaceID string) error {
 		return err
 	}
 	delete(store.Workspaces, workspaceID)
-	delete(c.pendingConnections, workspaceID)
+	delete(store.PendingConnections, workspaceID)
 	return c.writeCredentialStore(store)
 }

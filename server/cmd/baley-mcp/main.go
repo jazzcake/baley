@@ -24,7 +24,6 @@ type client struct {
 	credentialStorePath string
 	agentActorID        string
 	connectionMu        sync.Mutex
-	pendingConnections  map[string]pendingWorkspaceConnection
 }
 type workspaceInput struct {
 	WorkspaceID string `json:"workspaceId" jsonschema:"Baley workspace ID"`
@@ -532,7 +531,6 @@ func main() {
 		agentToken:          strings.TrimSpace(os.Getenv("BALEY_AGENT_TOKEN")),
 		credentialStorePath: strings.TrimSpace(os.Getenv("BALEY_MCP_CREDENTIAL_STORE")),
 		agentActorID:        strings.TrimSpace(os.Getenv("BALEY_AGENT_ACTOR_ID")),
-		pendingConnections:  map[string]pendingWorkspaceConnection{},
 	}
 	if c.agentActorID == "" {
 		c.agentActorID = "00000000-0000-4000-8000-000000000003"

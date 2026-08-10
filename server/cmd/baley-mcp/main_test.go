@@ -85,7 +85,7 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "credentials.json")
 	c := &client{
 		base: server.URL, http: server.Client(), credentialStorePath: storePath,
-		agentActorID: "agent", pendingConnections: map[string]pendingWorkspaceConnection{},
+		agentActorID: "agent",
 	}
 	result, _, err := c.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
 	if err != nil || result == nil || !result.IsError || !connectionCreated {
@@ -96,7 +96,13 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 		t.Fatalf("missing actionable approval result: %#v", result.StructuredContent)
 	}
 
-	result, _, err = c.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
+	// A new MCP process must resume the approval request from the local
+	// credential store rather than relying on the original process memory.
+	restarted := &client{
+		base: server.URL, http: server.Client(), credentialStorePath: storePath,
+		agentActorID: "agent",
+	}
+	result, _, err = restarted.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
 	if err != nil || result.IsError || !workspaceRead {
 		t.Fatalf("approved request did not continue automatically: result=%#v err=%v", result, err)
 	}
@@ -106,6 +112,13 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 	}
 	if !containsJSONSecret(raw, token) {
 		t.Fatal("Workspace token was not persisted")
+	}
+	store, err := restarted.readCredentialStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.PendingConnections[workspaceID]; exists {
+		t.Fatal("approved pending connection was not removed")
 	}
 }
 
@@ -135,7 +148,7 @@ func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t 
 	storePath := filepath.Join(t.TempDir(), "credentials.json")
 	c := &client{
 		base: server.URL, http: server.Client(), credentialStorePath: storePath,
-		agentActorID: "agent", pendingConnections: map[string]pendingWorkspaceConnection{},
+		agentActorID: "agent",
 	}
 	if err := c.writeCredentialStore(credentialStore{
 		Version: 1, ServerURL: server.URL,
