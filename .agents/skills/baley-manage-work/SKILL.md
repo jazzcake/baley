@@ -102,6 +102,25 @@ Use `dependency.patch` for edge reversal or any rewrite that removes and adds ed
 
 ## Automatic Workflow
 
+- When executing one active Task, continue until its Definition of Done and
+  required verification are satisfied. Do not treat a plan, a code change, an
+  implementation milestone, an initial test failure, or a newly discovered
+  follow-up edit as completion.
+- Iterate autonomously through inspect, implement, build/test, diagnose, fix,
+  and verify. After planning, begin the chosen implementation without waiting
+  for a separate instruction.
+- Choose the most conservative option consistent with the existing codebase
+  when alternatives are reversible. Inspect the relevant contract, tests, and
+  surrounding implementation before making an irreversible choice.
+- Pause only when the Definition of Done is met; essential external information,
+  access, or credentials are unavailable; or a destructive/irreversible or
+  human-only decision requires the user's authority. Preserve the Task's Run
+  state and report the precise blocker when pausing.
+- Treat verification as part of execution: run the relevant build/test or other
+  acceptance checks, diagnose failures, and repeat the loop until they pass or
+  a real blocker remains. Report a Task `implemented` only with truthful
+  assessment and verification evidence; `confirmed` remains a human-only
+  decision.
 - Start a Run before detailed planning, implementation, independent Agent review, review response, or completion reporting.
 - If the Task is pending, start it when its first work Run begins.
 - Update Run status automatically on success, failure, cancellation, or interruption.
