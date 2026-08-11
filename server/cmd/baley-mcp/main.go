@@ -493,6 +493,18 @@ type taskConfirmExecuteInput struct {
 	TaskID      int    `json:"taskId"`
 	executeEnvelope
 }
+type taskDiscardPreviewInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	TaskID      int    `json:"taskId"`
+	Reason      string `json:"reason"`
+	previewEnvelope
+}
+type taskDiscardExecuteInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	TaskID      int    `json:"taskId"`
+	Reason      string `json:"reason"`
+	executeEnvelope
+}
 type gatePassPreviewInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	GateID      string `json:"gateId"`
@@ -601,6 +613,8 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_detach_entry_task_execute", Description: "Remove an explicit Gate entry Task binding and restore automatic root selection when none remain"}, c.gateDetachEntryTaskExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_preview", Description: "Preview Task confirmation without writing"}, c.taskConfirmPreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_execute", Description: "Execute an explicitly approved Task confirmation with exact warning acknowledgement when preview returned warnings"}, c.taskConfirmExecute)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_discard_preview", Description: "Preview an explicitly approved audited Task discard without writing"}, c.taskDiscardPreview)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_discard_execute", Description: "Execute an explicitly approved audited Task discard with a reason"}, c.taskDiscardExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_task_preview", Description: "Preview explicit Gate Task pass without writing"}, c.gatePassTaskPreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_task_execute", Description: "Execute an explicitly approved Gate Task pass"}, c.gatePassTaskExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_revoke_task_pass_preview", Description: "Preview Gate Task pass revocation without writing"}, c.gateRevokePreview)
@@ -1109,6 +1123,12 @@ func (c *client) taskConfirmPreview(ctx context.Context, _ *mcp.CallToolRequest,
 }
 func (c *client) taskConfirmExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskConfirmExecuteInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.confirm", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID}, executeEnv(in.executeEnvelope)))
+}
+func (c *client) taskDiscardPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskDiscardPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("task.discard", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "reason": in.Reason}, previewEnv(in.previewEnvelope)))
+}
+func (c *client) taskDiscardExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskDiscardExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.discard", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "reason": in.Reason}, executeEnv(in.executeEnvelope)))
 }
 func (c *client) gatePassPreview(ctx context.Context, _ *mcp.CallToolRequest, in gatePassPreviewInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/preview", command("gate.pass", map[string]any{"workspaceId": in.WorkspaceID, "gateId": in.GateID}, previewEnv(in.previewEnvelope)))

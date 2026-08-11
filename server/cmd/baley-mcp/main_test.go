@@ -223,6 +223,39 @@ func TestTaskConfirmExecuteForwardsWarningAcknowledgementEnvelope(t *testing.T) 
 	}
 }
 
+func TestTaskDiscardPreviewAndExecuteForwardReason(t *testing.T) {
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		requests = append(requests, body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workspaceRevision":2}`))
+	}))
+	defer server.Close()
+
+	c := &client{base: server.URL, http: server.Client()}
+	preview := taskDiscardPreviewInput{WorkspaceID: "workspace", TaskID: 1, Reason: "No longer needed", previewEnvelope: previewEnvelope{ExpectedWorkspaceRevision: 1, IdempotencyKey: "preview-key", ExecutedByActorID: "agent"}}
+	if result, _, err := c.taskDiscardPreview(context.Background(), nil, preview); err != nil || result.IsError {
+		t.Fatalf("task discard preview failed: %#v %v", result, err)
+	}
+	execute := taskDiscardExecuteInput{WorkspaceID: "workspace", TaskID: 1, Reason: "No longer needed", executeEnvelope: executeEnvelope{ExpectedWorkspaceRevision: 1, IdempotencyKey: "execute-key", ExecutedByActorID: "agent", ApprovedByActorID: "human", ApprovedCommandHash: "sha256:command"}}
+	if result, _, err := c.taskDiscardExecute(context.Background(), nil, execute); err != nil || result.IsError {
+		t.Fatalf("task discard execute failed: %#v %v", result, err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("got %d requests, want 2", len(requests))
+	}
+	for _, body := range requests {
+		arguments, _ := body["arguments"].(map[string]any)
+		if body["name"] != "task.discard" || arguments["taskId"] != float64(1) || arguments["reason"] != "No longer needed" {
+			t.Fatalf("task discard payload mismatch: %#v", body)
+		}
+	}
+}
+
 func TestTaskCreatePreviewAndExecuteForwardTypedPayloads(t *testing.T) {
 	type capturedRequest struct {
 		path string

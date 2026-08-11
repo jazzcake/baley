@@ -85,6 +85,7 @@ func TestMCPStdioListsAndCallsTools(t *testing.T) {
 		"baley_gate_attach_entry_task_preview": true, "baley_gate_attach_entry_task_execute": true,
 		"baley_gate_detach_entry_task_preview": true, "baley_gate_detach_entry_task_execute": true,
 		"baley_task_confirm_preview": true, "baley_task_confirm_execute": true,
+		"baley_task_discard_preview": true, "baley_task_discard_execute": true,
 		"baley_gate_pass_task_preview": true, "baley_gate_pass_task_execute": true,
 		"baley_gate_revoke_task_pass_preview": true, "baley_gate_revoke_task_pass_execute": true,
 		"baley_gate_pass_preview": true, "baley_gate_pass_execute": true,
