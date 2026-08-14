@@ -3,6 +3,11 @@
 Baley uses the shared local PostgreSQL service rather than its former
 project-local database container.
 
+The infrastructure SSOT is maintained in
+[`local-dev-infra`](../../local-dev-infra/README.md). Its Git-ignored `.env`
+holds only the shared bootstrap credentials; Baley owns its separate `baley`
+database and `baley_app` application role.
+
 ## Active connection
 
 - Shared container: `local-dev-postgres`
@@ -40,6 +45,21 @@ Invoke-WebRequest http://127.0.0.1:5174/
 
 Also make one authenticated MCP read, such as `baley_workspace_get`, after
 the API and MCP services are healthy.
+
+## Cutover log — 2026-08-14
+
+- Migrated the former project-local `baley` database from `baley-postgres-1`
+  to the shared `local-dev-postgres` PostgreSQL 17.5 instance.
+- Created the database-local application role `baley_app` without cluster
+  administration privileges.
+- Verified that every public-table row count and the applied Goose migration
+  version (`18:true`) matched between source and target.
+- Recreated `api`, `mcp`, and `viewer` against the shared database; API
+  readiness, Viewer shell delivery, authenticated MCP workspace read, and a
+  Docker service restart all passed.
+- After verification, removed the stopped `baley-postgres-1` container and
+  its `baley_baley-postgres` volume. The shared database is now the sole
+  Baley PostgreSQL runtime.
 
 ## Recovery
 
