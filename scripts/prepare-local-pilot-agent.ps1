@@ -75,9 +75,10 @@ $verified = Invoke-RestMethod -Uri "$apiBaseURL/v1/workspaces/$WorkspaceID" -Hea
 if ($verified.id -ne $WorkspaceID) { throw "issued Agent token did not pass Workspace read verification" }
 Write-BaleyMCPEnvironment -Path $environmentPath -ServerURL $apiBaseURL -AgentToken $issued.token
 $issued.token = $null
+& (Join-Path $PSScriptRoot "sync-baley-mcp-http-token.ps1") -EnvironmentFile $environmentPath
 
 Write-Output "Issued and verified Agent token $($issued.id) (prefix $($issued.prefix))."
 Write-Output "Token audit name: $effectiveTokenName"
 Write-Output "Workspace: $WorkspaceID"
 Write-Output "Stored it in the local Baley MCP environment file: $environmentPath"
-Write-Output "Open a new Codex thread so the MCP launcher reloads the file."
+Write-Output "Restart Codex so its shared HTTP MCP connection reloads the replacement token."

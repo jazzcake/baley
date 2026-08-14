@@ -46,6 +46,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", a.readiness)
 	mux.HandleFunc("GET /versionz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, a.Build) })
 	mux.HandleFunc("POST /v1/auth/login", a.login)
+	mux.HandleFunc("GET /v1/auth/principal", a.authPrincipal)
 	mux.HandleFunc("GET /v1/auth/session", a.authSession)
 	mux.HandleFunc("POST /v1/auth/logout", a.logout)
 	mux.HandleFunc("POST /v1/auth/password", a.changePassword)
@@ -144,6 +145,18 @@ func (a *API) authSession(w http.ResponseWriter, r *http.Request) {
 		"account":       map[string]any{"id": state.Principal.AccountID, "actorId": state.Principal.ActorID, "loginId": state.Session.LoginID, "displayName": state.Principal.DisplayName},
 		"csrfToken":     state.CSRFToken, "expiresAt": state.Session.AbsoluteExpiresAt,
 	})
+}
+
+// authPrincipal is a deliberately minimal credential validation endpoint for
+// local Streamable HTTP MCP frontends. It returns no token material and is
+// protected by the ordinary authentication middleware.
+func (a *API) authPrincipal(w http.ResponseWriter, r *http.Request) {
+	state, ok := authState(r)
+	if !ok || state.Principal.ActorID == "" || state.Principal.Subject.Kind != authz.ActorAgent {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "unauthenticated", "message": "authentication required"}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "actorId": state.Principal.ActorID, "workspaceId": state.Principal.WorkspaceID, "subjectKind": state.Principal.Subject.Kind})
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {

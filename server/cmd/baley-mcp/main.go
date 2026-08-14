@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,6 +27,18 @@ type client struct {
 	agentActorID        string
 	connectionMu        sync.Mutex
 }
+
+type bearerTokenContextKey struct{}
+
+func withBearerToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, bearerTokenContextKey{}, token)
+}
+
+func bearerToken(ctx context.Context) string {
+	token, _ := ctx.Value(bearerTokenContextKey{}).(string)
+	return token
+}
+
 type workspaceInput struct {
 	WorkspaceID string `json:"workspaceId" jsonschema:"Baley workspace ID"`
 }
@@ -529,13 +543,23 @@ type gateTaskExecuteInput struct {
 }
 
 func main() {
+	mode := "stdio"
+	if len(os.Args) > 2 || (len(os.Args) == 2 && os.Args[1] != "serve-http") {
+		log.Fatal("usage: baley-mcp [serve-http]")
+	}
+	if len(os.Args) == 2 {
+		mode = os.Args[1]
+	}
 	base := os.Getenv("BALEY_SERVER_URL")
 	if base == "" {
 		base = "http://127.0.0.1:8080"
 	}
 	parsed, err := url.Parse(base)
-	if err != nil || parsed.Scheme != "http" || !(parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1") {
-		log.Fatal("BALEY_SERVER_URL must be a loopback http URL")
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Hostname() == "" {
+		log.Fatal("BALEY_SERVER_URL must be an absolute http URL without credentials, query, or fragment")
+	}
+	if mode == "stdio" && !(parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1") {
+		log.Fatal("stdio BALEY_SERVER_URL must be a loopback http URL")
 	}
 	c := &client{
 		base:                strings.TrimRight(base, "/"),
@@ -621,9 +645,59 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_revoke_task_pass_execute", Description: "Execute an explicitly approved Gate Task pass revocation"}, c.gateRevokeExecute)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_preview", Description: "Preview Gate pass and Phase transition without writing"}, c.gatePassPreview)
 	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_execute", Description: "Execute an explicitly approved Gate pass and Phase transition"}, c.gatePassExecute)
+	if mode == "serve-http" {
+		serveHTTP(c, server)
+		return
+	}
 	if err = server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func serveHTTP(c *client, server *mcp.Server) {
+	addr := strings.TrimSpace(os.Getenv("BALEY_MCP_HTTP_ADDR"))
+	if addr == "" {
+		addr = "127.0.0.1:8090"
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || (host != "127.0.0.1" && host != "localhost" && host != "::1" && host != "0.0.0.0") {
+		log.Fatal("BALEY_MCP_HTTP_ADDR must bind to loopback or 0.0.0.0")
+	}
+	streamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: 10 * time.Minute})
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", c.requireBearer(streamable))
+	httpServer := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 70 * time.Second, MaxHeaderBytes: 1 << 20}
+	log.Printf("Baley Streamable HTTP MCP listening on http://%s/mcp", addr)
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+}
+
+func (c *client) requireBearer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := r.Header.Get("Authorization")
+		if !strings.HasPrefix(header, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")) == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+		request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, c.base+"/v1/auth/principal", nil)
+		if err != nil {
+			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := c.http.Do(request)
+		if err != nil || response.StatusCode != http.StatusOK {
+			if response != nil {
+				_ = response.Body.Close()
+			}
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = response.Body.Close()
+		next.ServeHTTP(w, r.WithContext(withBearerToken(r.Context(), token)))
+	})
 }
 
 func (c *client) get(ctx context.Context, path string) (*mcp.CallToolResult, any, error) {
@@ -632,6 +706,9 @@ func (c *client) get(ctx context.Context, path string) (*mcp.CallToolResult, any
 func (c *client) call(ctx context.Context, method, path string, payload any) (*mcp.CallToolResult, any, error) {
 	workspaceID := requestWorkspaceID(path, payload)
 	token := c.agentToken
+	if contextualToken := bearerToken(ctx); contextualToken != "" {
+		token = contextualToken
+	}
 	if c.credentialStorePath != "" && workspaceID != "" {
 		var pending *mcp.CallToolResult
 		var err error

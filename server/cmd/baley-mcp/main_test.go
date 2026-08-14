@@ -3,12 +3,118 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestStreamableHTTPMCPRequiresBearerAndForwardsItPerRequest(t *testing.T) {
+	const token = "valid-agent-token"
+	const secondToken = "second-workspace-agent-token"
+	var upstreamAuthorizations []string
+	var upstreamMu sync.Mutex
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamMu.Lock()
+		upstreamAuthorizations = append(upstreamAuthorizations, r.Header.Get("Authorization"))
+		upstreamMu.Unlock()
+		switch r.URL.Path {
+		case "/v1/auth/principal":
+			if r.Header.Get("Authorization") != "Bearer "+token && r.Header.Get("Authorization") != "Bearer "+secondToken {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(`{"authenticated":true}`))
+		case "/v1/workspaces/workspace":
+			_, _ = w.Write([]byte(`{"id":"workspace"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	c := &client{base: upstream.URL, http: upstream.Client()}
+	server := mcp.NewServer(&mcp.Implementation{Name: "baley-test", Version: "test"}, nil)
+	mcp.AddTool(server, &mcp.Tool{Name: "baley_workspace_get"}, c.workspaceGet)
+	handler := c.requireBearer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: time.Minute}))
+	mcpHTTP := httptest.NewServer(handler)
+	defer mcpHTTP.Close()
+
+	unauthenticated, err := http.Post(mcpHTTP.URL, "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unauthenticated.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing bearer status=%d", unauthenticated.StatusCode)
+	}
+	_ = unauthenticated.Body.Close()
+
+	newSession := func(bearer string) (*mcp.ClientSession, error) {
+		httpClient := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			clone := request.Clone(request.Context())
+			clone.Header.Set("Authorization", "Bearer "+bearer)
+			return http.DefaultTransport.RoundTrip(clone)
+		})}
+		return mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil).Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: mcpHTTP.URL, HTTPClient: httpClient, DisableStandaloneSSE: true}, nil)
+	}
+	session, err := newSession(token)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "baley_workspace_get" {
+		t.Fatalf("tools=%#v err=%v", tools, err)
+	}
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "baley_workspace_get", Arguments: map[string]any{"workspaceId": "workspace"}})
+	if err != nil || result.IsError {
+		t.Fatalf("read call result=%#v err=%v", result, err)
+	}
+	secondSession, err := newSession(secondToken)
+	if err != nil {
+		t.Fatalf("second client connect: %v", err)
+	}
+	defer secondSession.Close()
+	errCh := make(chan error, 2)
+	for _, activeSession := range []*mcp.ClientSession{session, secondSession} {
+		go func(activeSession *mcp.ClientSession) {
+			called, callErr := activeSession.CallTool(context.Background(), &mcp.CallToolParams{Name: "baley_workspace_get", Arguments: map[string]any{"workspaceId": "workspace"}})
+			if callErr != nil || called.IsError {
+				errCh <- fmt.Errorf("concurrent read result=%#v err=%w", called, callErr)
+				return
+			}
+			errCh <- nil
+		}(activeSession)
+	}
+	for range 2 {
+		if callErr := <-errCh; callErr != nil {
+			t.Fatal(callErr)
+		}
+	}
+	upstreamMu.Lock()
+	defer upstreamMu.Unlock()
+	if len(upstreamAuthorizations) < 6 {
+		t.Fatalf("expected validation and read requests, got %v", upstreamAuthorizations)
+	}
+	seen := map[string]bool{}
+	for _, authorization := range upstreamAuthorizations {
+		seen[authorization] = true
+	}
+	if !seen["Bearer "+token] || !seen["Bearer "+secondToken] {
+		t.Fatalf("clients were not isolated by bearer token: %v", upstreamAuthorizations)
+	}
+}
 
 func TestClientSendsConfiguredAgentTokenWithoutPuttingItInThePayload(t *testing.T) {
 	const token = "agent-secret-that-must-stay-in-the-header"

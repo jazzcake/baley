@@ -57,7 +57,7 @@ $environmentIgnored = @(& git -C $repoRoot check-ignore -- ".env.baley-mcp.local
 $checks += Add-Check "mcp-env-gitignored" $environmentIgnored ".env.baley-mcp.local"
 $credentialStoreIgnored = @(& git -C $repoRoot check-ignore -- ".tmp/baley-mcp/credentials.json").Count -eq 1
 $checks += Add-Check "mcp-credential-store-gitignored" $credentialStoreIgnored ".tmp/baley-mcp/credentials.json"
-$mcpEnvironmentLauncher = $false
+$mcpHTTPRegistration = $false
 $codexCLI = $null
 try { $codexCLI = Resolve-CodexCLI } catch {}
 if ($null -ne $codexCLI) {
@@ -65,19 +65,14 @@ if ($null -ne $codexCLI) {
     $mcpConfigJSON = (& $codexCLI mcp get baley --json 2>$null | Out-String)
     if ($LASTEXITCODE -eq 0) {
       $mcpConfig = $mcpConfigJSON | ConvertFrom-Json
-      $staticEnvironmentNames = if ($null -eq $mcpConfig.transport.env) {
-        @()
-      } else {
-        @($mcpConfig.transport.env.PSObject.Properties.Name)
-      }
-      $mcpEnvironmentLauncher =
-        $mcpConfig.transport.command -match "(?i)powershell" -and
-        @($mcpConfig.transport.args) -contains (Join-Path $PSScriptRoot "run-baley-mcp.ps1") -and
-        $staticEnvironmentNames -notcontains "BALEY_AGENT_TOKEN"
+      $mcpHTTPRegistration =
+        $mcpConfig.transport.type -eq "streamable_http" -and
+        $mcpConfig.transport.url -eq "http://127.0.0.1:8091/mcp" -and
+        $mcpConfig.transport.bearer_token_env_var -eq "BALEY_AGENT_TOKEN"
     }
   } catch {}
 }
-$checks += Add-Check "codex-mcp-local-env-launcher" $mcpEnvironmentLauncher "Launcher uses the live multi-Workspace credential store without static token config"
+$checks += Add-Check "codex-mcp-shared-http" $mcpHTTPRegistration "Streamable HTTP adapter uses BALEY_AGENT_TOKEN without URL credentials"
 $baleyPluginInstalled = $false
 $baleyPluginSkills = $false
 if ($null -ne $codexCLI) {
