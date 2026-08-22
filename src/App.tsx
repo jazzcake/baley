@@ -7,23 +7,33 @@ import { fetchGraph } from "./api/client";
 import { APIError } from "./api/http";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import type { Account, WorkspaceMembership } from "./auth/model";
-import { canvasKey, connectedTaskIds, defaultGateFocusId, laneFocusTaskIds, visibleTaskIds, type ViewSpec } from "./graph/projection";
+import { canvasKey, connectedTaskIds, defaultGateFocusId, laneFocusTaskIds, phasePresentation, projectDependencies, transitiveReduction, visibleTaskIds, type ViewSpec } from "./graph/projection";
 import { laneBandRect, laneLabelTop, layoutGraph, NODE_HEIGHT, NODE_WIDTH, type GraphLayout } from "./graph/layout";
-import { fitViewportToCanvas, zoomViewportAtCenter } from "./graph/viewport";
+import { readLayoutMode, writeLayoutMode, type LayoutMode } from "./graph/layout-mode";
+import { fitViewportToCanvas, focusViewportOnAnchor, zoomViewportAtCenter } from "./graph/viewport";
 import { INSPECTOR_DEFAULT_WIDTH, INSPECTOR_MAX_WIDTH, INSPECTOR_MIN_WIDTH, inspectorWidthFromKey, inspectorWidthFromPointer } from "./layout/inspector";
 import { TaskNode } from "./components/TaskNode";
 import { GateNode } from "./components/GateNode";
+import { PhaseSummaryNode } from "./components/PhaseSummaryNode";
 import { BacklogList, BacklogRail } from "./components/BacklogRail";
 import { LaneAnchorColumn } from "./components/LaneAnchorColumn";
 import { TaskSearch } from "./components/TaskSearch";
 import { laneColorMap } from "./components/lane-palette";
 import { LoginScreen, MCPConnectionApproval, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
 import { traceViewer } from "./debug/viewer-trace";
-import type { BacklogItem, GateLinkKind, Task, WorkspaceFixture } from "./domain/model";
+import type { BacklogItem, Task, WorkspaceFixture } from "./domain/model";
 
-const nodeTypes = { task: TaskNode, gate: GateNode };
-const MIN_ZOOM = 0.55;
+const nodeTypes = { task: TaskNode, gate: GateNode, phaseSummary: PhaseSummaryNode };
+// Tree mode can span several Phase/Lane columns. Keep enough range to fit the
+// complete workspace before users pan into detail.
+const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 1.55;
+type PhaseFocusRequest = {
+  requestId: number;
+  phaseId: string;
+  edge: "entry" | "exit";
+  reason: "initial-active-phase" | "phase-collapsed" | "phase-expanded";
+};
 let graphRequestGeneration = 0;
 
 function traceCanvas(event: string, details: Record<string, unknown>) {
@@ -145,15 +155,25 @@ function WorkspaceViewer({
   const mcpConnectionId = useMemo(() => location.pathname.match(/\/mcp-connect\/([^/]+)$/)?.[1], [location.pathname]);
   const [layout, setLayout] = useState<GraphLayout | undefined>();
   const [layoutViewKey, setLayoutViewKey] = useState<string>();
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => readLayoutMode(workspaceId, window.localStorage));
+  const [renderedLayoutMode, setRenderedLayoutMode] = useState<LayoutMode>(() => readLayoutMode(workspaceId, window.localStorage));
+  const layoutRequestGenerationRef = useRef(0);
+  const [collapsedPhaseIds, setCollapsedPhaseIds] = useState<Set<string>>(new Set());
+  const [renderedCollapsedPhaseIds, setRenderedCollapsedPhaseIds] = useState<Set<string>>(new Set());
+  const collapseWorkspaceRef = useRef<string>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
   const [backlogListOpen, setBacklogListOpen] = useState(false);
   const [taskFocusRequest, setTaskFocusRequest] = useState<{ taskId: string; requestId: number }>();
+  const [phaseFocusRequest, setPhaseFocusRequest] = useState<PhaseFocusRequest>();
   const [workspaceIDCopyState, setWorkspaceIDCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const backlogExpandButtonRef = useRef<HTMLButtonElement | null>(null);
   const graphStageRef = useRef<HTMLDivElement>(null);
   const requestGenerationRef = useRef(0);
   const taskFocusRequestIdRef = useRef(0);
+  const phaseFocusRequestIdRef = useRef(0);
+  const pendingPhaseFocusRef = useRef<PhaseFocusRequest>();
+  const initialPhaseFocusWorkspaceRef = useRef<string>();
   const workspaceIDCopyTimerRef = useRef<number>();
 
   const copyWorkspaceID = async () => {
@@ -194,24 +214,68 @@ function WorkspaceViewer({
   const routeNavigateRef = useRef(routeNavigate);
   routeNavigateRef.current = routeNavigate;
   const visible = useMemo(() => visibleTaskIds(graph, view), [graph, view]);
+  const focusedLaneId = view.kind === "lane" ? view.id : undefined;
   const laneColors = useMemo(() => laneColorMap(graph.lanes), [graph.lanes]);
   const laneFocus = useMemo(
     () => view.kind === "lane" ? laneFocusTaskIds(graph, view.id) : undefined,
     [graph, view],
   );
   const connected = useMemo(() => selectedId ? connectedTaskIds(graph, selectedId) : undefined, [graph, selectedId]);
-
+  const requestedPresentation = useMemo(() => phasePresentation(graph, view.kind === "gate" ? new Set() : collapsedPhaseIds), [graph, view.kind, collapsedPhaseIds]);
+  const presentation = useMemo(() => phasePresentation(graph, view.kind === "gate" ? new Set() : renderedCollapsedPhaseIds), [graph, view.kind, renderedCollapsedPhaseIds]);
   useEffect(() => {
     let active = true;
+    const generation = ++layoutRequestGenerationRef.current;
     const requestedViewKey = canvasKey(view);
-    void layoutGraph(graph, visible, view.kind !== "gate").then((nextLayout) => {
-      if (active) {
+    traceViewer("canvas-layout:request", {
+      event: "state-change",
+      requestedMode: layoutMode,
+      persistedMode: readLayoutMode(workspaceId, window.localStorage),
+      reactState: { layoutMode, renderedLayoutMode },
+      requestedCollapsedPhaseIds: [...requestedPresentation.collapsedPhaseIds],
+      renderedCollapsedPhaseIds: [...presentation.collapsedPhaseIds],
+    });
+    void layoutGraph(graph, visible, view.kind !== "gate", requestedPresentation.collapsedPhaseIds, layoutMode).then((nextLayout) => {
+      traceViewer("canvas-layout:result", {
+        requestedMode: layoutMode,
+        generation,
+        summary: { taskCount: nextLayout.taskPositions.size, phaseCount: nextLayout.phaseRects.length, width: nextLayout.width, height: nextLayout.height },
+      });
+      if (active && generation === layoutRequestGenerationRef.current) {
         setLayout(nextLayout);
         setLayoutViewKey(requestedViewKey);
+        setRenderedCollapsedPhaseIds(new Set(requestedPresentation.collapsedPhaseIds));
+        setRenderedLayoutMode(layoutMode);
+        const pendingFocus = pendingPhaseFocusRef.current;
+        if (pendingFocus) {
+          pendingPhaseFocusRef.current = undefined;
+          setPhaseFocusRequest(pendingFocus);
+        } else if (
+          view.kind === "multi" &&
+          graph.workspace.activePhaseId &&
+          initialPhaseFocusWorkspaceRef.current !== workspaceId
+        ) {
+          initialPhaseFocusWorkspaceRef.current = workspaceId;
+          setPhaseFocusRequest({
+            requestId: ++phaseFocusRequestIdRef.current,
+            phaseId: graph.workspace.activePhaseId,
+            edge: "entry",
+            reason: "initial-active-phase",
+          });
+        }
+        traceViewer("canvas-layout:committed", {
+          requestedMode: layoutMode,
+          calculatedTargetState: layoutMode,
+          requestedCollapsedPhaseIds: [...requestedPresentation.collapsedPhaseIds],
+          taskPositionCount: nextLayout.taskPositions.size,
+          summaryPositionCount: nextLayout.summaryPositions?.size ?? 0,
+        });
+      } else {
+        traceViewer("canvas-layout:stale-result-ignored", { requestedMode: layoutMode, generation, currentGeneration: layoutRequestGenerationRef.current });
       }
     });
     return () => { active = false; };
-  }, [graph, visible, view.kind]);
+  }, [graph, visible, view.kind, requestedPresentation, layoutMode, workspaceId]);
   useEffect(() => {
     let active = true;
     let controller: AbortController | undefined;
@@ -245,6 +309,12 @@ function WorkspaceViewer({
           return;
         }
         setFixture((current) => current && JSON.stringify(current) === JSON.stringify(next) ? current : next);
+        if (collapseWorkspaceRef.current !== workspaceId) {
+          collapseWorkspaceRef.current = workspaceId;
+          const key = `baley:collapsed-phases:${workspaceId}`;
+          const stored = window.localStorage.getItem(key);
+          setCollapsedPhaseIds(new Set(stored ? JSON.parse(stored) : next.phases.filter((phase) => phase.state === "completed").map((phase) => phase.id)));
+        }
         setLoadError(undefined);
         traceViewer("graph:store-committed", {
           targetWorkspaceId: workspaceId,
@@ -306,8 +376,13 @@ function WorkspaceViewer({
       listPresent: Boolean(document.querySelector(".backlog-list")),
     }));
   }, [backlogListOpen]);
+  const lockedTaskIds = useMemo(() => new Set(
+    graph.gateLinks
+      .filter((link) => link.kind === "unlocks" && graph.gates.find((gate) => gate.id === link.gateId)?.status !== "passed")
+      .map((link) => link.taskId),
+  ), [graph.gateLinks, graph.gates]);
   const nodes = useMemo<Node[]>(() => {
-    const taskNodes: Node[] = graph.tasks.filter((task) => visible.has(task.id)).map((task) => ({
+    const taskNodes: Node[] = graph.tasks.filter((task) => visible.has(task.id) && !presentation.hiddenTaskIds.has(task.id)).map((task) => ({
       id: task.id, type: "task", position: layout?.taskPositions.get(task.id) ?? { x: 0, y: 0 }, selected: task.id === selectedId,
       data: {
         title: task.title,
@@ -320,8 +395,11 @@ function WorkspaceViewer({
           (connected && !connected.has(task.id)),
         ),
         external: view.kind === "lane" && task.laneId !== view.id,
+        lockedByGate: lockedTaskIds.has(task.id),
+        layoutMode: renderedLayoutMode,
       },
     }));
+    const summaryNodes: Node[] = presentation.summaries.map((summary) => ({ id: summary.id, type: "phaseSummary", position: layout?.summaryPositions?.get(summary.id) ?? { x: 0, y: 0 }, data: { phaseName: graph.phases.find((phase) => phase.id === summary.phaseId)?.name ?? "Phase", laneName: graph.lanes.find((lane) => lane.id === summary.laneId)?.name ?? "Lane", taskCount: summary.taskIds.length, completedTaskCount: summary.completedTaskCount, dependencyCount: summary.dependencyCount, onExpand: () => togglePhase(summary.phaseId) } }));
     const gateNodes: Node[] = graph.gates.filter((gate) =>
       view.kind === "gate"
         ? gate.id === view.id
@@ -329,39 +407,95 @@ function WorkspaceViewer({
     ).map((gate) => {
       const required = graph.gateLinks.filter((link) => link.gateId === gate.id && link.kind === "required");
       const done = required.filter((link) => link.satisfied).length;
-      return { id: gate.id, type: "gate", position: layout?.gatePositions.get(gate.id) ?? { x: 0, y: 0 }, selected: gate.id === selectedId, data: { title: gate.name, publicId: gate.publicId, alias: gate.alias, gateId: gate.id, status: gate.status, summary: `${done}/${required.length} conditions satisfied`, dimmed: Boolean(selectedId && selectedId !== gate.id && !graph.gateLinks.some((link) => link.gateId === gate.id && link.taskId === selectedId)) } };
+      return { id: gate.id, type: "gate", position: layout?.gatePositions.get(gate.id) ?? { x: 0, y: 0 }, selected: gate.id === selectedId, data: { title: gate.name, publicId: gate.publicId, alias: gate.alias, gateId: gate.id, status: gate.status, summary: `${done}/${required.length} conditions satisfied`, compact: gate.status === "passed", dimmed: Boolean(selectedId && selectedId !== gate.id && !graph.gateLinks.some((link) => link.gateId === gate.id && link.taskId === selectedId)) } };
     });
-    return [...taskNodes, ...gateNodes];
-  }, [graph, visible, layout, selectedId, connected, laneFocus, view]);
+    return [...taskNodes, ...summaryNodes, ...gateNodes];
+  }, [graph, visible, layout, selectedId, connected, laneFocus, view, presentation, renderedLayoutMode, lockedTaskIds]);
+  const dependencyProjection = useMemo(() => {
+    const projected = projectDependencies(graph.dependencies, visible, presentation);
+    const rendered = renderedLayoutMode === "tree"
+      ? transitiveReduction(projected, (edge) => edge.source, (edge) => edge.target)
+      : projected;
+    const renderedIds = new Set(rendered.map((edge) => edge.id));
+    return {
+      rendered,
+      hidden: projected
+        .filter((edge) => !renderedIds.has(edge.id))
+        .map((edge) => edge.source + "->" + edge.target),
+    };
+  }, [graph.dependencies, visible, presentation, renderedLayoutMode]);
+
 
   const edges = useMemo<Edge[]>(() => {
-    const dependencies: Edge[] = graph.dependencies.filter((edge) => visible.has(edge.fromTaskId) && visible.has(edge.toTaskId)).map((edge) => ({
+    const dependencies: Edge[] = dependencyProjection.rendered.map((edge) => ({
       id: edge.id,
-      source: edge.fromTaskId,
-      target: edge.toTaskId,
+      source: edge.source,
+      target: edge.target,
       className:
-        (laneFocus && (!laneFocus.has(edge.fromTaskId) || !laneFocus.has(edge.toTaskId))) ||
-        (connected && (!connected.has(edge.fromTaskId) || !connected.has(edge.toTaskId)))
+        (laneFocus && ((edge.sourceLaneId && edge.sourceLaneId !== focusedLaneId) || (edge.targetLaneId && edge.targetLaneId !== focusedLaneId))) ||
+        (connected && (!connected.has(edge.source) || !connected.has(edge.target)))
           ? "edge-dimmed"
           : "dependency-edge",
-      animated: graph.tasks.find((task) => task.id === edge.toTaskId)?.status === "in_progress",
+      animated: graph.tasks.find((task) => task.id === edge.target)?.status === "in_progress",
     }));
-    const colors: Record<GateLinkKind, string> = { required: "#8d5f39", reference: "#8b8b82", unlocks: "#366b62" };
-    const gateEdges: Edge[] = graph.gateLinks.filter((link) => visible.has(link.taskId)).map((link) => ({
-      id: `${link.gateId}-${link.taskId}-${link.kind}`,
-      source: link.kind === "unlocks" ? link.gateId : link.taskId,
-      target: link.kind === "unlocks" ? link.taskId : link.gateId,
-      label: link.kind,
-      style: { stroke: colors[link.kind], strokeDasharray: link.kind === "reference" ? "5 5" : undefined },
-      className:
-        (laneFocus && !laneFocus.has(link.taskId)) ||
-        (selectedId && selectedId !== link.taskId && selectedId !== link.gateId)
-          ? "edge-dimmed"
-          : "gate-edge",
-    }));
+    const gateEdges: Edge[] = graph.gateLinks.filter((link) => visible.has(link.taskId)).map((link) => {
+      const taskNodeId = presentation.summaryIdForTaskId.get(link.taskId) ?? link.taskId;
+      const gatePassed = graph.gates.find((gate) => gate.id === link.gateId)?.status === "passed";
+      const visual = link.kind === "required"
+        ? { className: "gate-edge-required", stroke: "#b87943", dash: undefined }
+        : link.kind === "unlocks"
+          ? gatePassed
+            ? { className: "gate-edge-unlocked", stroke: "#16856c", dash: undefined }
+            : { className: "gate-edge-locked", stroke: "#7257d9", dash: undefined }
+          : { className: "gate-edge-reference", stroke: "#8b8b82", dash: "5 5" };
+      const dimmed = (laneFocus && !laneFocus.has(link.taskId)) ||
+        (selectedId && selectedId !== link.taskId && selectedId !== link.gateId);
+      return {
+        id: `${link.gateId}-${link.taskId}-${link.kind}`,
+        source: link.kind === "unlocks" ? link.gateId : taskNodeId,
+        target: link.kind === "unlocks" ? taskNodeId : link.gateId,
+        style: { stroke: visual.stroke, strokeDasharray: visual.dash },
+        className: dimmed ? "edge-dimmed" : `gate-edge ${visual.className}`,
+        data: { relation: link.kind, locked: link.kind === "unlocks" && !gatePassed },
+      };
+    });
     return [...dependencies, ...gateEdges];
-  }, [graph, visible, connected, laneFocus, selectedId]);
+  }, [graph, visible, connected, laneFocus, selectedId, presentation, focusedLaneId, dependencyProjection]);
 
+  const togglePhase = (phaseId: string) => {
+    const next = new Set(collapsedPhaseIds);
+    const expanding = next.has(phaseId);
+    expanding ? next.delete(phaseId) : next.add(phaseId);
+    const focusRequest: PhaseFocusRequest = {
+      requestId: ++phaseFocusRequestIdRef.current,
+      phaseId: expanding ? phaseId : (graph.workspace.activePhaseId ?? phaseId),
+      edge: expanding ? "exit" : "entry",
+      reason: expanding ? "phase-expanded" : "phase-collapsed",
+    };
+    pendingPhaseFocusRef.current = focusRequest;
+    setCollapsedPhaseIds(next);
+    window.localStorage.setItem(`baley:collapsed-phases:${workspaceId}`, JSON.stringify([...next]));
+    traceViewer("phase-collapse:toggle", {
+      userEvent: "phase-toggle",
+      phaseId,
+      calculatedCollapsedPhaseIds: [...next],
+      calculatedFocusTarget: focusRequest,
+      reactState: [...collapsedPhaseIds],
+      renderedState: [...presentation.collapsedPhaseIds],
+    });
+  };
+  const changeLayoutMode = (nextMode: LayoutMode) => {
+    const persisted = writeLayoutMode(workspaceId, nextMode, window.localStorage);
+    traceViewer("canvas-layout:mode-selected", {
+      event: "click",
+      requestedMode: nextMode,
+      persistedMode: persisted ? readLayoutMode(workspaceId, window.localStorage) : undefined,
+      calculatedTargetState: nextMode,
+      reactState: { layoutMode, renderedLayoutMode },
+    });
+    setLayoutMode(nextMode);
+  };
+  useEffect(() => { const task = graph.tasks.find((item) => item.id === selectedId); if (task && presentation.collapsedPhaseIds.has(task.phaseId)) togglePhase(task.phaseId); }, [selectedId, graph.tasks, presentation.collapsedPhaseIds]);
   const selectedTask = graph.tasks.find((task) => task.id === selectedId);
   const selectedGate = graph.gates.find((gate) => gate.id === selectedId);
   const selectedBacklog = graph.backlogItems.find((item) => item.id === selectedBacklogId);
@@ -452,7 +586,7 @@ function WorkspaceViewer({
   if (!fixture && !loadError) return <main className="server-state" data-workspace-target={workspaceId}><h1>Baley</h1><p>Workspace graph를 불러오는 중입니다…</p></main>;
   if (!fixture && loadError) return <main className="server-state error"><h1>Server unavailable</h1><p>{loadError}</p><small>Viewer는 fixture로 대체 표시하지 않습니다.</small></main>;
   return (
-    <main className="app-shell" data-workspace-id={graph.workspace.id} data-auth-state="authenticated" data-role={membership.role}>
+    <main className="app-shell" data-workspace-id={graph.workspace.id} data-layout-mode={renderedLayoutMode} data-auth-state="authenticated" data-role={membership.role}>
       <header className="topbar">
         <button type="button" className="brand" aria-label="Go to Home" onClick={() => navigate({ kind: "multi" })}><div className="brand-mark">B</div><div><strong>Baley</strong><span>Visual MVP</span></div></button>
         <nav className="view-tabs" aria-label="Graph views">
@@ -475,14 +609,27 @@ function WorkspaceViewer({
 
       <section className={`workspace ${inspectorOpen ? "with-inspector" : ""}`} style={{ "--inspector-width": `${inspectorWidth}px` } as React.CSSProperties}>
         <div className="graph-wrap">
-          <div className="context-row"><div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1 className="workspace-context-title"><WorkspaceContextSwitcher membership={membership} memberships={memberships} currentWorkspaceName={graph.workspace.name} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} /><button type="button" className="workspace-id-copy" aria-label="Copy Workspace UUID" title="Copy Workspace UUID" onClick={() => void copyWorkspaceID()}><Copy size={14} /></button>{workspaceIDCopyState !== "idle" && <span className={`workspace-id-copied ${workspaceIDCopyState === "failed" ? "workspace-id-copy-failed" : ""}`} role="status">{workspaceIDCopyState === "copied" ? "UUID copied" : "Copy failed"}</span>}{workspaceContextLabel && <span className="workspace-view-context">/ {workspaceContextLabel}</span>}</h1></div><div className="context-actions">{loadError && <span className="poll-error">refresh failed</span>}<span className="readonly-badge">READ ONLY</span><button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button></div></div>
+          <div className="context-row">
+            <div><button type="button" className="workspace-home-link" aria-label="Go to Workspace Home" onClick={() => navigate({ kind: "multi" })}>WORKSPACE · REVISION {graph.workspace.revision}</button><h1 className="workspace-context-title"><WorkspaceContextSwitcher membership={membership} memberships={memberships} currentWorkspaceName={graph.workspace.name} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} /><button type="button" className="workspace-id-copy" aria-label="Copy Workspace UUID" title="Copy Workspace UUID" onClick={() => void copyWorkspaceID()}><Copy size={14} /></button>{workspaceIDCopyState !== "idle" && <span className={`workspace-id-copied ${workspaceIDCopyState === "failed" ? "workspace-id-copy-failed" : ""}`} role="status">{workspaceIDCopyState === "copied" ? "UUID copied" : "Copy failed"}</span>}{workspaceContextLabel && <span className="workspace-view-context">/ {workspaceContextLabel}</span>}</h1></div>
+            <div className="context-actions">
+              <div className="layout-mode-switch" role="group" aria-label="Canvas layout">
+                <button type="button" aria-pressed={layoutMode === "flow"} className={layoutMode === "flow" ? "active" : ""} onClick={() => changeLayoutMode("flow")}>Flow</button>
+                <button type="button" aria-pressed={layoutMode === "tree"} className={layoutMode === "tree" ? "active" : ""} onClick={() => changeLayoutMode("tree")}>Tree</button>
+              </div>
+              {loadError && <span className="poll-error">refresh failed</span>}
+              <span className="readonly-badge">READ ONLY</span>
+              <button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button>
+            </div>
+          </div>
           <div className="graph-canvas">
             <div ref={graphStageRef} className="graph-stage" aria-hidden={backlogListOpen || undefined}>
               <ReactFlow key={canvasKey(view)} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => setSelectedId(node.id)} onMoveEnd={(_, nextViewport) => traceCanvas("move:end", nextViewport)} minZoom={MIN_ZOOM} maxZoom={MAX_ZOOM} nodesDraggable={false} proOptions={{ hideAttribution: true }}>
+                <PhaseCollapseDiagnostics layoutMode={renderedLayoutMode} collapsedPhaseIds={presentation.collapsedPhaseIds} nodes={nodes} edges={edges} hiddenTransitiveEdges={dependencyProjection.hidden} />
                 <Background color="#d8d6ce" gap={24} size={1} />
-                <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} laneColors={laneColors} onOpenBacklog={() => openBacklogList("canvas")} onSelectBacklog={selectBacklogFromRail} setBacklogExpandButton={(node) => { backlogExpandButtonRef.current = node; }} /></ViewportPortal>
+                <ViewportPortal><CanvasOverlay graph={graph} layout={layout} view={view} navigate={navigate} laneColors={laneColors} onOpenBacklog={() => openBacklogList("canvas")} onSelectBacklog={selectBacklogFromRail} setBacklogExpandButton={(node) => { backlogExpandButtonRef.current = node; }} collapsedPhaseIds={presentation.collapsedPhaseIds} onTogglePhase={togglePhase} /></ViewportPortal>
                 <CanvasControls layout={layout} />
                 <Panel position="bottom-center" className="task-search-panel"><TaskSearch tasks={graph.tasks} onSelect={selectSearchResult} /></Panel>
+                <PhaseFocusController request={phaseFocusRequest} layout={layoutViewKey === canvasKey(view) ? layout : undefined} graph={graph} />
                 <TaskFocusController request={taskFocusRequest} layout={layoutViewKey === canvasKey(view) ? layout : undefined} />
               </ReactFlow>
             </div>
@@ -587,6 +734,100 @@ function TaskFocusController({ request, layout }: { request?: { taskId: string; 
   return null;
 }
 
+function PhaseFocusController({ request, layout, graph }: { request?: PhaseFocusRequest; layout?: GraphLayout; graph: WorkspaceFixture }) {
+  const store = useStoreApi();
+  const controllerReady = useStore((state) => Boolean(state.panZoom));
+  const handledRequestRef = useRef<number>();
+
+  useEffect(() => {
+    if (!request || !layout || !controllerReady || handledRequestRef.current === request.requestId) return;
+    const state = store.getState();
+    const panZoom = state.panZoom;
+    const canvasWidth = state.width || state.domNode?.clientWidth || 0;
+    const canvasHeight = state.height || state.domNode?.clientHeight || 0;
+    const gate = graph.gates.find((item) =>
+      request.edge === "entry" ? item.toPhaseId === request.phaseId : item.fromPhaseId === request.phaseId,
+    );
+    const gatePosition = gate ? layout.gatePositions.get(gate.id) : undefined;
+    const phaseRect = layout.phaseRects.find((item) => item.id === request.phaseId);
+    const phaseTaskPositions = graph.tasks
+      .filter((task) => task.phaseId === request.phaseId)
+      .map((task) => layout.taskPositions.get(task.id))
+      .filter((position): position is { x: number; y: number } => Boolean(position));
+    const fallbackY = phaseTaskPositions.length
+      ? Math.min(...phaseTaskPositions.map((position) => position.y)) + NODE_HEIGHT / 2
+      : layout.height / 2;
+    const gateWidth = gate?.status === "passed" ? 90 : 210;
+    const gateHeight = gate?.status === "passed" ? 58 : 110;
+    const anchor = gatePosition
+      ? { x: gatePosition.x + gateWidth / 2, y: gatePosition.y + gateHeight / 2 }
+      : phaseRect
+        ? {
+            x: request.edge === "entry" ? phaseRect.x + 32 : phaseRect.x + phaseRect.width - 32,
+            y: fallbackY,
+          }
+        : undefined;
+    const zoom = Math.min(1, Math.max(state.minZoom, state.transform[2]));
+    const viewport = anchor
+      ? focusViewportOnAnchor(anchor, canvasWidth, canvasHeight, zoom, request.edge === "entry" ? 0.2 : 0.78, 0.5)
+      : undefined;
+    const viewportElement = state.domNode?.querySelector<HTMLElement>(".react-flow__viewport");
+    const renderedGate = gate ? state.domNode?.querySelector<HTMLElement>(`[data-id="${gate.id}"]`) : undefined;
+    const renderedGateRect = renderedGate?.getBoundingClientRect();
+    traceViewer("phase-focus:request", {
+      userEvent: request.reason,
+      calculatedTarget: { request, gateId: gate?.id, anchor, viewport },
+      reactState: { layoutReady: Boolean(layout), graphWorkspaceId: graph.workspace.id },
+      store: {
+        transform: state.transform,
+        size: { width: state.width, height: state.height },
+        nodeCount: state.nodeLookup.size,
+      },
+      controllerState: { ready: controllerReady, panZoomReady: Boolean(panZoom) },
+      renderedDom: {
+        viewportTransform: viewportElement?.style.transform,
+        gatePresent: Boolean(renderedGate),
+        gateRect: renderedGateRect
+          ? { x: renderedGateRect.x, y: renderedGateRect.y, width: renderedGateRect.width, height: renderedGateRect.height }
+          : undefined,
+      },
+    });
+    if (!panZoom || !viewport) return;
+
+    handledRequestRef.current = request.requestId;
+    const controllerUpdate = panZoom.setViewport(viewport, { duration: 0 });
+    store.setState({ transform: [viewport.x, viewport.y, viewport.zoom] });
+    if (viewportElement) viewportElement.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
+    window.requestAnimationFrame(() => {
+      const committed = store.getState();
+      const committedViewport = committed.domNode?.querySelector<HTMLElement>(".react-flow__viewport");
+      const committedGate = gate ? committed.domNode?.querySelector<HTMLElement>(`[data-id="${gate.id}"]`) : undefined;
+      const committedGateRect = committedGate?.getBoundingClientRect();
+      traceViewer("phase-focus:applied", {
+        userEvent: request.reason,
+        calculatedTarget: { request, gateId: gate?.id, anchor, viewport },
+        reactState: { handledRequestId: handledRequestRef.current },
+        store: { transform: committed.transform, nodeCount: committed.nodeLookup.size },
+        controllerState: { ready: Boolean(committed.panZoom) },
+        renderedDom: {
+          viewportTransform: committedViewport?.style.transform,
+          gatePresent: Boolean(committedGate),
+          gateRect: committedGateRect
+            ? { x: committedGateRect.x, y: committedGateRect.y, width: committedGateRect.width, height: committedGateRect.height }
+            : undefined,
+        },
+      });
+    });
+    void controllerUpdate.catch((error: unknown) => {
+      traceViewer("phase-focus:controller-failed", {
+        requestId: request.requestId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, [controllerReady, graph, layout, request, store]);
+
+  return null;
+}
 function InspectorResizeHandle({ width, onWidth }: { width: number; onWidth: (width: number) => void }) {
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     const startX = event.clientX;
@@ -634,7 +875,7 @@ function Inspector({ fixture, task, backlog, gateId, onLane, onGate }: { fixture
     const links = fixture.gateLinks.filter((link) => link.gateId === gateId);
     return <aside className="inspector"><div className="inspector-kicker">GATE INSPECTOR</div><div className="inspector-id">GATE G#{gate.publicId}</div><h2>{gate.name}</h2><span className={`status-pill status-${gate.status}`}>{gate.status}</span><p>Build Phase를 완료하고 Validate Phase로 진입하기 위한 동기화 지점입니다.</p><Section title="Identity"><span className="meta-value">{gate.alias ? `Alias · ${gate.alias}` : "No alias"}</span><code>{gate.id}</code></Section><Section title="Conditions">{links.map((link) => <div className="relation-row" key={`${link.taskId}-${link.kind}`}><span>{link.satisfied ? link.satisfactionReason : link.kind}</span><strong>{fixture.tasks.find((task) => task.id === link.taskId)?.title}</strong></div>)}</Section><button className="primary-button" onClick={() => onGate(gate.id)}>Open gate focus</button></aside>;
   }
-  if (!task) return <aside className="inspector empty"><div className="empty-symbol">↗</div><h2>Follow the work</h2><p>Task 또는 Gate를 선택하면 현재 상태와 연결 관계를 확인할 수 있습니다.</p><div className="legend"><span><i className="dot done" />Done</span><span><i className="dot running" />Running</span><span><i className="dot blocked" />Blocked</span><span><i className="dot ready" />Ready</span></div></aside>;
+  if (!task) return <aside className="inspector empty"><div className="empty-symbol"></div><h2>Follow the work</h2><p>{"\uC791\uC5C5 \uB610\uB294 Gate\uB97C \uC120\uD0DD\uD558\uBA74 \uC5F0\uACB0\uB41C \uD750\uB984\uACFC \uD604\uC7AC \uC0C1\uD0DC\uB97C \uD655\uC778\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4."}</p><div className="legend"><span><i className="dot done" />Done</span><span><i className="dot running" />Running</span><span><i className="dot blocked" />Blocked</span><span><i className="dot ready" />Ready</span></div></aside>;
   const lane = fixture.lanes.find((item) => item.id === task.laneId)!;
   const phase = fixture.phases.find((item) => item.id === task.phaseId)!;
   const gateLinks = fixture.gateLinks.filter((link) => link.taskId === task.id);
@@ -653,7 +894,18 @@ function Inspector({ fixture, task, backlog, gateId, onLane, onGate }: { fixture
       shortSummary: `completion=${evidence.completionReportRecordId}; review=${evidence.independentReviewRecordId}; blockers=${evidence.unresolvedBlockingCount}`,
     })),
   ];
-  return <aside className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><div className="inspector-id">TASK #{task.publicId}</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span><p>{task.description}</p><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.currentSummary && <Section title="Current summary"><span className="evidence-copy">{task.currentSummary}</span></Section>}{task.nextAction && <Section title="Next action"><span className="evidence-copy">{task.nextAction}</span></Section>}{task.implementedAssessment && <Section title="Implementation assessment"><span className="evidence-copy">{task.implementedAssessment}</span></Section>}{task.effectiveAcceptanceMode && <Section title="Acceptance"><span className="meta-value">{task.effectiveAcceptanceMode}</span><span className="evidence-copy">Policy {task.acceptancePolicyVersion} · Profile {task.evidenceProfileId}</span>{task.acceptanceEvaluation && <span className="evidence-copy">{task.acceptanceEvaluation.eligible ? "Evidence eligible" : `Evidence pending: ${task.acceptanceEvaluation.reasons.join(", ")}`}</span>}</Section>}{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((edge) => <div className="relation-row" key={edge.id}><span>from</span><strong>#{fixture.tasks.find((item) => item.id === edge.fromTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title}</strong></div>)}{downstream.map((edge) => <div className="relation-row" key={edge.id}><span>to</span><strong>#{fixture.tasks.find((item) => item.id === edge.toTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.toTaskId)?.title}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">Independent path</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => { const linkedGate = fixture.gates.find((gate) => gate.id === link.gateId); return <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>{linkedGate ? `G#${linkedGate.publicId} ${linkedGate.name}` : link.gateId}</strong></button>; })}</Section>}<Section title="Runs">{runs.map((run) => <div className="evidence-row" key={run.id}><div><strong>{run.kind.replaceAll("_", " ")}</strong><span>{run.status}</span></div>{(run.resultSummary || run.errorSummary) && <p>{run.resultSummary || run.errorSummary}</p>}</div>)}{runs.length === 0 && <span className="muted">No Runs recorded</span>}</Section><Section title="Task Records">{records.map((record) => <div className="evidence-row" key={record.id}><div><strong>{record.recordType}</strong><span>{record.state}</span></div><code>{record.relativePath}</code><p>{record.shortSummary}</p></div>)}{records.length === 0 && <span className="muted">No Task Records indexed</span>}</Section><section className="command-hint"><strong>LLM command only</strong><p>Use Baley Skill commands to update task #{task.publicId}.</p></section></aside>;
+  const inspectorRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const children = inspectorRef.current ? [...inspectorRef.current.children].map((element) => ({ tag: element.tagName, className: element.className, text: element.textContent?.slice(0, 48) })) : [];
+    traceViewer("task-inspector:rendered", {
+      userEvent: "task-selection",
+      calculatedTarget: { taskId: task.publicId, hasCurrentSummary: Boolean(task.currentSummary) },
+      reactState: { taskId: task.publicId, currentSummary: task.currentSummary, description: task.description },
+      controllerState: "not-applicable",
+      renderedDom: { childOrder: children },
+    });
+  }, [task.publicId, task.currentSummary, task.description]);
+  return <aside ref={inspectorRef} className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><div className="inspector-id">TASK #{task.publicId}</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span>{task.currentSummary && <p className="task-current-summary">{task.currentSummary}</p>}<p className="task-description">{task.description}</p><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.nextAction && <Section title="Next action"><span className="evidence-copy">{task.nextAction}</span></Section>}{task.implementedAssessment && <Section title="Implementation assessment"><span className="evidence-copy">{task.implementedAssessment}</span></Section>}{task.effectiveAcceptanceMode && <Section title="Acceptance"><span className="meta-value">{task.effectiveAcceptanceMode}</span><span className="evidence-copy">Policy {task.acceptancePolicyVersion} · Profile {task.evidenceProfileId}</span>{task.acceptanceEvaluation && <span className="evidence-copy">{task.acceptanceEvaluation.eligible ? "Evidence eligible" : `Evidence pending: ${task.acceptanceEvaluation.reasons.join(", ")}`}</span>}</Section>}{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((edge) => <div className="relation-row" key={edge.id}><span>from</span><strong>#{fixture.tasks.find((item) => item.id === edge.fromTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title}</strong></div>)}{downstream.map((edge) => <div className="relation-row" key={edge.id}><span>to</span><strong>#{fixture.tasks.find((item) => item.id === edge.toTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.toTaskId)?.title}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">Independent path</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => { const linkedGate = fixture.gates.find((gate) => gate.id === link.gateId); return <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>{linkedGate ? `G#${linkedGate.publicId} ${linkedGate.name}` : link.gateId}</strong></button>; })}</Section>}<Section title="Runs">{runs.map((run) => <div className="evidence-row" key={run.id}><div><strong>{run.kind.replaceAll("_", " ")}</strong><span>{run.status}</span></div>{(run.resultSummary || run.errorSummary) && <p>{run.resultSummary || run.errorSummary}</p>}</div>)}{runs.length === 0 && <span className="muted">No Runs recorded</span>}</Section><Section title="Task Records">{records.map((record) => <div className="evidence-row" key={record.id}><div><strong>{record.recordType}</strong><span>{record.state}</span></div><code>{record.relativePath}</code><p>{record.shortSummary}</p></div>)}{records.length === 0 && <span className="muted">No Task Records indexed</span>}</Section><section className="command-hint"><strong>LLM command only</strong><p>Use Baley Skill commands to update task #{task.publicId}.</p></section></aside>;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) { return <section className="inspector-section"><h3>{title}</h3>{children}</section>; }
@@ -733,13 +985,32 @@ function CanvasControls({ layout }: { layout?: GraphLayout }) {
   </Panel>;
 }
 
-function CanvasOverlay({ graph, layout, view, navigate, laneColors, onOpenBacklog, onSelectBacklog, setBacklogExpandButton }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void; laneColors: Record<string, string>; onOpenBacklog: () => void; onSelectBacklog: (item: BacklogItem) => void; setBacklogExpandButton: React.RefCallback<HTMLButtonElement> }) {
+function PhaseCollapseDiagnostics({ layoutMode, collapsedPhaseIds, nodes, edges, hiddenTransitiveEdges }: { layoutMode: LayoutMode; collapsedPhaseIds: ReadonlySet<string>; nodes: Node[]; edges: Edge[]; hiddenTransitiveEdges: string[] }) {
+  const store = useStoreApi();
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const frame = window.requestAnimationFrame(() => {
+      const state = store.getState() as unknown as { nodeLookup: Map<string, unknown>; edgeLookup?: Map<string, unknown> };
+      traceViewer("canvas-layout:rendered", {
+        renderedMode: layoutMode,
+        calculatedCollapsedPhaseIds: [...collapsedPhaseIds],
+        calculatedHiddenTransitiveEdges: hiddenTransitiveEdges,
+        reactState: { nodePositions: nodes.map((node) => ({ id: node.id, x: node.position.x, y: node.position.y })), edgeEndpoints: edges.map((edge) => `${edge.source}->${edge.target}`) },
+        reactFlowStore: { nodeCount: state.nodeLookup.size, edgeCount: state.edgeLookup?.size ?? 0 },
+        renderedDom: { nodes: [...document.querySelectorAll<HTMLElement>(".react-flow__node")].map((node) => ({ id: node.dataset.id, rect: node.getBoundingClientRect().toJSON() })), edgeCount: document.querySelectorAll(".react-flow__edge").length },
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [layoutMode, collapsedPhaseIds, nodes, edges, hiddenTransitiveEdges, store]);
+  return null;
+}
+function CanvasOverlay({ graph, layout, view, navigate, laneColors, onOpenBacklog, onSelectBacklog, setBacklogExpandButton, collapsedPhaseIds, onTogglePhase }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void; laneColors: Record<string, string>; onOpenBacklog: () => void; onSelectBacklog: (item: BacklogItem) => void; setBacklogExpandButton: React.RefCallback<HTMLButtonElement>; collapsedPhaseIds: ReadonlySet<string>; onTogglePhase: (phaseId: string) => void }) {
   const focusedLaneId = view.kind === "lane" ? view.id : undefined;
   const band = focusedLaneId && layout ? laneBandRect(layout, focusedLaneId) : undefined;
   return <div className="graph-overlay" style={{ width: layout?.width, height: layout?.height }}>
     {layout?.phaseRects.map((rect, index) => {
       const phase = graph.phases.find((item) => item.id === rect.id);
-      return <div key={rect.id} className={`phase-container phase-${phase?.state}`} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}><span>PHASE {String(index + 1).padStart(2, "0")} · {phase?.state}</span><strong>{phase?.name}</strong></div>;
+      const collapsible = phase?.state === "completed"; const collapsed = Boolean(phase && collapsedPhaseIds.has(phase.id)); return <div key={rect.id} className={`phase-container phase-${phase?.state}`} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}><span>PHASE {String(index + 1).padStart(2, "0")}{" \u00B7 "}{phase?.state}</span><strong>{phase?.name}</strong>{collapsible && <button type="button" className="phase-collapse-toggle" aria-expanded={!collapsed} onClick={() => onTogglePhase(phase!.id)}>{collapsed ? "Expand phase" : "Collapse phase"}</button>}</div>;
     })}
     {band && <div className="lane-focus-band" style={{ left: band.x, top: band.y, width: band.width, height: band.height, "--lane-color": laneColors[focusedLaneId!] ?? "#579bfc" } as React.CSSProperties} />}
     {layout && graph.gates.map((gate) => {

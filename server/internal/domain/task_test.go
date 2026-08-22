@@ -36,16 +36,17 @@ func TestTaskAllowedLifecycle(t *testing.T) {
 
 func TestTaskUpdateChangesOnlyRequestedContentAndRejectsTerminalTasks(t *testing.T) {
 	description := "updated description"
+	summary := "People can see the outcome first."
 	original := Task{ID: "task", Title: "original title", Description: "original description", CurrentSummary: "keep", NextAction: "keep", Status: TaskPending}
-	updated, err := original.Update(nil, &description)
-	if err != nil || updated.Title != original.Title || updated.Description != description || updated.CurrentSummary != original.CurrentSummary || updated.NextAction != original.NextAction {
+	updated, err := original.Update(nil, &description, &summary)
+	if err != nil || updated.Title != original.Title || updated.Description != description || updated.CurrentSummary != summary || updated.NextAction != original.NextAction {
 		t.Fatalf("description-only update = %+v, %v", updated, err)
 	}
-	if _, err = original.Update(nil, nil); err == nil {
+	if _, err = original.Update(nil, nil, nil); err == nil {
 		t.Fatal("empty content update accepted")
 	}
 	for _, status := range []TaskStatus{TaskConfirmed, TaskDiscarded} {
-		if _, err = (Task{ID: "task", Title: "original", Status: status}).Update(&description, nil); err == nil {
+		if _, err = (Task{ID: "task", Title: "original", Status: status}).Update(&description, nil, nil); err == nil {
 			t.Fatalf("terminal %s update accepted", status)
 		}
 	}

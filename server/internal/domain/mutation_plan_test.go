@@ -610,12 +610,12 @@ func TestPlanTaskUpdateProtectsTerminalTask(t *testing.T) {
 	task := Task{ID: "task", Title: "old", Status: TaskInProgress}
 	workspace := Workspace{ID: task.WorkspaceID, State: WorkspaceActive}
 	title, description := "new", "description"
-	next, plan := PlanTaskUpdate(workspace, task, &title, &description)
+	next, plan := PlanTaskUpdate(workspace, task, &title, &description, nil)
 	if plan.Evaluation.HasErrors() || next.Title != "new" || plan.Events[0].Type != "task.updated" {
 		t.Fatalf("update failed: %+v", plan)
 	}
 	task.Status = TaskConfirmed
-	_, plan = PlanTaskUpdate(workspace, task, &title, nil)
+	_, plan = PlanTaskUpdate(workspace, task, &title, nil, nil)
 	if !plan.Evaluation.HasErrors() {
 		t.Fatal("terminal Task updated")
 	}

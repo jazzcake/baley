@@ -34,11 +34,12 @@ type taskReportImplementedArgs struct {
 	Assessment  string `json:"assessment"`
 }
 type taskMutationArgs struct {
-	WorkspaceID string  `json:"workspaceId"`
-	TaskID      int     `json:"taskId"`
-	Title       *string `json:"title,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Reason      string  `json:"reason,omitempty"`
+	WorkspaceID    string  `json:"workspaceId"`
+	TaskID         int     `json:"taskId"`
+	Title          *string `json:"title,omitempty"`
+	Description    *string `json:"description,omitempty"`
+	CurrentSummary *string `json:"currentSummary,omitempty"`
+	Reason         string  `json:"reason,omitempty"`
 }
 type taskCreateArgs struct {
 	WorkspaceID             string `json:"workspaceId"`
@@ -48,6 +49,7 @@ type taskCreateArgs struct {
 	ParentTaskID            int    `json:"parentTaskId,omitempty"`
 	Title                   string `json:"title"`
 	Description             string `json:"description,omitempty"`
+	CurrentSummary          string `json:"currentSummary,omitempty"`
 	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
 	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
 	TerminalReason          string `json:"terminalReason,omitempty"`
@@ -521,7 +523,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			}
 			parentID = parent.ID
 		}
-		task := domain.Task{ID: args.TaskUUID, PublicID: publicID, WorkspaceID: args.WorkspaceID, LaneID: args.LaneID, PhaseID: args.PhaseID, ParentTaskID: parentID, Title: args.Title, Description: args.Description, Status: domain.TaskPending, TerminalReason: strings.TrimSpace(args.TerminalReason), PhasePosition: phase.Position}
+		task := domain.Task{ID: args.TaskUUID, PublicID: publicID, WorkspaceID: args.WorkspaceID, LaneID: args.LaneID, PhaseID: args.PhaseID, ParentTaskID: parentID, Title: args.Title, Description: args.Description, CurrentSummary: strings.TrimSpace(args.CurrentSummary), Status: domain.TaskPending, TerminalReason: strings.TrimSpace(args.TerminalReason), PhasePosition: phase.Position}
 		graph, graphEvaluation := workspaceGraph(snapshot)
 		result.Errors = append(result.Errors, graphEvaluation.Errors...)
 		if graphEvaluation.HasErrors() {
@@ -922,7 +924,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		var domainPlan domain.DomainMutationPlan
 		switch request.Name {
 		case "task.update":
-			next, domainPlan = domain.PlanTaskUpdate(domainWorkspace(snapshot), current, args.Title, args.Description)
+			next, domainPlan = domain.PlanTaskUpdate(domainWorkspace(snapshot), current, args.Title, args.Description, args.CurrentSummary)
 		case "task.block", "task.unblock", "task.rework", "task.discard":
 			next, domainPlan = domain.PlanTaskMutation(domainWorkspace(snapshot), request.Name, current, args.Reason, s.now().UTC())
 		case "task.set_terminal", "task.clear_terminal":

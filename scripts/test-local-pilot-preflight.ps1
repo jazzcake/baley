@@ -68,11 +68,11 @@ if ($null -ne $codexCLI) {
       $mcpHTTPRegistration =
         $mcpConfig.transport.type -eq "streamable_http" -and
         $mcpConfig.transport.url -eq "http://127.0.0.1:8091/mcp" -and
-        $mcpConfig.transport.bearer_token_env_var -eq "BALEY_AGENT_TOKEN"
+        $mcpConfig.transport.bearer_token_env_var -eq "BALEY_MCP_GATEWAY_TOKEN"
     }
   } catch {}
 }
-$checks += Add-Check "codex-mcp-shared-http" $mcpHTTPRegistration "Streamable HTTP adapter uses BALEY_AGENT_TOKEN without URL credentials"
+$checks += Add-Check "codex-mcp-shared-http" $mcpHTTPRegistration "Streamable HTTP adapter uses BALEY_MCP_GATEWAY_TOKEN without URL credentials"
 $baleyPluginInstalled = $false
 $baleyPluginSkills = $false
 if ($null -ne $codexCLI) {

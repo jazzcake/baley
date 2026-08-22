@@ -54,6 +54,10 @@ When no live Baley tool exists, state that only fixture or document context is a
 
 Treat multiple predecessor/successor edges and disconnected DAG components as valid domain shapes. Their validity does not authorize the LLM to introduce a new disconnected component without explicit user intent.
 
+## Task summaries
+
+For every new or edited Task, include `currentSummary` whenever an easy explanation is useful. Write one or two short, plain-language sentences that explain the user value and expected result; avoid implementation jargon, internal IDs, or compressed specification language. Keep `description` as the detailed implementation contract. `currentSummary` is optional so existing Tasks without one continue to display their description normally.
+
 ## Write Requests
 
 Translate natural language into a typed command. For routine Operator writes, create the required preview internally and execute seamlessly; do not expose it as a blocking approval step. Keep the preview as an audit/checkpoint artifact and report the resulting IDs and Events after execution.

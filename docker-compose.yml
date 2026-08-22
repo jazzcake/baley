@@ -8,6 +8,7 @@ services:
       # Use the shared container's unique name rather than a generic network alias.
       BALEY_DATABASE_URL: postgres://baley_app:${BALEY_DB_PASSWORD}@local-dev-postgres:5432/baley?sslmode=disable
       BALEY_VIEWER_ORIGINS: http://127.0.0.1:5174,http://jazzcake-home.tail87e929.ts.net,https://jazzcake-home.tail87e929.ts.net
+      BALEY_MCP_APPROVAL_ORIGIN: https://jazzcake-home.tail87e929.ts.net
       BALEY_COOKIE_SECURE: "false"
     ports:
       - "127.0.0.1:8080:8080"
@@ -47,14 +48,19 @@ services:
     environment:
       BALEY_SERVER_URL: http://api:8080
       BALEY_MCP_HTTP_ADDR: 0.0.0.0:8090
+      BALEY_MCP_GATEWAY_TOKEN: ${BALEY_MCP_GATEWAY_TOKEN:?Run scripts/sync-baley-mcp-http-token.ps1 before starting MCP.}
+      BALEY_MCP_CREDENTIAL_STORE: /var/lib/baley-mcp/credentials.json
     ports:
       - "127.0.0.1:8091:8090"
     depends_on:
       api:
         condition: service_healthy
+    volumes:
+      - baley-mcp-state:/var/lib/baley-mcp
 
 volumes:
   baley-server-state:
+  baley-mcp-state:
 
 networks:
   local-dev:

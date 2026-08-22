@@ -3,6 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +32,16 @@ type credentialStore struct {
 	ServerURL          string                                `json:"serverUrl"`
 	Workspaces         map[string]workspaceCredential        `json:"workspaces"`
 	PendingConnections map[string]pendingWorkspaceConnection `json:"pendingConnections,omitempty"`
+}
+
+// credentialStoreDisk keeps the server URL available for safe routing while the
+// Workspace tokens and pending connection secrets stay encrypted. The encryption
+// key is derived from the local HTTP gateway token, which is already the
+// per-user secret required to reach this loopback MCP service.
+type credentialStoreDisk struct {
+	Version    int    `json:"version"`
+	ServerURL  string `json:"serverUrl"`
+	Ciphertext string `json:"ciphertext,omitempty"`
 }
 
 type pendingWorkspaceConnection struct {
@@ -84,7 +100,7 @@ func requestWorkspaceID(path string, payload any) string {
 func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (string, *mcp.CallToolResult, error) {
 	c.connectionMu.Lock()
 	defer c.connectionMu.Unlock()
-	store, err := c.readCredentialStore()
+	store, err := c.readCredentialStore(ctx)
 	if err != nil {
 		return "", nil, err
 	}
@@ -100,7 +116,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 				return "", nil, err
 			}
 			delete(store.PendingConnections, workspaceID)
-			if writeErr := c.writeCredentialStore(store); writeErr != nil {
+			if writeErr := c.writeCredentialStore(ctx, store); writeErr != nil {
 				return "", nil, writeErr
 			}
 			// A not-found connection request has expired or been consumed. Start
@@ -112,7 +128,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			// The token itself is the authoritative successful hand-off.
 			store.Workspaces[workspaceID] = workspaceCredential{AgentToken: response.AgentToken, ConnectedAt: time.Now().UTC()}
 			delete(store.PendingConnections, workspaceID)
-			if err = c.writeCredentialStore(store); err != nil {
+			if err = c.writeCredentialStore(ctx, store); err != nil {
 				return "", nil, err
 			}
 			return response.AgentToken, nil, nil
@@ -126,7 +142,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 		return "", nil, err
 	}
 	store.PendingConnections[workspaceID] = pending
-	if err = c.writeCredentialStore(store); err != nil {
+	if err = c.writeCredentialStore(ctx, store); err != nil {
 		return "", nil, err
 	}
 	return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
@@ -204,21 +220,38 @@ func pendingStructured(result *mcp.CallToolResult) any {
 	return result.StructuredContent
 }
 
-func (c *client) readCredentialStore() (credentialStore, error) {
-	store := credentialStore{Version: 2, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
-	raw, err := os.ReadFile(c.credentialStorePath)
+func (c *client) readCredentialStore(ctx context.Context) (credentialStore, error) {
+	store := credentialStore{Version: 3, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
+	path := c.credentialStorePath
+	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
 	}
 	if err != nil {
 		return store, fmt.Errorf("read Baley credential store: %w", err)
 	}
-	if err = json.Unmarshal(raw, &store); err != nil {
+	var disk credentialStoreDisk
+	if err = json.Unmarshal(raw, &disk); err != nil {
 		return store, errors.New("Baley credential store is invalid JSON")
 	}
-	if store.ServerURL != "" && strings.TrimRight(store.ServerURL, "/") != c.base {
+	if disk.ServerURL != "" && strings.TrimRight(disk.ServerURL, "/") != c.base {
 		return store, errors.New("Baley credential store belongs to a different server URL")
 	}
+	if disk.Ciphertext != "" {
+		if c.gatewayToken == "" {
+			return store, errors.New("Baley encrypted credential store requires BALEY_MCP_GATEWAY_TOKEN")
+		}
+		plaintext, decryptErr := c.decryptCredentialStore(disk.Ciphertext)
+		if decryptErr != nil {
+			return store, fmt.Errorf("decrypt Baley credential store: %w", decryptErr)
+		}
+		if err = json.Unmarshal(plaintext, &store); err != nil {
+			return store, errors.New("Baley credential store contains invalid encrypted JSON")
+		}
+	} else if err = json.Unmarshal(raw, &store); err != nil {
+		return store, errors.New("Baley credential store is invalid JSON")
+	}
+	store.Version = 3
 	store.ServerURL = c.base
 	if store.Workspaces == nil {
 		store.Workspaces = map[string]workspaceCredential{}
@@ -226,21 +259,39 @@ func (c *client) readCredentialStore() (credentialStore, error) {
 	if store.PendingConnections == nil {
 		store.PendingConnections = map[string]pendingWorkspaceConnection{}
 	}
-	if store.Version < 2 {
-		store.Version = 2
+	if disk.Ciphertext == "" && c.gatewayToken != "" {
+		if err = c.writeCredentialStore(ctx, store); err != nil {
+			return store, fmt.Errorf("migrate Baley credential store: %w", err)
+		}
 	}
 	return store, nil
 }
 
-func (c *client) writeCredentialStore(store credentialStore) error {
-	if err := os.MkdirAll(filepath.Dir(c.credentialStorePath), 0o700); err != nil {
+func (c *client) writeCredentialStore(ctx context.Context, store credentialStore) error {
+	path := c.credentialStorePath
+	if path == "" {
+		return errors.New("Baley credential store is not configured")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create Baley credential directory: %w", err)
 	}
+	store.Version = 3
+	store.ServerURL = c.base
 	raw, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(c.credentialStorePath), ".credentials-*.tmp")
+	if c.gatewayToken != "" {
+		ciphertext, encryptErr := c.encryptCredentialStore(raw)
+		if encryptErr != nil {
+			return fmt.Errorf("encrypt Baley credential store: %w", encryptErr)
+		}
+		raw, err = json.MarshalIndent(credentialStoreDisk{Version: 3, ServerURL: c.base, Ciphertext: ciphertext}, "", "  ")
+		if err != nil {
+			return err
+		}
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".credentials-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -255,20 +306,61 @@ func (c *client) writeCredentialStore(store credentialStore) error {
 	if err != nil {
 		return fmt.Errorf("write Baley credential store: %w", err)
 	}
-	if err = os.Rename(temporaryName, c.credentialStorePath); err != nil {
+	if err = os.Rename(temporaryName, path); err != nil {
 		return fmt.Errorf("replace Baley credential store: %w", err)
 	}
 	return nil
 }
 
-func (c *client) removeWorkspaceCredential(workspaceID string) error {
+func (c *client) credentialStoreAEAD() (cipher.AEAD, error) {
+	if c.gatewayToken == "" {
+		return nil, errors.New("gateway token is empty")
+	}
+	mac := hmac.New(sha256.New, []byte(c.gatewayToken))
+	_, _ = mac.Write([]byte("baley/mcp-credential-store/v1\n" + c.base))
+	block, err := aes.NewCipher(mac.Sum(nil))
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func (c *client) encryptCredentialStore(plaintext []byte) (string, error) {
+	aead, err := c.credentialStoreAEAD()
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err = rand.Read(nonce); err != nil {
+		return "", err
+	}
+	ciphertext := aead.Seal(nil, nonce, plaintext, []byte("baley/mcp-credential-store/v1\n"+c.base))
+	return base64.RawURLEncoding.EncodeToString(append(nonce, ciphertext...)), nil
+}
+
+func (c *client) decryptCredentialStore(encoded string) ([]byte, error) {
+	aead, err := c.credentialStoreAEAD()
+	if err != nil {
+		return nil, err
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, errors.New("ciphertext is not base64url")
+	}
+	if len(raw) < aead.NonceSize() {
+		return nil, errors.New("ciphertext is too short")
+	}
+	return aead.Open(nil, raw[:aead.NonceSize()], raw[aead.NonceSize():], []byte("baley/mcp-credential-store/v1\n"+c.base))
+}
+
+func (c *client) removeWorkspaceCredential(ctx context.Context, workspaceID string) error {
 	c.connectionMu.Lock()
 	defer c.connectionMu.Unlock()
-	store, err := c.readCredentialStore()
+	store, err := c.readCredentialStore(ctx)
 	if err != nil {
 		return err
 	}
 	delete(store.Workspaces, workspaceID)
 	delete(store.PendingConnections, workspaceID)
-	return c.writeCredentialStore(store)
+	return c.writeCredentialStore(ctx, store)
 }

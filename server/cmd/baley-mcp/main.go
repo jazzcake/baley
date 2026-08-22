@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+
 	"strings"
 	"sync"
 	"time"
@@ -23,20 +25,10 @@ type client struct {
 	base                string
 	http                *http.Client
 	agentToken          string
+	gatewayToken        string
 	credentialStorePath string
 	agentActorID        string
 	connectionMu        sync.Mutex
-}
-
-type bearerTokenContextKey struct{}
-
-func withBearerToken(ctx context.Context, token string) context.Context {
-	return context.WithValue(ctx, bearerTokenContextKey{}, token)
-}
-
-func bearerToken(ctx context.Context) string {
-	token, _ := ctx.Value(bearerTokenContextKey{}).(string)
-	return token
 }
 
 type workspaceInput struct {
@@ -66,6 +58,7 @@ type taskCreateFields struct {
 	ParentTaskID            int    `json:"parentTaskId,omitempty"`
 	Title                   string `json:"title"`
 	Description             string `json:"description,omitempty"`
+	CurrentSummary          string `json:"currentSummary,omitempty" jsonschema:"Short, plain-language 1-2 sentence explanation for a human"`
 	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
 	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
 	TerminalReason          string `json:"terminalReason,omitempty"`
@@ -83,10 +76,11 @@ type taskCreateExecuteInput struct {
 	automaticEnvelope
 }
 type taskUpdateFields struct {
-	WorkspaceID string  `json:"workspaceId"`
-	TaskID      int     `json:"taskId"`
-	Title       *string `json:"title,omitempty"`
-	Description *string `json:"description,omitempty"`
+	WorkspaceID    string  `json:"workspaceId"`
+	TaskID         int     `json:"taskId"`
+	Title          *string `json:"title,omitempty"`
+	Description    *string `json:"description,omitempty"`
+	CurrentSummary *string `json:"currentSummary,omitempty" jsonschema:"Short, plain-language 1-2 sentence explanation for a human"`
 }
 type taskUpdatePreviewInput struct {
 	taskUpdateFields
@@ -565,88 +559,16 @@ func main() {
 		base:                strings.TrimRight(base, "/"),
 		http:                &http.Client{Timeout: 15 * time.Second},
 		agentToken:          strings.TrimSpace(os.Getenv("BALEY_AGENT_TOKEN")),
+		gatewayToken:        strings.TrimSpace(os.Getenv("BALEY_MCP_GATEWAY_TOKEN")),
 		credentialStorePath: strings.TrimSpace(os.Getenv("BALEY_MCP_CREDENTIAL_STORE")),
 		agentActorID:        strings.TrimSpace(os.Getenv("BALEY_AGENT_ACTOR_ID")),
 	}
 	if c.agentActorID == "" {
 		c.agentActorID = "00000000-0000-4000-8000-000000000003"
 	}
-	server := mcp.NewServer(&mcp.Implementation{Name: "baley", Version: "0.1.0"}, nil)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_workspace_get", Description: "Read Workspace metadata"}, c.workspaceGet)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_workspace_graph", Description: "Read the current Workspace graph"}, c.workspaceGraph)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_get", Description: "Read one Task by public ID"}, c.taskGet)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_get", Description: "Read a Task acceptance binding, policy/profile, assignments, and typed evidence"}, c.taskAcceptanceGet)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_lane_brief", Description: "Build a read-only active-Run-first lane recovery brief with evidence mismatch classification"}, c.laneBrief)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_list", Description: "List lane Backlog items with optional lane/status filters"}, c.backlogList)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_get", Description: "Read one Backlog item by B# public ID"}, c.backlogGet)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_status", Description: "Read Gate status and conditions"}, c.gateStatus)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_decision_list", Description: "List human decisions currently available"}, c.decisionList)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_event_list", Description: "List Workspace Events"}, c.eventList)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_mutation_attempt_list", Description: "List append-only Workspace mutation attempts"}, c.mutationAttemptList)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_list", Description: "List Workspace Runs"}, c.runList)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_record_list", Description: "List Task Record indexes without loading document bodies"}, c.recordList)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_start", Description: "Start a Run and automatically start a pending Task"}, c.runStart)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_heartbeat", Description: "Extend a running Run lease using token and Run version CAS"}, c.runHeartbeat)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_succeed", Description: "Mark a Run succeeded using Run version CAS"}, c.runSucceed)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_fail", Description: "Mark a Run failed using Run version CAS"}, c.runFail)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_cancel", Description: "Cancel a Run using Run version CAS"}, c.runCancel)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_interrupt", Description: "Interrupt a Run using Run version CAS"}, c.runInterrupt)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_run_correct", Description: "Correct a terminal Run with an explicit reason"}, c.runCorrect)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_repository_register", Description: "Register a Git repository and optional Task Record root"}, c.repositoryRegister)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_record_register", Description: "Register a repository-relative Task Record index"}, c.recordRegister)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_record_attach_commit", Description: "Attach commit and blob evidence to a Task Record"}, c.recordAttachCommit)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_commit_attach", Description: "Attach a Git commit reference to a Task"}, c.commitAttach)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_git_observe", Description: "Record non-authoritative Run Git metadata"}, c.gitObserve)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_report_implemented", Description: "Report implementation complete with assessment and explicit warning acknowledgement"}, c.taskReportImplemented)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_evidence_report", Description: "Append typed acceptance evidence and atomically auto-confirm an eligible delegated Task"}, c.taskEvidenceReport)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_policy_change_preview", Description: "Preview a human-approved future-Task acceptance policy change"}, c.acceptancePolicyChangePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_policy_change_execute", Description: "Execute an approved future-Task acceptance policy change"}, c.acceptancePolicyChangeExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_mode_escalate_preview", Description: "Preview monotonic delegated to human-required escalation"}, c.acceptanceModeEscalatePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_acceptance_mode_escalate_execute", Description: "Execute an approved monotonic acceptance escalation"}, c.acceptanceModeEscalateExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_preview", Description: "Preview atomic Task creation and initial relationships without writing"}, c.taskCreatePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_create_execute", Description: "Create a Task and its initial relationships after reviewing the preview"}, c.taskCreateExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_update_preview", Description: "Preview changing a Task title and/or description without writing"}, c.taskUpdatePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_update_execute", Description: "Update a non-terminal Task title and/or description after preview"}, c.taskUpdateExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_clear_terminal_preview", Description: "Preview removing a Task terminal reason so a successor can be connected"}, c.taskClearTerminalPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_clear_terminal_execute", Description: "Remove a Task terminal reason after preview"}, c.taskClearTerminalExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_dependency_patch_preview", Description: "Preview an atomic dependency graph rewrite without writing"}, c.dependencyPatchPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_dependency_patch_execute", Description: "Atomically apply dependency additions and removals after preview"}, c.dependencyPatchExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_create_preview", Description: "Preview creating a phase-free lane Backlog item"}, c.backlogCreatePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_create_execute", Description: "Create a phase-free lane Backlog item"}, c.backlogCreateExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_update_preview", Description: "Preview updating an active Backlog item"}, c.backlogUpdatePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_update_execute", Description: "Update an active Backlog item"}, c.backlogUpdateExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_move_preview", Description: "Preview moving an active Backlog item to another lane"}, c.backlogMovePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_move_execute", Description: "Move an active Backlog item to another lane"}, c.backlogMoveExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_reorder_preview", Description: "Preview replacing one lane's complete active Backlog order"}, c.backlogReorderPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_reorder_execute", Description: "Replace one lane's complete active Backlog order"}, c.backlogReorderExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_discard_preview", Description: "Preview audited soft-discard of a Backlog item"}, c.backlogDiscardPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_discard_execute", Description: "Soft-discard an active Backlog item"}, c.backlogDiscardExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_promote_preview", Description: "Preview atomic Backlog promotion into a phase-targeted pending Task"}, c.backlogPromotePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_backlog_promote_execute", Description: "Atomically promote Backlog into a pending Task with exact warning acknowledgement"}, c.backlogPromoteExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_phase_create_preview", Description: "Preview appending a Phase without writing"}, c.phaseCreatePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_phase_create_execute", Description: "Append a Phase after reviewing the preview"}, c.phaseCreateExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_lane_create_preview", Description: "Preview creating a Lane without writing"}, c.laneCreatePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_lane_create_execute", Description: "Create a Lane after reviewing the preview"}, c.laneCreateExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_create_preview", Description: "Preview creating a Phase Gate without writing"}, c.gateCreatePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_create_execute", Description: "Create a Phase Gate after reviewing the preview"}, c.gateCreateExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_task_preview", Description: "Preview attaching a Task as a Gate condition without writing"}, c.gateAttachTaskPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_task_execute", Description: "Attach a Task to a Gate; active Gates require fields from an explicitly approved fresh preview"}, c.gateAttachTaskExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_entry_task_preview", Description: "Preview binding a to-Phase Task as work unlocked by a Gate"}, c.gateAttachEntryTaskPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_attach_entry_task_execute", Description: "Bind a to-Phase Task as work unlocked by a Gate"}, c.gateAttachEntryTaskExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_detach_entry_task_preview", Description: "Preview removing an explicit Gate entry Task binding"}, c.gateDetachEntryTaskPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_detach_entry_task_execute", Description: "Remove an explicit Gate entry Task binding and restore automatic root selection when none remain"}, c.gateDetachEntryTaskExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_preview", Description: "Preview Task confirmation without writing"}, c.taskConfirmPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_confirm_execute", Description: "Execute an explicitly approved Task confirmation with exact warning acknowledgement when preview returned warnings"}, c.taskConfirmExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_discard_preview", Description: "Preview an explicitly approved audited Task discard without writing"}, c.taskDiscardPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_task_discard_execute", Description: "Execute an explicitly approved audited Task discard with a reason"}, c.taskDiscardExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_task_preview", Description: "Preview explicit Gate Task pass without writing"}, c.gatePassTaskPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_task_execute", Description: "Execute an explicitly approved Gate Task pass"}, c.gatePassTaskExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_revoke_task_pass_preview", Description: "Preview Gate Task pass revocation without writing"}, c.gateRevokePreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_revoke_task_pass_execute", Description: "Execute an explicitly approved Gate Task pass revocation"}, c.gateRevokeExecute)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_preview", Description: "Preview Gate pass and Phase transition without writing"}, c.gatePassPreview)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_gate_pass_execute", Description: "Execute an explicitly approved Gate pass and Phase transition"}, c.gatePassExecute)
+	server := newMCPServer(c)
 	if mode == "serve-http" {
-		serveHTTP(c, server)
+		serveHTTP(c)
 		return
 	}
 	if err = server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
@@ -654,7 +576,145 @@ func main() {
 	}
 }
 
-func serveHTTP(c *client, server *mcp.Server) {
+func toolHint(value bool) *bool {
+	return &value
+}
+
+func readOnlyTool(name, description string) *mcp.Tool {
+	return &mcp.Tool{
+		Name:        name,
+		Description: description,
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: toolHint(false),
+			OpenWorldHint:   toolHint(false),
+		},
+	}
+}
+
+func operatorTool(name, description string) *mcp.Tool {
+	return &mcp.Tool{
+		Name:        name,
+		Description: description,
+		Annotations: &mcp.ToolAnnotations{
+			DestructiveHint: toolHint(false),
+			OpenWorldHint:   toolHint(false),
+		},
+	}
+}
+
+func humanApprovalTool(name, description string) *mcp.Tool {
+	return &mcp.Tool{
+		Name:        name,
+		Description: description,
+		Annotations: &mcp.ToolAnnotations{
+			DestructiveHint: toolHint(true),
+			OpenWorldHint:   toolHint(false),
+		},
+	}
+}
+
+func classifiedTool(name, description string) *mcp.Tool {
+	if strings.HasSuffix(name, "_preview") {
+		return readOnlyTool(name, description)
+	}
+	switch name {
+	case "baley_task_acceptance_policy_change_execute",
+		"baley_task_acceptance_mode_escalate_execute",
+		"baley_gate_attach_task_execute",
+		"baley_task_confirm_execute",
+		"baley_task_discard_execute",
+		"baley_gate_pass_task_execute",
+		"baley_gate_revoke_task_pass_execute",
+		"baley_gate_pass_execute":
+		return humanApprovalTool(name, description)
+	default:
+		return operatorTool(name, description)
+	}
+}
+
+func newMCPServer(c *client) *mcp.Server {
+	server := mcp.NewServer(&mcp.Implementation{Name: "baley", Version: "0.1.0"}, nil)
+	mcp.AddTool(server, readOnlyTool("baley_workspace_get", "Read Workspace metadata"), c.workspaceGet)
+	mcp.AddTool(server, readOnlyTool("baley_workspace_graph", "Read the current Workspace graph"), c.workspaceGraph)
+	mcp.AddTool(server, readOnlyTool("baley_task_get", "Read one Task by public ID"), c.taskGet)
+	mcp.AddTool(server, readOnlyTool("baley_task_acceptance_get", "Read a Task acceptance binding, policy/profile, assignments, and typed evidence"), c.taskAcceptanceGet)
+	mcp.AddTool(server, readOnlyTool("baley_lane_brief", "Build a read-only active-Run-first lane recovery brief with evidence mismatch classification"), c.laneBrief)
+	mcp.AddTool(server, readOnlyTool("baley_backlog_list", "List lane Backlog items with optional lane/status filters"), c.backlogList)
+	mcp.AddTool(server, readOnlyTool("baley_backlog_get", "Read one Backlog item by B# public ID"), c.backlogGet)
+	mcp.AddTool(server, readOnlyTool("baley_gate_status", "Read Gate status and conditions"), c.gateStatus)
+	mcp.AddTool(server, readOnlyTool("baley_decision_list", "List human decisions currently available"), c.decisionList)
+	mcp.AddTool(server, readOnlyTool("baley_event_list", "List Workspace Events"), c.eventList)
+	mcp.AddTool(server, readOnlyTool("baley_mutation_attempt_list", "List append-only Workspace mutation attempts"), c.mutationAttemptList)
+	mcp.AddTool(server, readOnlyTool("baley_run_list", "List Workspace Runs"), c.runList)
+	mcp.AddTool(server, readOnlyTool("baley_record_list", "List Task Record indexes without loading document bodies"), c.recordList)
+	mcp.AddTool(server, classifiedTool("baley_run_start", "Start a Run and automatically start a pending Task"), c.runStart)
+	mcp.AddTool(server, classifiedTool("baley_run_heartbeat", "Extend a running Run lease using token and Run version CAS"), c.runHeartbeat)
+	mcp.AddTool(server, classifiedTool("baley_run_succeed", "Mark a Run succeeded using Run version CAS"), c.runSucceed)
+	mcp.AddTool(server, classifiedTool("baley_run_fail", "Mark a Run failed using Run version CAS"), c.runFail)
+	mcp.AddTool(server, classifiedTool("baley_run_cancel", "Cancel a Run using Run version CAS"), c.runCancel)
+	mcp.AddTool(server, classifiedTool("baley_run_interrupt", "Interrupt a Run using Run version CAS"), c.runInterrupt)
+	mcp.AddTool(server, classifiedTool("baley_run_correct", "Correct a terminal Run with an explicit reason"), c.runCorrect)
+	mcp.AddTool(server, classifiedTool("baley_repository_register", "Register a Git repository and optional Task Record root"), c.repositoryRegister)
+	mcp.AddTool(server, classifiedTool("baley_record_register", "Register a repository-relative Task Record index"), c.recordRegister)
+	mcp.AddTool(server, classifiedTool("baley_record_attach_commit", "Attach commit and blob evidence to a Task Record"), c.recordAttachCommit)
+	mcp.AddTool(server, classifiedTool("baley_commit_attach", "Attach a Git commit reference to a Task"), c.commitAttach)
+	mcp.AddTool(server, classifiedTool("baley_git_observe", "Record non-authoritative Run Git metadata"), c.gitObserve)
+	mcp.AddTool(server, classifiedTool("baley_task_report_implemented", "Report implementation complete with assessment and explicit warning acknowledgement"), c.taskReportImplemented)
+	mcp.AddTool(server, classifiedTool("baley_task_evidence_report", "Append typed acceptance evidence and atomically auto-confirm an eligible delegated Task"), c.taskEvidenceReport)
+	mcp.AddTool(server, classifiedTool("baley_task_acceptance_policy_change_preview", "Preview a human-approved future-Task acceptance policy change"), c.acceptancePolicyChangePreview)
+	mcp.AddTool(server, classifiedTool("baley_task_acceptance_policy_change_execute", "Execute an approved future-Task acceptance policy change"), c.acceptancePolicyChangeExecute)
+	mcp.AddTool(server, classifiedTool("baley_task_acceptance_mode_escalate_preview", "Preview monotonic delegated to human-required escalation"), c.acceptanceModeEscalatePreview)
+	mcp.AddTool(server, classifiedTool("baley_task_acceptance_mode_escalate_execute", "Execute an approved monotonic acceptance escalation"), c.acceptanceModeEscalateExecute)
+	mcp.AddTool(server, classifiedTool("baley_task_create_preview", "Preview atomic Task creation and initial relationships without writing"), c.taskCreatePreview)
+	mcp.AddTool(server, classifiedTool("baley_task_create_execute", "Create a Task and its initial relationships after reviewing the preview"), c.taskCreateExecute)
+	mcp.AddTool(server, classifiedTool("baley_task_update_preview", "Preview changing a Task title and/or description without writing"), c.taskUpdatePreview)
+	mcp.AddTool(server, classifiedTool("baley_task_update_execute", "Update a non-terminal Task title and/or description after preview"), c.taskUpdateExecute)
+	mcp.AddTool(server, classifiedTool("baley_task_clear_terminal_preview", "Preview removing a Task terminal reason so a successor can be connected"), c.taskClearTerminalPreview)
+	mcp.AddTool(server, classifiedTool("baley_task_clear_terminal_execute", "Remove a Task terminal reason after preview"), c.taskClearTerminalExecute)
+	mcp.AddTool(server, classifiedTool("baley_dependency_patch_preview", "Preview an atomic dependency graph rewrite without writing"), c.dependencyPatchPreview)
+	mcp.AddTool(server, classifiedTool("baley_dependency_patch_execute", "Atomically apply dependency additions and removals after preview"), c.dependencyPatchExecute)
+	mcp.AddTool(server, classifiedTool("baley_backlog_create_preview", "Preview creating a phase-free lane Backlog item"), c.backlogCreatePreview)
+	mcp.AddTool(server, classifiedTool("baley_backlog_create_execute", "Create a phase-free lane Backlog item"), c.backlogCreateExecute)
+	mcp.AddTool(server, classifiedTool("baley_backlog_update_preview", "Preview updating an active Backlog item"), c.backlogUpdatePreview)
+	mcp.AddTool(server, classifiedTool("baley_backlog_update_execute", "Update an active Backlog item"), c.backlogUpdateExecute)
+	mcp.AddTool(server, classifiedTool("baley_backlog_move_preview", "Preview moving an active Backlog item to another lane"), c.backlogMovePreview)
+	mcp.AddTool(server, classifiedTool("baley_backlog_move_execute", "Move an active Backlog item to another lane"), c.backlogMoveExecute)
+	mcp.AddTool(server, classifiedTool("baley_backlog_reorder_preview", "Preview replacing one lane's complete active Backlog order"), c.backlogReorderPreview)
+	mcp.AddTool(server, classifiedTool("baley_backlog_reorder_execute", "Replace one lane's complete active Backlog order"), c.backlogReorderExecute)
+	mcp.AddTool(server, classifiedTool("baley_backlog_discard_preview", "Preview audited soft-discard of a Backlog item"), c.backlogDiscardPreview)
+	mcp.AddTool(server, classifiedTool("baley_backlog_discard_execute", "Soft-discard an active Backlog item"), c.backlogDiscardExecute)
+	mcp.AddTool(server, classifiedTool("baley_backlog_promote_preview", "Preview atomic Backlog promotion into a phase-targeted pending Task"), c.backlogPromotePreview)
+	mcp.AddTool(server, classifiedTool("baley_backlog_promote_execute", "Atomically promote Backlog into a pending Task with exact warning acknowledgement"), c.backlogPromoteExecute)
+	mcp.AddTool(server, classifiedTool("baley_phase_create_preview", "Preview appending a Phase without writing"), c.phaseCreatePreview)
+	mcp.AddTool(server, classifiedTool("baley_phase_create_execute", "Append a Phase after reviewing the preview"), c.phaseCreateExecute)
+	mcp.AddTool(server, classifiedTool("baley_lane_create_preview", "Preview creating a Lane without writing"), c.laneCreatePreview)
+	mcp.AddTool(server, classifiedTool("baley_lane_create_execute", "Create a Lane after reviewing the preview"), c.laneCreateExecute)
+	mcp.AddTool(server, classifiedTool("baley_gate_create_preview", "Preview creating a Phase Gate without writing"), c.gateCreatePreview)
+	mcp.AddTool(server, classifiedTool("baley_gate_create_execute", "Create a Phase Gate after reviewing the preview"), c.gateCreateExecute)
+	mcp.AddTool(server, classifiedTool("baley_gate_attach_task_preview", "Preview attaching a Task as a Gate condition without writing"), c.gateAttachTaskPreview)
+	mcp.AddTool(server, classifiedTool("baley_gate_attach_task_execute", "Attach a Task to a Gate; active Gates require fields from an explicitly approved fresh preview"), c.gateAttachTaskExecute)
+	mcp.AddTool(server, classifiedTool("baley_gate_attach_entry_task_preview", "Preview binding a to-Phase Task as work unlocked by a Gate"), c.gateAttachEntryTaskPreview)
+	mcp.AddTool(server, classifiedTool("baley_gate_attach_entry_task_execute", "Bind a to-Phase Task as work unlocked by a Gate"), c.gateAttachEntryTaskExecute)
+	mcp.AddTool(server, classifiedTool("baley_gate_detach_entry_task_preview", "Preview removing an explicit Gate entry Task binding"), c.gateDetachEntryTaskPreview)
+	mcp.AddTool(server, classifiedTool("baley_gate_detach_entry_task_execute", "Remove an explicit Gate entry Task binding and restore automatic root selection when none remain"), c.gateDetachEntryTaskExecute)
+	mcp.AddTool(server, classifiedTool("baley_task_confirm_preview", "Preview Task confirmation without writing"), c.taskConfirmPreview)
+	mcp.AddTool(server, classifiedTool("baley_task_confirm_execute", "Execute an explicitly approved Task confirmation with exact warning acknowledgement when preview returned warnings"), c.taskConfirmExecute)
+	mcp.AddTool(server, classifiedTool("baley_task_discard_preview", "Preview an explicitly approved audited Task discard without writing"), c.taskDiscardPreview)
+	mcp.AddTool(server, classifiedTool("baley_task_discard_execute", "Execute an explicitly approved audited Task discard with a reason"), c.taskDiscardExecute)
+	mcp.AddTool(server, classifiedTool("baley_gate_pass_task_preview", "Preview explicit Gate Task pass without writing"), c.gatePassTaskPreview)
+	mcp.AddTool(server, classifiedTool("baley_gate_pass_task_execute", "Execute an explicitly approved Gate Task pass"), c.gatePassTaskExecute)
+	mcp.AddTool(server, classifiedTool("baley_gate_revoke_task_pass_preview", "Preview Gate Task pass revocation without writing"), c.gateRevokePreview)
+	mcp.AddTool(server, classifiedTool("baley_gate_revoke_task_pass_execute", "Execute an explicitly approved Gate Task pass revocation"), c.gateRevokeExecute)
+	mcp.AddTool(server, classifiedTool("baley_gate_pass_preview", "Preview Gate pass and Phase transition without writing"), c.gatePassPreview)
+	mcp.AddTool(server, classifiedTool("baley_gate_pass_execute", "Execute an explicitly approved Gate pass and Phase transition"), c.gatePassExecute)
+	return server
+}
+
+func serveHTTP(c *client) {
+	if c.gatewayToken == "" {
+		log.Fatal("BALEY_MCP_GATEWAY_TOKEN is required for serve-http")
+	}
 	addr := strings.TrimSpace(os.Getenv("BALEY_MCP_HTTP_ADDR"))
 	if addr == "" {
 		addr = "127.0.0.1:8090"
@@ -663,9 +723,12 @@ func serveHTTP(c *client, server *mcp.Server) {
 	if err != nil || (host != "127.0.0.1" && host != "localhost" && host != "::1" && host != "0.0.0.0") {
 		log.Fatal("BALEY_MCP_HTTP_ADDR must bind to loopback or 0.0.0.0")
 	}
-	streamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: 10 * time.Minute})
+	// Workspace credentials are scoped to this local gateway identity and the
+	// target Workspace, not to an ephemeral MCP transport session. A new Codex
+	// chat or the HTTP session timeout must not require a new Owner approval.
+	streamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServer(c) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: 10 * time.Minute})
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", c.requireBearer(streamable))
+	mux.Handle("/mcp", c.requireGatewayBearer(streamable))
 	httpServer := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 70 * time.Second, MaxHeaderBytes: 1 << 20}
 	log.Printf("Baley Streamable HTTP MCP listening on http://%s/mcp", addr)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -673,7 +736,7 @@ func serveHTTP(c *client, server *mcp.Server) {
 	}
 }
 
-func (c *client) requireBearer(next http.Handler) http.Handler {
+func (c *client) requireGatewayBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")) == "" {
@@ -681,22 +744,12 @@ func (c *client) requireBearer(next http.Handler) http.Handler {
 			return
 		}
 		token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
-		request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, c.base+"/v1/auth/principal", nil)
-		if err != nil {
-			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		request.Header.Set("Authorization", "Bearer "+token)
-		response, err := c.http.Do(request)
-		if err != nil || response.StatusCode != http.StatusOK {
-			if response != nil {
-				_ = response.Body.Close()
-			}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(c.gatewayToken)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		_ = response.Body.Close()
-		next.ServeHTTP(w, r.WithContext(withBearerToken(r.Context(), token)))
+		next.ServeHTTP(w, r)
+
 	})
 }
 
@@ -706,9 +759,6 @@ func (c *client) get(ctx context.Context, path string) (*mcp.CallToolResult, any
 func (c *client) call(ctx context.Context, method, path string, payload any) (*mcp.CallToolResult, any, error) {
 	workspaceID := requestWorkspaceID(path, payload)
 	token := c.agentToken
-	if contextualToken := bearerToken(ctx); contextualToken != "" {
-		token = contextualToken
-	}
 	if c.credentialStorePath != "" && workspaceID != "" {
 		var pending *mcp.CallToolResult
 		var err error
@@ -748,19 +798,45 @@ func (c *client) call(ctx context.Context, method, path string, payload any) (*m
 	if err = json.Unmarshal(raw, &structured); err != nil {
 		structured = map[string]any{"httpStatus": res.StatusCode, "raw": string(raw)}
 	}
-	if (res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusNotFound) &&
-		c.credentialStorePath != "" && workspaceID != "" && token != "" {
-		if err = c.removeWorkspaceCredential(workspaceID); err != nil {
-			return nil, nil, err
+	if c.credentialStorePath != "" && workspaceID != "" && token != "" {
+		credentialRejected := res.StatusCode == http.StatusUnauthorized
+		if res.StatusCode == http.StatusNotFound {
+			// A 404 is also the normal result for a missing Task, Record, or other
+			// Workspace resource. Do not turn those ordinary reads into another
+			// Owner approval. Validate the stored credential against the Workspace
+			// root before treating a concealed Workspace read as a revoked token.
+			credentialRejected = !c.workspaceCredentialValid(ctx, workspaceID, token)
 		}
-		_, pending, connectErr := c.workspaceCredential(ctx, workspaceID)
-		return pending, pendingStructured(pending), connectErr
+		if credentialRejected {
+			if err = c.removeWorkspaceCredential(ctx, workspaceID); err != nil {
+				return nil, nil, err
+			}
+			_, pending, connectErr := c.workspaceCredential(ctx, workspaceID)
+			return pending, pendingStructured(pending), connectErr
+		}
 	}
 	summary := fmt.Sprintf("Baley HTTP %d", res.StatusCode)
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		summary = "Baley request succeeded"
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: summary}}, StructuredContent: structured, IsError: res.StatusCode >= 400}, structured, nil
+}
+func (c *client) workspaceCredentialValid(ctx context.Context, workspaceID, token string) bool {
+	if workspaceID == "" || token == "" {
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/workspaces/"+url.PathEscape(workspaceID), nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := c.http.Do(req)
+	if err != nil {
+		return false
+	}
+	defer res.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 64<<10))
+	return res.StatusCode >= http.StatusOK && res.StatusCode < http.StatusMultipleChoices
 }
 func command(name string, args any, envelope any) map[string]any {
 	return map[string]any{"name": name, "arguments": args, "envelope": envelope}
@@ -981,7 +1057,7 @@ func (c *client) taskEvidenceReport(ctx context.Context, _ *mcp.CallToolRequest,
 func taskCreateArguments(in taskCreateFields) map[string]any {
 	return map[string]any{
 		"workspaceId": in.WorkspaceID, "taskUuid": in.TaskUUID, "laneId": in.LaneID, "phaseId": in.PhaseID,
-		"parentTaskId": in.ParentTaskID, "title": in.Title, "description": in.Description,
+		"parentTaskId": in.ParentTaskID, "title": in.Title, "description": in.Description, "currentSummary": in.CurrentSummary,
 		"predecessorTaskIds": in.PredecessorTaskIDs, "successorTaskIds": in.SuccessorTaskIDs,
 		"terminalReason": in.TerminalReason, "requestedAcceptanceMode": in.RequestedAcceptanceMode,
 		"evidenceProfileId": in.EvidenceProfileID,
@@ -1007,6 +1083,9 @@ func taskUpdateArguments(in taskUpdateFields) map[string]any {
 	}
 	if in.Description != nil {
 		arguments["description"] = *in.Description
+	}
+	if in.CurrentSummary != nil {
+		arguments["currentSummary"] = *in.CurrentSummary
 	}
 	return arguments
 }

@@ -58,6 +58,7 @@ type MutationContext struct {
 	LeaseExtension  time.Duration
 
 	Title, Description, Summary, NextAction string
+	TaskCurrentSummary                      *string
 	Assessment, Reason                      string
 	CommitSHA, BlobSHA                      string
 	ClearTerminal                           bool
@@ -368,7 +369,7 @@ func dereferencePosition(position *int) int {
 
 func planTaskUpdateMutation(context MutationContext) DomainMutationPlan {
 	title, description := context.Title, context.Description
-	_, plan := PlanTaskUpdate(context.Workspace, context.Task, &title, &description)
+	_, plan := PlanTaskUpdate(context.Workspace, context.Task, &title, &description, context.TaskCurrentSummary)
 	return plan
 }
 

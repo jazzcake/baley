@@ -13,8 +13,8 @@ project's Codex configuration. It is rollback-only development compatibility.
 Prerequisites on the host:
 1. Baley Docker services include a healthy `mcp` container.
 2. Codex is registered as:
-   codex mcp add baley --url http://127.0.0.1:8091/mcp --bearer-token-env-var BALEY_AGENT_TOKEN
-3. BALEY_AGENT_TOKEN is synchronized from Baley's local agent environment and
+   codex mcp add baley --url http://127.0.0.1:8091/mcp --bearer-token-env-var BALEY_MCP_GATEWAY_TOKEN
+3. BALEY_MCP_GATEWAY_TOKEN is synchronized from Baley's local gateway setup and
    Codex has been restarted after synchronization.
 
 For this project:

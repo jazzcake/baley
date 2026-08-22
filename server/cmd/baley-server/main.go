@@ -65,12 +65,17 @@ func main() {
 	}
 	var runtimeConfig runtimeConfig
 	var origins []string
+	var approvalOrigin string
 	if os.Args[1] == "serve" {
 		runtimeConfig, err = resolveRuntimeConfig(environment, os.Getenv("BALEY_AUTH_MODE"), os.Getenv("BALEY_COOKIE_SECURE"))
 		if err != nil {
 			log.Fatal(err)
 		}
 		origins, err = resolveViewerOrigins(environment)
+		if err != nil {
+			log.Fatal(err)
+		}
+		approvalOrigin, err = resolveApprovalOrigin(os.Getenv("BALEY_MCP_APPROVAL_ORIGIN"), origins)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -150,7 +155,7 @@ func main() {
 		}
 	}()
 	api := &httpapi.API{
-		Service: service, Repo: repo, AllowedOrigins: origins, Auth: authService,
+		Service: service, Repo: repo, AllowedOrigins: origins, ApprovalOrigin: approvalOrigin, Auth: authService,
 		AuthMode: runtimeConfig.AuthMode, CookieSecure: runtimeConfig.CookieSecure,
 		Build: httpapi.BuildInfo{Version: buildVersion, Commit: buildCommit, BuiltAt: buildTime, SchemaVersion: expectedSchemaVersion},
 		ReadyCheck: func(readyCtx context.Context) (int64, error) {
@@ -283,4 +288,17 @@ func resolveViewerOrigins(environment string) ([]string, error) {
 		return nil, errors.New("at least one viewer origin is required")
 	}
 	return origins, nil
+}
+
+func resolveApprovalOrigin(raw string, allowedOrigins []string) (string, error) {
+	origin := strings.TrimSuffix(strings.TrimSpace(raw), "/")
+	if origin == "" {
+		return "", nil
+	}
+	for _, allowed := range allowedOrigins {
+		if origin == allowed {
+			return origin, nil
+		}
+	}
+	return "", fmt.Errorf("BALEY_MCP_APPROVAL_ORIGIN %q must be one of BALEY_VIEWER_ORIGINS", origin)
 }

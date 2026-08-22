@@ -69,7 +69,7 @@ body { background: #f6f7fb; }
 .task-id { color: #9699a6; font-family: 'DM Mono'; font-size: 8px; }
 .task-node strong { color: #323338; font-size: 14px; }
 .task-node .task-title { display: -webkit-box; min-height: 35px; max-height: 35px; overflow: hidden; line-height: 17px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
-.task-status { display: inline-flex; align-items: center; gap: 5px; width: fit-content; margin-top: 8px; padding: 3px 7px; border-radius: 4px; font-family: Manrope,sans-serif; font-size: 9px; font-weight: 700; letter-spacing: .03em; }
+.task-status { display: inline-flex; align-items: center; gap: 5px; width: fit-content; margin-top: 18px; padding: 3px 7px; border-radius: 4px; font-family: Manrope,sans-serif; font-size: 9px; font-weight: 700; letter-spacing: .03em; }
 .task-node.status-done .task-status { color: #087f5b; background: #d9f7ec; }
 .task-node.status-running .task-status { color: #9b5c00; background: #fff0d2; }
 .task-node.status-blocked .task-status { color: #b4233b; background: #ffe3e8; }
@@ -95,6 +95,8 @@ body { background: #f6f7fb; }
 .inspector { background: #fff; border-left-color: #dfe1e8; }
 .inspector h2 { color: #323338; }
 .inspector > p { color: #676879; }
+.task-current-summary { margin-bottom: 12px !important; color: #323338 !important; font-weight: 600; }
+.task-description { margin-top: 0 !important; }
 .inspector-section { border-top-color: #e6e7eb; }
 .status-pill { border-radius: 5px; }
 .primary-button { border-radius: 6px; background: #0073ea; }
@@ -327,3 +329,12 @@ body { background: #f6f7fb; }
   .account-summary { display: none; }
   .account-menu-trigger { grid-template-columns: 30px 14px; }
 }
+.phase-summary-node { width:190px; height:84px; display:block; box-sizing:border-box; border:1px solid #9fa7bd; border-left:6px solid #6161ff; border-radius:8px; padding:11px 13px; background:#fff; color:#323338; text-align:left; cursor:pointer; box-shadow:0 2px 8px rgba(9,30,66,.08); }.phase-summary-node span,.phase-summary-node strong,.phase-summary-node small { display:block; }.phase-summary-node span { color:#676879; font-family:'DM Mono'; font-size:8px; letter-spacing:.08em; }.phase-summary-node strong { margin-top:6px; font-size:14px; }.phase-summary-node.empty { border:0; border-radius:0; padding:14px 0; background:transparent; box-shadow:none; cursor:pointer; }.phase-summary-node.empty strong { margin-top:5px; font-size:13px; }.phase-summary-node.empty:focus-visible { outline-offset:2px; }.phase-summary-node small { margin-top:4px; color:#676879; font-size:9px; }.phase-summary-node:focus-visible { outline:3px solid #0073ea; outline-offset:3px; }
+.phase-collapse-toggle { pointer-events:auto; margin-top:8px; border:0; background:none; color:#0759b3; font-size:10px; font-weight:700; cursor:pointer; }.phase-collapse-toggle:focus-visible { outline:2px solid #0073ea; outline-offset:2px; }
+.gate-node.compact { width:90px; min-height:58px; padding:9px; gap:6px; border-color:#6f8093; box-shadow:0 3px 10px rgba(9,30,66,.1); }.gate-node.compact .gate-icon,.gate-node.compact small { display:none; }.gate-node.compact strong { font-size:11px; }
+.layout-mode-switch { display:flex; padding:2px; border:1px solid #c3c6d4; border-radius:7px; background:#f2f3f7; }
+.layout-mode-switch button { min-width:45px; border:0; border-radius:5px; padding:5px 9px; background:transparent; color:#676879; font-size:10px; font-weight:700; cursor:pointer; }
+.layout-mode-switch button.active { background:#fff; color:#323338; box-shadow:0 1px 4px rgba(9,30,66,.14); }
+.layout-mode-switch button:focus-visible { outline:2px solid #0073ea; outline-offset:2px; }
+
+.task-node { position:relative; }.task-gate-lock { position:absolute; left:-11px; top:50%; z-index:3; display:grid; width:22px; height:22px; place-items:center; transform:translateY(-50%); border:2px solid #7257d9; border-radius:50%; background:#fff; color:#5e45bf; box-shadow:0 1px 4px rgba(9,30,66,.18); }.gate-edge-required .react-flow__edge-path { stroke-width:1.8px; }.gate-edge-locked .react-flow__edge-path { stroke-width:2px; }.gate-edge-unlocked .react-flow__edge-path { stroke-width:2px; }.gate-edge-reference .react-flow__edge-path { stroke-width:1.2px; }.gate-edge .react-flow__edge-text,.gate-edge .react-flow__edge-textbg { display:none; }

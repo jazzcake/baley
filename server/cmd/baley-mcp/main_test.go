@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,23 +19,92 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestStreamableHTTPMCPRequiresBearerAndForwardsItPerRequest(t *testing.T) {
-	const token = "valid-agent-token"
-	const secondToken = "second-workspace-agent-token"
+func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
+	ctx := context.Background()
+	server := newMCPServer(&client{})
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "annotation-test", Version: "test"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+
+	listed, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnly := map[string]bool{
+		"baley_workspace_get": true, "baley_workspace_graph": true,
+		"baley_task_get": true, "baley_task_acceptance_get": true,
+		"baley_lane_brief": true, "baley_backlog_list": true,
+		"baley_backlog_get": true, "baley_gate_status": true,
+		"baley_decision_list": true, "baley_event_list": true,
+		"baley_mutation_attempt_list": true, "baley_run_list": true,
+		"baley_record_list": true,
+	}
+	humanApproval := map[string]bool{
+		"baley_task_acceptance_policy_change_execute": true,
+		"baley_task_acceptance_mode_escalate_execute": true,
+		"baley_gate_attach_task_execute":              true,
+		"baley_task_confirm_execute":                  true,
+		"baley_task_discard_execute":                  true,
+		"baley_gate_pass_task_execute":                true,
+		"baley_gate_revoke_task_pass_execute":         true,
+		"baley_gate_pass_execute":                     true,
+	}
+	for _, tool := range listed.Tools {
+		annotations := tool.Annotations
+		if annotations == nil || annotations.OpenWorldHint == nil || *annotations.OpenWorldHint {
+			t.Errorf("%s must be annotated as closed-world: %#v", tool.Name, annotations)
+			continue
+		}
+		wantReadOnly := readOnly[tool.Name] || strings.HasSuffix(tool.Name, "_preview")
+		if annotations.ReadOnlyHint != wantReadOnly {
+			t.Errorf("%s readOnlyHint=%v, want %v", tool.Name, annotations.ReadOnlyHint, wantReadOnly)
+		}
+		if annotations.DestructiveHint == nil {
+			t.Errorf("%s is missing destructiveHint", tool.Name)
+			continue
+		}
+		if got, want := *annotations.DestructiveHint, humanApproval[tool.Name]; got != want {
+			t.Errorf("%s destructiveHint=%v, want %v", tool.Name, got, want)
+		}
+	}
+}
+
+func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t *testing.T) {
+	const gatewayToken = "local-gateway-token"
+	const workspaceToken = "workspace-agent-token"
+	var connectionCreated, connectionPolled, workspaceReads int
 	var upstreamAuthorizations []string
 	var upstreamMu sync.Mutex
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamMu.Lock()
+		defer upstreamMu.Unlock()
 		upstreamAuthorizations = append(upstreamAuthorizations, r.Header.Get("Authorization"))
-		upstreamMu.Unlock()
 		switch r.URL.Path {
-		case "/v1/auth/principal":
-			if r.Header.Get("Authorization") != "Bearer "+token && r.Header.Get("Authorization") != "Bearer "+secondToken {
+		case "/v1/mcp/connections":
+			connectionCreated++
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"connection","workspaceId":"workspace","status":"pending","connectionSecret":"secret","approvalUrl":"http://viewer/approve"}`))
+		case "/v1/mcp/connections/connection":
+			connectionPolled++
+			if r.Header.Get("X-Baley-Connection-Secret") != "secret" {
+				http.Error(w, "missing connection secret", http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"connection","workspaceId":"workspace","status":"consumed","agentToken":"` + workspaceToken + `"}`))
+		case "/v1/workspaces/workspace":
+			workspaceReads++
+			if r.Header.Get("Authorization") != "Bearer "+workspaceToken {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			_, _ = w.Write([]byte(`{"authenticated":true}`))
-		case "/v1/workspaces/workspace":
 			_, _ = w.Write([]byte(`{"id":"workspace"}`))
 		default:
 			http.NotFound(w, r)
@@ -44,10 +112,9 @@ func TestStreamableHTTPMCPRequiresBearerAndForwardsItPerRequest(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	c := &client{base: upstream.URL, http: upstream.Client()}
-	server := mcp.NewServer(&mcp.Implementation{Name: "baley-test", Version: "test"}, nil)
-	mcp.AddTool(server, &mcp.Tool{Name: "baley_workspace_get"}, c.workspaceGet)
-	handler := c.requireBearer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: time.Minute}))
+	credentials := filepath.Join(t.TempDir(), "credentials.json")
+	c := &client{base: upstream.URL, http: upstream.Client(), gatewayToken: gatewayToken, credentialStorePath: credentials, agentActorID: "agent"}
+	handler := c.requireGatewayBearer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServer(c) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: time.Minute}))
 	mcpHTTP := httptest.NewServer(handler)
 	defer mcpHTTP.Close()
 
@@ -60,62 +127,66 @@ func TestStreamableHTTPMCPRequiresBearerAndForwardsItPerRequest(t *testing.T) {
 	}
 	_ = unauthenticated.Body.Close()
 
-	newSession := func(bearer string) (*mcp.ClientSession, error) {
+	newSession := func() (*mcp.ClientSession, error) {
 		httpClient := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			clone := request.Clone(request.Context())
-			clone.Header.Set("Authorization", "Bearer "+bearer)
+			clone.Header.Set("Authorization", "Bearer "+gatewayToken)
 			return http.DefaultTransport.RoundTrip(clone)
 		})}
 		return mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil).Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: mcpHTTP.URL, HTTPClient: httpClient, DisableStandaloneSSE: true}, nil)
 	}
-	session, err := newSession(token)
+	firstSession, err := newSession()
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Fatal(err)
 	}
-	defer session.Close()
-	tools, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "baley_workspace_get" {
-		t.Fatalf("tools=%#v err=%v", tools, err)
+	first, err := firstSession.CallTool(context.Background(), &mcp.CallToolParams{Name: "baley_workspace_get", Arguments: map[string]any{"workspaceId": "workspace"}})
+	_ = firstSession.Close()
+	if err != nil || !first.IsError {
+		t.Fatalf("initial connection result=%#v err=%v", first, err)
 	}
-	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "baley_workspace_get", Arguments: map[string]any{"workspaceId": "workspace"}})
-	if err != nil || result.IsError {
-		t.Fatalf("read call result=%#v err=%v", result, err)
-	}
-	secondSession, err := newSession(secondToken)
+
+	secondSession, err := newSession()
 	if err != nil {
-		t.Fatalf("second client connect: %v", err)
+		t.Fatal(err)
 	}
-	defer secondSession.Close()
-	errCh := make(chan error, 2)
-	for _, activeSession := range []*mcp.ClientSession{session, secondSession} {
-		go func(activeSession *mcp.ClientSession) {
-			called, callErr := activeSession.CallTool(context.Background(), &mcp.CallToolParams{Name: "baley_workspace_get", Arguments: map[string]any{"workspaceId": "workspace"}})
-			if callErr != nil || called.IsError {
-				errCh <- fmt.Errorf("concurrent read result=%#v err=%w", called, callErr)
-				return
-			}
-			errCh <- nil
-		}(activeSession)
+	second, err := secondSession.CallTool(context.Background(), &mcp.CallToolParams{Name: "baley_workspace_get", Arguments: map[string]any{"workspaceId": "workspace"}})
+	_ = secondSession.Close()
+	if err != nil || second.IsError {
+		t.Fatalf("approved connection did not persist into next MCP session: result=%#v err=%v", second, err)
 	}
-	for range 2 {
-		if callErr := <-errCh; callErr != nil {
-			t.Fatal(callErr)
-		}
+
+	thirdSession, err := newSession()
+	if err != nil {
+		t.Fatal(err)
 	}
+	third, err := thirdSession.CallTool(context.Background(), &mcp.CallToolParams{Name: "baley_workspace_get", Arguments: map[string]any{"workspaceId": "workspace"}})
+	_ = thirdSession.Close()
+	if err != nil || third.IsError {
+		t.Fatalf("stored credential did not survive another MCP session: result=%#v err=%v", third, err)
+	}
+
 	upstreamMu.Lock()
 	defer upstreamMu.Unlock()
-	if len(upstreamAuthorizations) < 6 {
-		t.Fatalf("expected validation and read requests, got %v", upstreamAuthorizations)
+	if connectionCreated != 1 || connectionPolled != 1 || workspaceReads != 2 {
+		t.Fatalf("connections=%d polls=%d workspaceReads=%d, want 1/1/2", connectionCreated, connectionPolled, workspaceReads)
 	}
-	seen := map[string]bool{}
 	for _, authorization := range upstreamAuthorizations {
-		seen[authorization] = true
+		if authorization == "Bearer "+gatewayToken {
+			t.Fatalf("gateway token leaked to the Baley API: %v", upstreamAuthorizations)
+		}
 	}
-	if !seen["Bearer "+token] || !seen["Bearer "+secondToken] {
-		t.Fatalf("clients were not isolated by bearer token: %v", upstreamAuthorizations)
+	raw, err := os.ReadFile(credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsJSONSecret(raw, workspaceToken) {
+		t.Fatal("Workspace token was written to the HTTP credential store in plaintext")
+	}
+	entries, err := os.ReadDir(filepath.Dir(credentials))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one persistent credential store, entries=%v err=%v", entries, err)
 	}
 }
-
 func TestClientSendsConfiguredAgentTokenWithoutPuttingItInThePayload(t *testing.T) {
 	const token = "agent-secret-that-must-stay-in-the-header"
 	var authorization string
@@ -219,7 +290,7 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 	if !containsJSONSecret(raw, token) {
 		t.Fatal("Workspace token was not persisted")
 	}
-	store, err := restarted.readCredentialStore()
+	store, err := restarted.readCredentialStore(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,6 +299,55 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 	}
 }
 
+func TestClientPreservesStoredCredentialForMissingWorkspaceResource(t *testing.T) {
+	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
+	const token = "workspace-agent-token"
+	var connectionCreated bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/workspaces/" + workspaceID + "/tasks/999999":
+			if r.Header.Get("Authorization") != "Bearer "+token {
+				t.Fatalf("unexpected credential: %q", r.Header.Get("Authorization"))
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"task not found"}}`))
+		case "/v1/workspaces/" + workspaceID:
+			if r.Header.Get("Authorization") != "Bearer "+token {
+				t.Fatalf("unexpected validation credential: %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{"id":"` + workspaceID + `"}`))
+		case "/v1/mcp/connections":
+			connectionCreated = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"unexpected","workspaceId":"` + workspaceID + `"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	storePath := filepath.Join(t.TempDir(), "credentials.json")
+	c := &client{base: server.URL, http: server.Client(), credentialStorePath: storePath, agentActorID: "agent"}
+	if err := c.writeCredentialStore(context.Background(), credentialStore{
+		Version: 1, ServerURL: server.URL,
+		Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: token}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, _, err := c.taskGet(context.Background(), nil, taskInput{WorkspaceID: workspaceID, TaskID: 999999})
+	if err != nil || result == nil || !result.IsError || connectionCreated {
+		t.Fatalf("missing resource should stay a 404: result=%#v err=%v connectionCreated=%v", result, err, connectionCreated)
+	}
+	store, err := c.readCredentialStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential, ok := store.Workspaces[workspaceID]; !ok || credential.AgentToken != token {
+		t.Fatalf("valid Workspace credential was removed: %#v", store.Workspaces)
+	}
+}
 func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t *testing.T) {
 	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
 	var connectionCreated bool
@@ -256,7 +376,7 @@ func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t 
 		base: server.URL, http: server.Client(), credentialStorePath: storePath,
 		agentActorID: "agent",
 	}
-	if err := c.writeCredentialStore(credentialStore{
+	if err := c.writeCredentialStore(context.Background(), credentialStore{
 		Version: 1, ServerURL: server.URL,
 		Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: "stale-or-cross-workspace-token"}},
 	}); err != nil {
@@ -271,7 +391,7 @@ func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t 
 	if !ok || structured["code"] != "workspace_connection_required" {
 		t.Fatalf("404 did not become an Owner connection request: %#v", result.StructuredContent)
 	}
-	store, err := c.readCredentialStore()
+	store, err := c.readCredentialStore(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,14 +579,15 @@ func TestTaskUpdatePreviewAndExecuteForwardOnlyContentFields(t *testing.T) {
 
 	c := &client{base: server.URL, http: server.Client()}
 	description := "Updated description"
-	fields := taskUpdateFields{WorkspaceID: "workspace", TaskID: 22, Description: &description}
+	summary := "People can understand the result quickly."
+	fields := taskUpdateFields{WorkspaceID: "workspace", TaskID: 22, Description: &description, CurrentSummary: &summary}
 	_, _, err := c.taskUpdatePreview(context.Background(), nil, taskUpdatePreviewInput{taskUpdateFields: fields, previewEnvelope: previewEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "preview-key", ExecutedByActorID: "agent"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	preview := <-requests
 	arguments := preview.body["arguments"].(map[string]any)
-	if preview.path != "/v1/commands/preview" || preview.body["name"] != "task.update" || arguments["taskId"] != float64(22) || arguments["description"] != description || arguments["title"] != nil {
+	if preview.path != "/v1/commands/preview" || preview.body["name"] != "task.update" || arguments["taskId"] != float64(22) || arguments["description"] != description || arguments["currentSummary"] != summary || arguments["title"] != nil {
 		t.Fatalf("task.update preview was not limited to content fields: %#v", preview)
 	}
 	_, _, err = c.taskUpdateExecute(context.Background(), nil, taskUpdateExecuteInput{taskUpdateFields: fields, mutationExecuteEnvelope: mutationExecuteEnvelope{automaticEnvelope: automaticEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "execute-key", ExecutedByActorID: "agent"}}})

@@ -56,6 +56,7 @@ describe("Home navigation entry points", () => {
     panZoomSetViewport.mockClear();
     setViewportState.mockClear();
     renderedViewport.style.transform = "translate(0px, 0px) scale(1)";
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -85,6 +86,26 @@ describe("Home navigation entry points", () => {
     expect(canvas.getAttribute("data-auto-fit")).toBe("false");
     expect(canvas.getAttribute("data-drag-disabled")).toBe("false");
     expect(screen.getByLabelText("Viewport controls")).toBeTruthy();
+  });
+
+  it("defaults to Flow and persists a Tree selection for the Workspace", async () => {
+    render(<App />);
+    const flow = await screen.findByRole("button", { name: "Flow" });
+    const tree = screen.getByRole("button", { name: "Tree" });
+    expect(flow.getAttribute("aria-pressed")).toBe("true");
+    expect(tree.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(tree);
+
+    await waitFor(() => expect(tree.getAttribute("aria-pressed")).toBe("true"));
+    expect(window.localStorage.getItem("baley:layout-mode:pilot")).toBe("tree");
+    await waitFor(() => expect(layoutGraph).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.any(Set),
+      true,
+      expect.any(Set),
+      "tree",
+    ));
   });
 
   it("keeps the graph mounted and restores focus after backlog list mode", async () => {

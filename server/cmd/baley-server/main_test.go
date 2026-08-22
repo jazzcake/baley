@@ -83,3 +83,13 @@ func TestResolveRuntimeConfigCookieOverride(t *testing.T) {
 		t.Fatal("invalid boolean was accepted")
 	}
 }
+
+func TestResolveApprovalOriginUsesConfiguredAllowedOrigin(t *testing.T) {
+	allowed := []string{"http://127.0.0.1:5174", "https://baley.example"}
+	if got, err := resolveApprovalOrigin("https://baley.example/", allowed); err != nil || got != "https://baley.example" {
+		t.Fatalf("resolveApprovalOrigin() = %q, %v", got, err)
+	}
+	if _, err := resolveApprovalOrigin("https://other.example", allowed); err == nil {
+		t.Fatal("expected an error for an approval origin outside the allowed origins")
+	}
+}

@@ -1,5 +1,23 @@
 export type CanvasViewport = { x: number; y: number; zoom: number };
 
+export function focusViewportOnAnchor(
+  anchor: { x: number; y: number },
+  width: number,
+  height: number,
+  zoom: number,
+  horizontalFraction = 0.5,
+  verticalFraction = 0.5,
+): CanvasViewport | undefined {
+  if (width <= 0 || height <= 0 || zoom <= 0) return undefined;
+  const targetX = width * Math.min(1, Math.max(0, horizontalFraction));
+  const targetY = height * Math.min(1, Math.max(0, verticalFraction));
+  return {
+    x: targetX - anchor.x * zoom,
+    y: targetY - anchor.y * zoom,
+    zoom,
+  };
+}
+
 export function zoomViewportAtCenter(
   current: CanvasViewport,
   factor: number,

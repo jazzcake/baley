@@ -10,9 +10,9 @@ Baley runs one Streamable HTTP MCP adapter in Docker instead of starting a Power
 
 ## Security model
 
-Codex sends `Authorization: Bearer <token>` on every MCP request. The adapter validates that token against the Baley API before accepting the request, then forwards it only to the API for the matching tool call. It keeps no Workspace credential store and never accepts a token in a URL, query string, or request log. The API remains the authority for Agent identity, Workspace tenancy, capability checks, revision CAS, and human approval attestations.
+Codex sends `Authorization: Bearer <gateway token>` on every MCP request. This local loopback gateway token authenticates transport access only; it is never forwarded to the Baley API. One local gateway identity keeps one persistent credential store: each Workspace Agent token and pending connection secret is AES-256-GCM encrypted with a key derived from that gateway token and the canonical API URL. The existing `workspace_connection_required → approvalUrl → retry` flow is therefore required only for a new Workspace, a revoked Agent token, or local gateway-token rotation—not for a new Codex chat or MCP transport session. The API remains the authority for Agent identity, Workspace tenancy, capability checks, revision CAS, and human approval attestations.
 
-The local token continues to live in `.env.baley-mcp.local`. Codex supports a Streamable HTTP URL plus an environment-variable name, not a dotenv file, so the setup script copies the token into the current and per-user `BALEY_AGENT_TOKEN` environment. Treat that user environment value as a local secret and rerun the script after issuing a replacement token.
+The gateway token is generated and synchronized by `scripts/sync-baley-mcp-http-token.ps1`. Codex supports a Streamable HTTP URL plus an environment-variable name, not a dotenv file, so the script copies it into the current and per-user `BALEY_MCP_GATEWAY_TOKEN` environment. Treat that user environment value as a local secret. The legacy `.env.baley-mcp.local` Agent token remains for the stdio rollback path only.
 
 ## Start and register Codex
 
@@ -21,7 +21,7 @@ docker compose up -d --build api viewer mcp
 .\scripts\prepare-local-pilot-agent.ps1
 .\scripts\sync-baley-mcp-http-token.ps1
 codex mcp remove baley
-codex mcp add baley --url http://127.0.0.1:8091/mcp --bearer-token-env-var BALEY_AGENT_TOKEN
+codex mcp add baley --url http://127.0.0.1:8091/mcp --bearer-token-env-var BALEY_MCP_GATEWAY_TOKEN
 ```
 
 Restart the Codex app, then open a new thread. The registration has no command or `go run` launcher, so new sessions connect to the same container.

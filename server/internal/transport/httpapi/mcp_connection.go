@@ -65,9 +65,12 @@ func (a *API) createMCPConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	origin := "http://127.0.0.1:5174"
-	if len(a.AllowedOrigins) > 0 {
+	origin := strings.TrimRight(a.ApprovalOrigin, "/")
+	if origin == "" && len(a.AllowedOrigins) > 0 {
 		origin = strings.TrimRight(a.AllowedOrigins[0], "/")
+	}
+	if origin == "" {
+		origin = "http://127.0.0.1:5174"
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": view.ID, "workspaceId": view.WorkspaceID, "status": view.Status, "expiresAt": view.ExpiresAt, "connectionSecret": secret, "approvalUrl": origin + "/workspaces/" + view.WorkspaceID + "/mcp-connect/" + view.ID})
 }

@@ -26,6 +26,7 @@ type API struct {
 	Service        *application.Service
 	Repo           *postgres.Repository
 	AllowedOrigins []string
+	ApprovalOrigin string
 	Auth           *authn.Service
 	AuthMode       string
 	CookieSecure   bool
