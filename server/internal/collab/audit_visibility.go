@@ -342,6 +342,7 @@ var auditEventImportance = map[string]bool{
 	"gate.created":                        false,
 	"task.created":                        false,
 	"task.updated":                        false,
+	"task.moved":                          true,
 	"task.terminal_set":                   true,
 	"task.terminal_cleared":               true,
 	"task.started":                        true,

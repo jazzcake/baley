@@ -961,12 +961,12 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 			return result, fmt.Errorf("%s plan is missing Lane", plan.CommandName)
 		}
 		_, err = tx.Exec(ctx, "UPDATE lanes SET name=$1,goal=$2,summary=$3,state=$4 WHERE workspace_id=$5 AND id=$6", lane.Name, lane.Goal, lane.Summary, lane.State, wid, lane.ID)
-	case "task.update", "task.set_terminal", "task.clear_terminal", "task.block", "task.unblock", "task.discard", "task.rework":
+	case "task.update", "task.move", "task.set_terminal", "task.clear_terminal", "task.block", "task.unblock", "task.discard", "task.rework":
 		task := plan.TaskUpdate
 		if task == nil {
 			return result, fmt.Errorf("%s plan is missing Task update", plan.CommandName)
 		}
-		_, err = tx.Exec(ctx, `UPDATE tasks SET title=$1,description=$2,current_summary=$3,next_action=$4,status=$5,blocked_at=$6,blocker_reason=NULLIF($7,''),terminal_reason=NULLIF($8,''),implemented_assessment=NULLIF($9,''),updated_at=$10 WHERE workspace_id=$11 AND id=$12`, task.Title, task.Description, task.CurrentSummary, task.NextAction, task.Status, task.BlockedAt, task.BlockerReason, task.TerminalReason, task.ImplementedAssessment, now, wid, task.ID)
+		_, err = tx.Exec(ctx, `UPDATE tasks SET title=$1,description=$2,current_summary=$3,next_action=$4,status=$5,blocked_at=$6,blocker_reason=NULLIF($7,''),terminal_reason=NULLIF($8,''),implemented_assessment=NULLIF($9,''),phase_id=CASE WHEN $13='task.move' THEN $14 ELSE phase_id END,updated_at=$10 WHERE workspace_id=$11 AND id=$12`, task.Title, task.Description, task.CurrentSummary, task.NextAction, task.Status, task.BlockedAt, task.BlockerReason, task.TerminalReason, task.ImplementedAssessment, now, wid, task.ID, plan.CommandName, task.PhaseID)
 	case "dependency.connect", "dependency.disconnect", "dependency.patch":
 		for _, edge := range plan.DependencyRemove {
 			if _, err = tx.Exec(ctx, "DELETE FROM task_dependencies WHERE workspace_id=$1 AND from_task_id=$2 AND to_task_id=$3", wid, edge.FromTaskID, edge.ToTaskID); err != nil {

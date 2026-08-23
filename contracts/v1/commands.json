@@ -101,6 +101,7 @@
     "backlog.discard": { "capability": "workspace:operate", "humanApproval": "none" },
     "backlog.promote": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.update": { "capability": "workspace:operate", "humanApproval": "none" },
+    "task.move": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.set_terminal": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.clear_terminal": { "capability": "workspace:operate", "humanApproval": "none" },
     "task.block": { "capability": "workspace:operate", "humanApproval": "none" },

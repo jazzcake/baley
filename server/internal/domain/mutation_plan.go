@@ -31,7 +31,7 @@ var MutationPolicies = []MutationPolicy{
 	{Name: "lane.create", Capability: "workspace:operate", EventType: "lane.created"}, {Name: "lane.update", Capability: "workspace:operate", EventType: "lane.updated"},
 	{Name: "lane.close_out", Capability: "lane:approve", HumanApproval: ApprovalAlways, EventType: "lane.closed_out"}, {Name: "lane.discard", Capability: "lane:approve", HumanApproval: ApprovalAlways, EventType: "lane.discarded"},
 	{Name: "gate.create", Capability: "workspace:operate", EventType: "gate.created"},
-	{Name: "task.create", Capability: "workspace:operate", EventType: "task.created"}, {Name: "task.update", Capability: "workspace:operate", EventType: "task.updated"},
+	{Name: "task.create", Capability: "workspace:operate", EventType: "task.created"}, {Name: "task.update", Capability: "workspace:operate", EventType: "task.updated"}, {Name: "task.move", Capability: "workspace:operate", EventType: "task.moved"},
 	{Name: "backlog.create", Capability: "workspace:operate", EventType: "backlog.created"},
 	{Name: "backlog.update", Capability: "workspace:operate", EventType: "backlog.updated"},
 	{Name: "backlog.move", Capability: "workspace:operate", EventType: "backlog.moved"},
@@ -172,6 +172,18 @@ func PlanTaskUpdate(workspace Workspace, task Task, title, description, currentS
 	return next, plan
 }
 
+func PlanTaskMove(workspace Workspace, task Task, target Phase) (Task, DomainMutationPlan) {
+	plan := newDomainPlan("task.move", false)
+	if workspace.State == WorkspaceClosed || task.WorkspaceID != workspace.ID || target.WorkspaceID != workspace.ID || target.State == PhaseCompleted || target.ID == task.PhaseID || task.Status == TaskConfirmed || task.Status == TaskDiscarded {
+		plan.Evaluation.Errors = []Diagnostic{{Code: CodeInvalidStateTransition, EntityID: task.ID}}
+		return task, plan
+	}
+	next := task
+	next.PhaseID, next.PhasePosition = target.ID, target.Position
+	plan.ProjectedDiff = map[string]any{"taskId": task.ID, "taskPublicId": task.PublicID, "sourcePhaseId": task.PhaseID, "targetPhaseId": target.ID}
+	plan.Events = []PlannedEvent{{Type: "task.moved", EntityType: "task", EntityID: task.ID, Payload: plan.ProjectedDiff.(map[string]any)}}
+	return next, plan
+}
 func PlanGateCreate(workspace Workspace, gate Gate, from, to Phase, existing []Gate) DomainMutationPlan {
 	plan := newDomainPlan("gate.create", false)
 	normalizedAlias, aliasErr := NormalizeGateAlias(gate.Alias)

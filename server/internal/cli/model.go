@@ -84,7 +84,7 @@ var primaryArgument = map[string]string{
 	"backlog.get":    "backlogPublicId",
 	"backlog.update": "backlogPublicId", "backlog.move": "backlogPublicId", "backlog.discard": "backlogPublicId", "backlog.promote": "backlogPublicId",
 	"lane.update": "laneId", "lane.close_out": "laneId", "lane.discard": "laneId",
-	"task.update": "taskId", "task.set_terminal": "taskId", "task.clear_terminal": "taskId", "task.block": "taskId", "task.unblock": "taskId", "task.report_implemented": "taskId", "task.confirm": "taskId", "task.discard": "taskId", "task.rework": "taskId",
+	"task.update": "taskId", "task.move": "taskId", "task.set_terminal": "taskId", "task.clear_terminal": "taskId", "task.block": "taskId", "task.unblock": "taskId", "task.report_implemented": "taskId", "task.confirm": "taskId", "task.discard": "taskId", "task.rework": "taskId",
 	"task.evidence.report": "taskId", "task.acceptance_mode.escalate": "taskId",
 	"gate.attach_task": "gateId", "gate.detach_task": "gateId", "gate.attach_entry_task": "gateId", "gate.detach_entry_task": "gateId", "gate.pass": "gateId",
 	"gate.pass_task": "gateTaskId", "gate.revoke_task_pass": "gateTaskId",

@@ -295,6 +295,8 @@ func validMutationContext(t *testing.T, command string) MutationContext {
 		context.Task = Task{ID: "new", PublicID: 3, WorkspaceID: workspace.ID, LaneID: lane.ID, PhaseID: p1.ID, PhasePosition: 1, Title: "Backlog", Status: TaskPending}
 		context.InitialPatch = DependencyPatch{Add: []Dependency{{FromTaskID: "task", ToTaskID: "new"}}}
 	case "task.update":
+	case "task.move":
+		context.Phase = p2
 	case "task.set_terminal", "task.clear_terminal":
 		if command == "task.clear_terminal" {
 			withTerminal := task

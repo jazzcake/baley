@@ -40,6 +40,7 @@ type taskMutationArgs struct {
 	Description    *string `json:"description,omitempty"`
 	CurrentSummary *string `json:"currentSummary,omitempty"`
 	Reason         string  `json:"reason,omitempty"`
+	TargetPhaseID  string  `json:"targetPhaseId,omitempty"`
 }
 type taskCreateArgs struct {
 	WorkspaceID             string `json:"workspaceId"`
@@ -925,6 +926,62 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		switch request.Name {
 		case "task.update":
 			next, domainPlan = domain.PlanTaskUpdate(domainWorkspace(snapshot), current, args.Title, args.Description, args.CurrentSummary)
+		case "task.move":
+			target := findPhase(snapshot.Phases, args.TargetPhaseID)
+			if target == nil {
+				domainPlan = invalidDomainPlan(request.Name, current.ID, domain.CodeNotFound)
+				break
+			}
+			for _, run := range snapshot.Runs {
+				if run.TaskID == current.ID && run.Status == string(domain.RunRunning) {
+					domainPlan = invalidDomainPlan(request.Name, current.ID, domain.CodeInvalidStateTransition)
+					break
+				}
+			}
+			if domainPlan.Evaluation.HasErrors() {
+				break
+			}
+			for _, related := range snapshot.Tasks {
+				if (related.ID == current.ParentTaskID || related.ParentTaskID == current.ID) && related.PhaseID != target.ID {
+					domainPlan = invalidDomainPlan(request.Name, current.ID, domain.CodeInvalidStateTransition)
+					break
+				}
+			}
+			if domainPlan.Evaluation.HasErrors() {
+				break
+			}
+			for _, gate := range snapshot.Gates {
+				for _, condition := range gate.Conditions {
+					if condition.TaskID == current.ID && gate.FromPhaseID != target.ID {
+						domainPlan = invalidDomainPlan(request.Name, current.ID, domain.CodeInvalidStateTransition)
+						break
+					}
+				}
+				for _, entry := range gate.EntryTasks {
+					if entry.TaskID == current.ID && gate.ToPhaseID != target.ID {
+						domainPlan = invalidDomainPlan(request.Name, current.ID, domain.CodeInvalidStateTransition)
+						break
+					}
+				}
+				if domainPlan.Evaluation.HasErrors() {
+					break
+				}
+			}
+			if domainPlan.Evaluation.HasErrors() {
+				break
+			}
+			next, domainPlan = domain.PlanTaskMove(domainWorkspace(snapshot), current, domainPhase(*target, args.WorkspaceID))
+			if !domainPlan.Evaluation.HasErrors() {
+				moved := snapshot
+				moved.Tasks = append([]TaskProjection(nil), snapshot.Tasks...)
+				for index := range moved.Tasks {
+					if moved.Tasks[index].ID == current.ID {
+						moved.Tasks[index].PhaseID = target.ID
+					}
+				}
+				_, graphEvaluation := workspaceGraph(moved)
+				domainPlan.Evaluation.Warnings = append(domainPlan.Evaluation.Warnings, graphEvaluation.Warnings...)
+			}
 		case "task.block", "task.unblock", "task.rework", "task.discard":
 			next, domainPlan = domain.PlanTaskMutation(domainWorkspace(snapshot), request.Name, current, args.Reason, s.now().UTC())
 		case "task.set_terminal", "task.clear_terminal":
@@ -1766,7 +1823,7 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 		target = &gateMutationArgs{}
 	case "lane.create", "lane.update", "lane.close_out", "lane.discard":
 		target = &laneMutationArgs{}
-	case "task.update", "task.set_terminal", "task.clear_terminal", "task.block", "task.unblock", "task.discard", "task.rework":
+	case "task.update", "task.move", "task.set_terminal", "task.clear_terminal", "task.block", "task.unblock", "task.discard", "task.rework":
 		target = &taskMutationArgs{}
 	case "dependency.connect", "dependency.disconnect", "dependency.patch":
 		target = &dependencyMutationArgs{}
@@ -2309,6 +2366,9 @@ func domainWorkspace(snapshot Snapshot) domain.Workspace {
 	return domain.Workspace{ID: snapshot.Workspace.ID, Name: snapshot.Workspace.Name, State: domain.WorkspaceState(snapshot.Workspace.State), ActivePhaseID: active, Revision: snapshot.Workspace.Revision}
 }
 
+func invalidDomainPlan(command, entityID, code string) domain.DomainMutationPlan {
+	return domain.DomainMutationPlan{Command: command, Evaluation: domain.Evaluation{Errors: []domain.Diagnostic{{Code: code, EntityID: entityID}}}}
+}
 func domainPhase(value PhaseProjection, workspaceID string) domain.Phase {
 	return domain.Phase{ID: value.ID, WorkspaceID: workspaceID, Position: value.Position, State: domain.PhaseState(value.State)}
 }
