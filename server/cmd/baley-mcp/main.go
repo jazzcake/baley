@@ -561,12 +561,8 @@ func main() {
 	if base == "" {
 		base = "http://127.0.0.1:8080"
 	}
-	parsed, err := url.Parse(base)
-	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Hostname() == "" {
-		log.Fatal("BALEY_SERVER_URL must be an absolute http URL without credentials, query, or fragment")
-	}
-	if mode == "stdio" && !(parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1") {
-		log.Fatal("stdio BALEY_SERVER_URL must be a loopback http URL")
+	if _, err := validateServerURL(base, mode); err != nil {
+		log.Fatal(err)
 	}
 	c := &client{
 		base:                strings.TrimRight(base, "/"),
@@ -584,7 +580,7 @@ func main() {
 		serveHTTP(c)
 		return
 	}
-	if err = server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -646,6 +642,19 @@ func classifiedTool(name, description string) *mcp.Tool {
 	}
 }
 
+func validateServerURL(base, mode string) (*url.URL, error) {
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Hostname() == "" {
+		return nil, errors.New("BALEY_SERVER_URL must be an absolute http(s) URL without credentials, query, or fragment")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, errors.New("BALEY_SERVER_URL must use http or https")
+	}
+	if mode == "stdio" && (parsed.Scheme != "http" || !(parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1")) {
+		return nil, errors.New("stdio BALEY_SERVER_URL must be a loopback http URL")
+	}
+	return parsed, nil
+}
 func newMCPServer(c *client) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "baley", Version: "0.1.0"}, nil)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_get", "Read Workspace metadata"), c.workspaceGet)

@@ -6,7 +6,7 @@ last_active: 2026-08-14
 
 # Shared Streamable HTTP MCP
 
-Baley runs one Streamable HTTP MCP adapter in Docker instead of starting a PowerShell and `go run` bridge for every Codex session. The adapter listens on loopback at `http://127.0.0.1:8091/mcp` for local diagnostics. The Viewer nginx additionally proxies the exact `/mcp` endpoint through the existing Tailscale Serve ingress, so authorized Tailnet devices can connect at `https://jazzcake-home.tail87e929.ts.net/mcp` without exposing the MCP container port, API, or PostgreSQL directly.
+Baley runs one Streamable HTTP MCP adapter in Docker instead of starting a PowerShell and `go run` bridge for every Codex session. The adapter is local only at `http://127.0.0.1:8091/mcp`; it is not exposed through Tailscale or a public reverse proxy. A remote Mac runs its own local gateway and reaches the Baley API through the Tailnet Viewer `/api` proxy.
 
 ## Security model
 
@@ -39,14 +39,15 @@ The unauthenticated request intentionally returns `401`. If Codex gets `401`, sy
 
 ## Tailnet Codex clients
 
-For a Mac or another authorized Tailnet device, configure the same Streamable HTTP endpoint with the gateway token in that device's environment:
+Each Mac runs its own loopback-only MCP gateway, gateway token, and encrypted credential store. The local gateway reaches the Baley API at `https://jazzcake-home.tail87e929.ts.net/api` through Tailscale; it does not expose or consume a remote `/mcp` endpoint.
+
+On a Baley checkout on the Mac, run:
 
 ```bash
-codex mcp add baley --url https://jazzcake-home.tail87e929.ts.net/mcp --bearer-token-env-var BALEY_MCP_GATEWAY_TOKEN
+./scripts/install-baley-mcp-macos.sh
 ```
 
-Do not expose port 8091 directly or publish this endpoint to the public internet. Tailscale Serve and Tailnet ACLs remain the network boundary; the bearer token is the required second transport boundary. Restart Codex after adding or changing the server.
-
+The script builds `baley-mcp`, installs a per-user launchd service on `127.0.0.1:8091`, creates a per-Mac gateway token and credential store, and registers Codex against `http://127.0.0.1:8091/mcp`. Restart Codex after installation. Do not expose port `8091` or copy one Mac's gateway token to another device.
 Docker restart recovery is automatic (`restart: unless-stopped`). Verify with `docker compose restart mcp` and a new Codex thread/tool listing.
 
 ## Migration and rollback
