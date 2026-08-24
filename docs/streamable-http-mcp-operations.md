@@ -6,7 +6,7 @@ last_active: 2026-08-14
 
 # Shared Streamable HTTP MCP
 
-Baley runs one Streamable HTTP MCP adapter in Docker instead of starting a PowerShell and `go run` bridge for every Codex session. The adapter is local only at `http://127.0.0.1:8091/mcp`; it is not exposed through Tailscale or a public reverse proxy.
+Baley runs one Streamable HTTP MCP adapter in Docker instead of starting a PowerShell and `go run` bridge for every Codex session. The adapter listens on loopback at `http://127.0.0.1:8091/mcp` for local diagnostics. The Viewer nginx additionally proxies the exact `/mcp` endpoint through the existing Tailscale Serve ingress, so authorized Tailnet devices can connect at `https://jazzcake-home.tail87e929.ts.net/mcp` without exposing the MCP container port, API, or PostgreSQL directly.
 
 ## Security model
 
@@ -36,6 +36,16 @@ codex mcp get baley
 ```
 
 The unauthenticated request intentionally returns `401`. If Codex gets `401`, synchronize the token and restart Codex. A forbidden or not-found tool result means the token belongs to another Workspace or lacks the required capability; do not weaken the API authorization boundary.
+
+## Tailnet Codex clients
+
+For a Mac or another authorized Tailnet device, configure the same Streamable HTTP endpoint with the gateway token in that device's environment:
+
+```bash
+codex mcp add baley --url https://jazzcake-home.tail87e929.ts.net/mcp --bearer-token-env-var BALEY_MCP_GATEWAY_TOKEN
+```
+
+Do not expose port 8091 directly or publish this endpoint to the public internet. Tailscale Serve and Tailnet ACLs remain the network boundary; the bearer token is the required second transport boundary. Restart Codex after adding or changing the server.
 
 Docker restart recovery is automatic (`restart: unless-stopped`). Verify with `docker compose restart mcp` and a new Codex thread/tool listing.
 
