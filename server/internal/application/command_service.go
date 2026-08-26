@@ -950,22 +950,8 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			if domainPlan.Evaluation.HasErrors() {
 				break
 			}
-			for _, gate := range snapshot.Gates {
-				for _, condition := range gate.Conditions {
-					if condition.TaskID == current.ID && gate.FromPhaseID != target.ID {
-						domainPlan = invalidDomainPlan(request.Name, current.ID, domain.CodeInvalidStateTransition)
-						break
-					}
-				}
-				for _, entry := range gate.EntryTasks {
-					if entry.TaskID == current.ID && gate.ToPhaseID != target.ID {
-						domainPlan = invalidDomainPlan(request.Name, current.ID, domain.CodeInvalidStateTransition)
-						break
-					}
-				}
-				if domainPlan.Evaluation.HasErrors() {
-					break
-				}
+			if taskMoveViolatesGateBinding(snapshot.Gates, current.ID, target.ID) {
+				domainPlan = invalidDomainPlan(request.Name, current.ID, domain.CodeInvalidStateTransition)
 			}
 			if domainPlan.Evaluation.HasErrors() {
 				break
@@ -2329,6 +2315,24 @@ func findGateTask(v []GateProjection, id string) (*GateProjection, *GateTaskProj
 		}
 	}
 	return nil, nil
+}
+
+// taskMoveViolatesGateBinding protects explicit Gate decisions while allowing
+// derived automatic entry tasks to follow a Task's new Phase.
+func taskMoveViolatesGateBinding(gates []GateProjection, taskID, targetPhaseID string) bool {
+	for _, gate := range gates {
+		for _, condition := range gate.Conditions {
+			if condition.TaskID == taskID && gate.FromPhaseID != targetPhaseID {
+				return true
+			}
+		}
+		for _, entry := range gate.EntryTasks {
+			if entry.TaskID == taskID && entry.SelectionSource == "explicit" && gate.ToPhaseID != targetPhaseID {
+				return true
+			}
+		}
+	}
+	return false
 }
 func findPhase(v []PhaseProjection, id string) *PhaseProjection {
 	for i := range v {
