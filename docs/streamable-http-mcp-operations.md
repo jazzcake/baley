@@ -47,7 +47,35 @@ On a Baley checkout on the Mac, run:
 ./scripts/install-baley-mcp-macos.sh
 ```
 
-The script builds `baley-mcp`, installs a per-user launchd service on `127.0.0.1:8091`, creates a per-Mac gateway token and credential store, and registers Codex against `http://127.0.0.1:8091/mcp`. Restart Codex after installation. Do not expose port `8091` or copy one Mac's gateway token to another device.
+The script builds `baley-mcp`, installs a per-user launchd service on `127.0.0.1:8091`, creates a per-Mac gateway token and credential store, and registers Codex against `http://127.0.0.1:8091/mcp`. It never asks for or copies the token from the Baley host.
+
+### Gateway token setup on macOS
+
+The installer stores the Mac-local secret at:
+
+```text
+~/Library/Application Support/baley-mcp/gateway-token
+```
+
+Do not print, paste, commit, or transfer this value. The installer applies it in two separate places:
+
+- **Codex Desktop:** `launchctl setenv` receives the token. Fully quit and reopen Codex Desktop after the installer finishes.
+- **Codex CLI:** source the generated, owner-readable-only shell file in each terminal before launching Codex:
+
+```bash
+source "$HOME/Library/Application Support/baley-mcp/codex-cli-env.sh"
+codex
+```
+
+Check presence without printing the secret:
+
+```bash
+launchctl getenv BALEY_MCP_GATEWAY_TOKEN >/dev/null && echo "gateway token is available to Desktop apps"
+test -r "$HOME/Library/Application Support/baley-mcp/codex-cli-env.sh" && echo "CLI environment file exists"
+codex mcp get baley
+```
+
+Do not expose port `8091` or copy one Mac's gateway token to another device.
 Docker restart recovery is automatic (`restart: unless-stopped`). Verify with `docker compose restart mcp` and a new Codex thread/tool listing.
 
 ## Migration and rollback

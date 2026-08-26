@@ -10,6 +10,7 @@ state_dir="${XDG_STATE_HOME:-$HOME/Library/Application Support}/baley-mcp"
 bin_dir="${HOME}/.local/bin"
 binary="${bin_dir}/baley-mcp"
 token_file="${state_dir}/gateway-token"
+cli_env_file="${state_dir}/codex-cli-env.sh"
 credentials_file="${state_dir}/credentials.json"
 plist="${HOME}/Library/LaunchAgents/com.baley.mcp.plist"
 label="com.baley.mcp"
@@ -35,6 +36,8 @@ if [[ ! -f "$token_file" ]]; then
 fi
 chmod 600 "$token_file"
 gateway_token="$(<"$token_file")"
+printf 'export BALEY_MCP_GATEWAY_TOKEN=%q\n' "$gateway_token" > "$cli_env_file"
+chmod 600 "$cli_env_file"
 
 go -C "${repo_root}/server" build -o "$binary" ./cmd/baley-mcp
 
@@ -66,4 +69,6 @@ codex mcp remove baley >/dev/null 2>&1 || true
 codex mcp add baley --url http://127.0.0.1:8091/mcp --bearer-token-env-var BALEY_MCP_GATEWAY_TOKEN
 
 echo "Baley MCP is running locally at http://127.0.0.1:8091/mcp"
-echo "Restart Codex, then use /mcp to verify the Baley server."
+echo "For Codex Desktop: quit it fully and reopen it."
+echo "For Codex CLI in this terminal: source \"${cli_env_file}\""
+echo "Do not print, copy, or share the gateway token."
