@@ -24,12 +24,15 @@ import (
 type client struct {
 	base                string
 	http                *http.Client
-	agentToken          string
 	gatewayToken        string
 	secretStore         secretStore
 	credentialStorePath string
 	agentActorID        string
 	connectionMu        sync.Mutex
+	// sessionTokens are intentionally process-local. The persisted credential
+	// store contains only a gateway registration and must never resurrect an
+	// Agent token after the MCP process has restarted.
+	sessionTokens map[string]string
 }
 
 type workspaceInput struct {
@@ -579,7 +582,6 @@ func main() {
 	c := &client{
 		base:                strings.TrimRight(base, "/"),
 		http:                &http.Client{Timeout: 15 * time.Second},
-		agentToken:          strings.TrimSpace(os.Getenv("BALEY_AGENT_TOKEN")),
 		gatewayToken:        strings.TrimSpace(os.Getenv("BALEY_MCP_GATEWAY_TOKEN")),
 		secretStore:         newOSSecretStore(),
 		credentialStorePath: strings.TrimSpace(os.Getenv("BALEY_MCP_CREDENTIAL_STORE")),
@@ -816,7 +818,7 @@ func (c *client) get(ctx context.Context, path string) (*mcp.CallToolResult, any
 }
 func (c *client) call(ctx context.Context, method, path string, payload any) (*mcp.CallToolResult, any, error) {
 	workspaceID := requestWorkspaceID(path, payload)
-	token := c.agentToken
+	token := ""
 	if c.credentialStorePath != "" && workspaceID != "" {
 		var pending *mcp.CallToolResult
 		var err error

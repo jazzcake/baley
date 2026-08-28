@@ -15,9 +15,10 @@ header.
 ## Security model
 
 The local JSON store has only server routing metadata and an opaque keychain
-reference. Gateway secrets, pending connection secrets, and cached Workspace
-Agent credentials are stored in the OS credential manager: macOS Keychain,
-Windows Credential Manager, or Linux Secret Service. The Keychain item is
+reference. Gateway secrets and pending connection secrets are stored in the OS
+credential manager: macOS Keychain, Windows Credential Manager, or Linux Secret
+Service. A Workspace Agent credential exists only in the running MCP process;
+a fresh process renews it from the registered gateway. The Keychain item is
 device-bound and is never printed by diagnostics.
 
 The stdio process may connect to the remote Baley API only with HTTPS. Optional

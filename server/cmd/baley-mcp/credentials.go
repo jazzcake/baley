@@ -23,7 +23,6 @@ import (
 )
 
 type workspaceCredential struct {
-	AgentToken    string    `json:"agentToken"`
 	GatewaySecret string    `json:"gatewaySecret,omitempty"`
 	ConnectedAt   time.Time `json:"connectedAt"`
 }
@@ -116,18 +115,14 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 	if err != nil {
 		return "", nil, err
 	}
-	if credential, ok := store.Workspaces[workspaceID]; ok && credential.AgentToken != "" {
-		return credential.AgentToken, nil, nil
+	if token := c.sessionTokens[workspaceID]; token != "" {
+		return token, nil, nil
 	}
 	if credential, ok := store.Workspaces[workspaceID]; ok && credential.GatewaySecret != "" && store.GatewayID != "" {
 		response, resumeErr := c.resumeWorkspaceGateway(ctx, workspaceID, store.GatewayID, credential.GatewaySecret)
 		if resumeErr == nil && response.AgentToken != "" {
-			credential.AgentToken, credential.ConnectedAt = response.AgentToken, time.Now().UTC()
-			store.Workspaces[workspaceID] = credential
-			if err = c.writeCredentialStore(ctx, &store); err != nil {
-				return "", nil, err
-			}
-			return credential.AgentToken, nil, nil
+			c.rememberSessionToken(workspaceID, response.AgentToken)
+			return response.AgentToken, nil, nil
 		}
 		var statusError connectionHTTPStatusError
 		if resumeErr != nil && (!errors.As(resumeErr, &statusError) || statusError.StatusCode != http.StatusUnauthorized) {
@@ -157,11 +152,12 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			// connection consumed. The response can therefore be either approved
 			// (before a repository implementation marks consumption) or consumed.
 			// The token itself is the authoritative successful hand-off.
-			store.Workspaces[workspaceID] = workspaceCredential{AgentToken: response.AgentToken, GatewaySecret: response.GatewaySecret, ConnectedAt: time.Now().UTC()}
+			store.Workspaces[workspaceID] = workspaceCredential{GatewaySecret: response.GatewaySecret, ConnectedAt: time.Now().UTC()}
 			delete(store.PendingConnections, workspaceID)
 			if err = c.writeCredentialStore(ctx, &store); err != nil {
 				return "", nil, err
 			}
+			c.rememberSessionToken(workspaceID, response.AgentToken)
 			return response.AgentToken, nil, nil
 		} else {
 			return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
@@ -183,6 +179,16 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 		return "", nil, err
 	}
 	return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
+}
+
+func (c *client) rememberSessionToken(workspaceID, token string) {
+	if token == "" {
+		return
+	}
+	if c.sessionTokens == nil {
+		c.sessionTokens = map[string]string{}
+	}
+	c.sessionTokens[workspaceID] = token
 }
 
 func (c *client) createWorkspaceConnection(ctx context.Context, workspaceID, gatewayID string) (pendingWorkspaceConnection, error) {
@@ -281,7 +287,7 @@ func pendingStructured(result *mcp.CallToolResult) any {
 }
 
 func (c *client) readCredentialStore(ctx context.Context) (credentialStore, error) {
-	store := credentialStore{Version: 5, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
+	store := credentialStore{Version: 6, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
 	path := c.credentialStorePath
 	if path == "" {
 		return store, errors.New("Baley credential store is not configured")
@@ -332,6 +338,9 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 			return store, errors.New("Baley keychain credential payload is invalid")
 		}
 		store.KeyRef = disk.KeyRef
+		// Version 5 persisted a short-lived Agent token in this Keychain payload.
+		// Rewrite it without that field before any credential can be used.
+		migrateToKeychain = bytes.Contains(plaintext, []byte(`"agentToken"`))
 	} else if err = json.Unmarshal(raw, &store); err != nil {
 		return store, errors.New("Baley credential store is invalid JSON")
 	} else {
@@ -340,23 +349,13 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 		// support is active.
 		migrateToKeychain = c.secretStore != nil
 	}
-	store.Version = 5
+	store.Version = 6
 	store.ServerURL = c.base
 	if store.Workspaces == nil {
 		store.Workspaces = map[string]workspaceCredential{}
 	}
 	if store.PendingConnections == nil {
 		store.PendingConnections = map[string]pendingWorkspaceConnection{}
-	}
-	if migrateToKeychain {
-		// A migrated registered gateway must renew on the next call. This proves
-		// the keychain copy can be used and cannot prolong a stale Agent token.
-		for workspaceID, credential := range store.Workspaces {
-			if credential.GatewaySecret != "" {
-				credential.AgentToken = ""
-				store.Workspaces[workspaceID] = credential
-			}
-		}
 	}
 	if migrateToKeychain || (disk.Ciphertext == "" && disk.KeyRef == "" && c.gatewayToken != "" && c.secretStore == nil) {
 		if err = c.writeCredentialStore(ctx, &store); err != nil {
@@ -435,8 +434,8 @@ func (c *client) cleanupExpiredLegacyBackup() {
 }
 
 // migrateLegacyCredentialStore performs the one permitted use of the former
-// local gateway token. The reissued Agent credential proves the copied gateway
-// registration remains valid; a revoke or membership removal is never masked.
+// local gateway token. The response proves the copied gateway registration
+// remains valid; the reissued Agent credential is never persisted.
 func (c *client) migrateLegacyCredentialStore(ctx context.Context) error {
 	if c.secretStore == nil {
 		return errors.New("OS keychain is unavailable; cannot migrate Baley credentials safely")
@@ -464,8 +463,7 @@ func (c *client) migrateLegacyCredentialStore(ctx context.Context) error {
 		if response.AgentToken == "" {
 			return errors.New("Baley returned no Agent credential while validating migrated gateway")
 		}
-		credential.AgentToken, credential.ConnectedAt = response.AgentToken, time.Now().UTC()
-		store.Workspaces[workspaceID] = credential
+		_ = response.AgentToken
 	}
 	return c.writeCredentialStore(ctx, &store)
 }
@@ -518,7 +516,7 @@ func (c *client) writeCredentialStore(ctx context.Context, store *credentialStor
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create Baley credential directory: %w", err)
 	}
-	store.Version = 5
+	store.Version = 6
 	store.ServerURL = c.base
 	raw, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
@@ -538,7 +536,7 @@ func (c *client) writeCredentialStore(ctx context.Context, store *credentialStor
 		if err = c.secretStore.Set(credentialKeychainService, store.KeyRef, base64.RawURLEncoding.EncodeToString(raw)); err != nil {
 			return fmt.Errorf("write Baley device secret to OS keychain: %w", err)
 		}
-		raw, err = json.MarshalIndent(credentialStoreDisk{Version: 5, ServerURL: c.base, KeyRef: store.KeyRef}, "", "  ")
+		raw, err = json.MarshalIndent(credentialStoreDisk{Version: 6, ServerURL: c.base, KeyRef: store.KeyRef}, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -618,10 +616,10 @@ func (c *client) removeWorkspaceCredential(ctx context.Context, workspaceID stri
 		if credential.GatewaySecret == "" {
 			delete(store.Workspaces, workspaceID)
 		} else {
-			credential.AgentToken = ""
 			store.Workspaces[workspaceID] = credential
 		}
 	}
+	delete(c.sessionTokens, workspaceID)
 	delete(store.PendingConnections, workspaceID)
 	return c.writeCredentialStore(ctx, &store)
 }

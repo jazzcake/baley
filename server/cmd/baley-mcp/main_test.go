@@ -189,52 +189,13 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 		t.Fatalf("expected one persistent credential store, entries=%v err=%v", entries, err)
 	}
 }
-func TestClientSendsConfiguredAgentTokenWithoutPuttingItInThePayload(t *testing.T) {
-	const token = "agent-secret-that-must-stay-in-the-header"
-	var authorization string
-	var body map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authorization = r.Header.Get("Authorization")
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"workspaceRevision":2}`))
-	}))
-	defer server.Close()
-
-	c := &client{base: server.URL, http: server.Client(), agentToken: token}
-	result, _, err := c.runStart(context.Background(), nil, runStartInput{
-		WorkspaceID: "workspace",
-		TaskID:      135,
-		ClientRunID: "client-run",
-		Kind:        "implementation",
-		automaticEnvelope: automaticEnvelope{
-			ExpectedWorkspaceRevision: 1,
-			IdempotencyKey:            "idempotency-key",
-			ExecutedByActorID:         "agent",
-		},
-	})
-	if err != nil || result.IsError {
-		t.Fatalf("run start failed: %#v %v", result, err)
-	}
-	if authorization != "Bearer "+token {
-		t.Fatalf("missing agent bearer token: %q", authorization)
-	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) == "" || containsJSONSecret(raw, token) {
-		t.Fatal("agent token leaked into the command payload")
-	}
-}
-
-func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
+func TestClientRenewsWorkspaceCredentialInFreshProcessWithoutPersistingToken(t *testing.T) {
 	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
-	const token = "workspace-scoped-agent-token"
+	const enrolledToken = "workspace-scoped-agent-token"
+	const renewedToken = "fresh-process-agent-token"
+	const gatewaySecret = "registered-gateway-secret"
 	var connectionCreated, workspaceRead bool
+	var renewals int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -247,10 +208,13 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 				http.Error(w, "missing connection secret", http.StatusForbidden)
 				return
 			}
-			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"consumed","agentToken":"` + token + `"}`))
+			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"consumed","agentToken":"` + enrolledToken + `","gatewaySecret":"` + gatewaySecret + `"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/mcp/gateway-sessions":
+			renewals++
+			_, _ = w.Write([]byte(`{"agentToken":"` + renewedToken + `"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces/"+workspaceID:
 			workspaceRead = true
-			if r.Header.Get("Authorization") != "Bearer "+token {
+			if got := r.Header.Get("Authorization"); got != "Bearer "+enrolledToken && got != "Bearer "+renewedToken {
 				http.Error(w, "missing workspace token", http.StatusUnauthorized)
 				return
 			}
@@ -275,8 +239,8 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 		t.Fatalf("missing actionable login result: %#v", result.StructuredContent)
 	}
 
-	// A new MCP process must resume the approval request from the local
-	// credential store rather than relying on the original process memory.
+	// A new MCP process may consume the approved connection but must not write
+	// the issued Agent credential into the local store.
 	restarted := &client{
 		base: server.URL, http: server.Client(), credentialStorePath: storePath,
 		agentActorID: "agent",
@@ -289,8 +253,8 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsJSONSecret(raw, token) {
-		t.Fatal("Workspace token was not persisted")
+	if containsJSONSecret(raw, enrolledToken) || strings.Contains(string(raw), "agentToken") {
+		t.Fatal("Workspace Agent credential was persisted")
 	}
 	store, err := restarted.readCredentialStore(context.Background())
 	if err != nil {
@@ -298,6 +262,14 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 	}
 	if _, exists := store.PendingConnections[workspaceID]; exists {
 		t.Fatal("approved pending connection was not removed")
+	}
+
+	// A third client models a new process: it must renew from the registered
+	// gateway, not reuse the Agent token returned while consuming approval.
+	freshProcess := &client{base: server.URL, http: server.Client(), credentialStorePath: storePath, agentActorID: "agent"}
+	result, _, err = freshProcess.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
+	if err != nil || result.IsError || !workspaceRead || renewals != 1 {
+		t.Fatalf("fresh process did not renew gateway credential: result=%#v err=%v renewals=%d", result, err, renewals)
 	}
 }
 
@@ -308,6 +280,8 @@ func TestClientPreservesStoredCredentialForMissingWorkspaceResource(t *testing.T
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/mcp/gateway-sessions":
+			_, _ = w.Write([]byte(`{"agentToken":"` + token + `"}`))
 		case "/v1/workspaces/" + workspaceID + "/tasks/999999":
 			if r.Header.Get("Authorization") != "Bearer "+token {
 				t.Fatalf("unexpected credential: %q", r.Header.Get("Authorization"))
@@ -332,8 +306,8 @@ func TestClientPreservesStoredCredentialForMissingWorkspaceResource(t *testing.T
 	storePath := filepath.Join(t.TempDir(), "credentials.json")
 	c := &client{base: server.URL, http: server.Client(), credentialStorePath: storePath, agentActorID: "agent"}
 	if err := c.writeCredentialStore(context.Background(), &credentialStore{
-		Version: 1, ServerURL: server.URL,
-		Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: token}},
+		Version: 6, ServerURL: server.URL, GatewayID: "device-1",
+		Workspaces: map[string]workspaceCredential{workspaceID: {GatewaySecret: "gateway-secret"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -346,15 +320,25 @@ func TestClientPreservesStoredCredentialForMissingWorkspaceResource(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential, ok := store.Workspaces[workspaceID]; !ok || credential.AgentToken != token {
+	if credential, ok := store.Workspaces[workspaceID]; !ok || credential.GatewaySecret != "gateway-secret" {
 		t.Fatalf("valid Workspace credential was removed: %#v", store.Workspaces)
 	}
 }
 func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t *testing.T) {
 	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
 	var connectionCreated bool
+	var gatewaySessions int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/mcp/gateway-sessions" {
+			gatewaySessions++
+			if gatewaySessions > 1 {
+				http.Error(w, "revoked", http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(`{"agentToken":"stale-or-cross-workspace-token"}`))
+			return
+		}
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces/"+workspaceID {
 			if r.Header.Get("Authorization") != "Bearer stale-or-cross-workspace-token" {
 				t.Fatalf("unexpected credential: %q", r.Header.Get("Authorization"))
@@ -379,8 +363,8 @@ func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t 
 		agentActorID: "agent",
 	}
 	if err := c.writeCredentialStore(context.Background(), &credentialStore{
-		Version: 1, ServerURL: server.URL,
-		Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: "stale-or-cross-workspace-token"}},
+		Version: 6, ServerURL: server.URL, GatewayID: "device-1",
+		Workspaces: map[string]workspaceCredential{workspaceID: {GatewaySecret: "gateway-secret"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
