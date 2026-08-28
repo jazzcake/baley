@@ -44,6 +44,11 @@ the service correctly returned the normal signed-in Workspace connection path
 instead of allowing a cached credential; completing that link would create a
 new persistent gateway registration and requires explicit human approval.
 
+## Git evidence
+
+Implementation commit: `60762c8` (`fix: renew tokenless MCP credentials per
+process`), pushed to `origin/jazzcake/baley-task-149-tokenless`.
+
 ## Assessment
 
 The implementation and regression suite resolve the independent-review
