@@ -26,6 +26,7 @@ type client struct {
 	http                *http.Client
 	agentToken          string
 	gatewayToken        string
+	secretStore         secretStore
 	credentialStorePath string
 	agentActorID        string
 	connectionMu        sync.Mutex
@@ -34,6 +35,7 @@ type client struct {
 type workspaceInput struct {
 	WorkspaceID string `json:"workspaceId" jsonschema:"Baley workspace ID"`
 }
+type diagnosticsInput struct{}
 type taskInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	TaskID      int    `json:"taskId"`
@@ -569,6 +571,7 @@ func main() {
 		http:                &http.Client{Timeout: 15 * time.Second},
 		agentToken:          strings.TrimSpace(os.Getenv("BALEY_AGENT_TOKEN")),
 		gatewayToken:        strings.TrimSpace(os.Getenv("BALEY_MCP_GATEWAY_TOKEN")),
+		secretStore:         newOSSecretStore(),
 		credentialStorePath: strings.TrimSpace(os.Getenv("BALEY_MCP_CREDENTIAL_STORE")),
 		agentActorID:        strings.TrimSpace(os.Getenv("BALEY_AGENT_ACTOR_ID")),
 	}
@@ -650,14 +653,15 @@ func validateServerURL(base, mode string) (*url.URL, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, errors.New("BALEY_SERVER_URL must use http or https")
 	}
-	if mode == "stdio" && (parsed.Scheme != "http" || !(parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1")) {
-		return nil, errors.New("stdio BALEY_SERVER_URL must be a loopback http URL")
+	if mode == "stdio" && parsed.Scheme == "http" && !(parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1") {
+		return nil, errors.New("stdio BALEY_SERVER_URL must use HTTPS unless it is loopback HTTP")
 	}
 	return parsed, nil
 }
 func newMCPServer(c *client) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "baley", Version: "0.1.0"}, nil)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_get", "Read Workspace metadata"), c.workspaceGet)
+	mcp.AddTool(server, readOnlyTool("baley_mcp_diagnostics", "Report tokenless credential-store, keychain, and local transport safety without exposing secrets"), c.diagnostics)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_graph", "Read the current Workspace graph"), c.workspaceGraph)
 	mcp.AddTool(server, readOnlyTool("baley_task_get", "Read one Task by public ID"), c.taskGet)
 	mcp.AddTool(server, readOnlyTool("baley_task_acceptance_get", "Read a Task acceptance binding, policy/profile, assignments, and typed evidence"), c.taskAcceptanceGet)
@@ -744,8 +748,8 @@ func serveHTTP(c *client) {
 		addr = "127.0.0.1:8090"
 	}
 	host, _, err := net.SplitHostPort(addr)
-	if err != nil || (host != "127.0.0.1" && host != "localhost" && host != "::1" && host != "0.0.0.0") {
-		log.Fatal("BALEY_MCP_HTTP_ADDR must bind to loopback or 0.0.0.0")
+	if err != nil || (host != "127.0.0.1" && host != "localhost" && host != "::1") {
+		log.Fatal("BALEY_MCP_HTTP_ADDR must bind to loopback")
 	}
 	// Workspace credentials are scoped to this local gateway identity and the
 	// target Workspace, not to an ephemeral MCP transport session. A new Codex
@@ -922,6 +926,37 @@ func approvalAttestation(approvedByActorID, approvedCommandHash, decisionSnapsho
 
 func (c *client) workspaceGraph(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/graph")
+}
+func (c *client) diagnostics(_ context.Context, _ *mcp.CallToolRequest, _ diagnosticsInput) (*mcp.CallToolResult, any, error) {
+	result := map[string]any{
+		"serverURL":                 c.base,
+		"credentialStoreConfigured": c.credentialStorePath != "",
+		"osKeychainConfigured":      c.secretStore != nil,
+		"legacyTokenConfigured":     c.gatewayToken != "",
+	}
+	if c.credentialStorePath == "" {
+		result["credentialStoreState"] = "not_configured"
+	} else if raw, err := os.ReadFile(c.credentialStorePath); errors.Is(err, os.ErrNotExist) {
+		result["credentialStoreState"] = "not_created"
+	} else if err != nil {
+		result["credentialStoreState"] = "unreadable"
+	} else {
+		var disk credentialStoreDisk
+		if json.Unmarshal(raw, &disk) != nil {
+			result["credentialStoreState"] = "invalid"
+		} else if disk.KeyRef != "" {
+			result["credentialStoreState"] = "keychain_backed"
+			if c.secretStore != nil {
+				_, keychainErr := c.secretStore.Get(credentialKeychainService, disk.KeyRef)
+				result["keychainEntryAvailable"] = keychainErr == nil
+			}
+		} else if disk.Ciphertext != "" {
+			result["credentialStoreState"] = "legacy_migration_required"
+		} else {
+			result["credentialStoreState"] = "legacy_plaintext_migration_required"
+		}
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Baley MCP diagnostics collected without exposing credentials."}}, StructuredContent: result}, result, nil
 }
 func (c *client) workspaceGet(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID))

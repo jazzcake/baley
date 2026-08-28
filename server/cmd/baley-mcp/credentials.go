@@ -31,18 +31,19 @@ type workspaceCredential struct {
 type credentialStore struct {
 	Version            int                                   `json:"version"`
 	ServerURL          string                                `json:"serverUrl"`
+	KeyRef             string                                `json:"-"`
 	GatewayID          string                                `json:"gatewayId,omitempty"`
 	Workspaces         map[string]workspaceCredential        `json:"workspaces"`
 	PendingConnections map[string]pendingWorkspaceConnection `json:"pendingConnections,omitempty"`
 }
 
-// credentialStoreDisk keeps the server URL available for safe routing while the
-// Workspace tokens and pending connection secrets stay encrypted. The encryption
-// key is derived from the local HTTP gateway token, which is already the
-// per-user secret required to reach this loopback MCP service.
+// credentialStoreDisk keeps only non-secret routing metadata and a random
+// keychain reference. Version 4's Ciphertext is deliberately retained only for
+// a one-way migration from the former gateway-token-derived store.
 type credentialStoreDisk struct {
 	Version    int    `json:"version"`
 	ServerURL  string `json:"serverUrl"`
+	KeyRef     string `json:"keyRef,omitempty"`
 	Ciphertext string `json:"ciphertext,omitempty"`
 }
 
@@ -273,8 +274,11 @@ func pendingStructured(result *mcp.CallToolResult) any {
 }
 
 func (c *client) readCredentialStore(ctx context.Context) (credentialStore, error) {
-	store := credentialStore{Version: 4, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
+	store := credentialStore{Version: 5, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
 	path := c.credentialStorePath
+	if path == "" {
+		return store, errors.New("Baley credential store is not configured")
+	}
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
@@ -289,9 +293,10 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 	if disk.ServerURL != "" && strings.TrimRight(disk.ServerURL, "/") != c.base {
 		return store, errors.New("Baley credential store belongs to a different server URL")
 	}
+	migrateToKeychain := false
 	if disk.Ciphertext != "" {
 		if c.gatewayToken == "" {
-			return store, errors.New("Baley encrypted credential store requires BALEY_MCP_GATEWAY_TOKEN")
+			return store, errors.New("legacy Baley credential store requires BALEY_MCP_GATEWAY_TOKEN once for migration")
 		}
 		plaintext, decryptErr := c.decryptCredentialStore(disk.Ciphertext)
 		if decryptErr != nil {
@@ -300,10 +305,29 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 		if err = json.Unmarshal(plaintext, &store); err != nil {
 			return store, errors.New("Baley credential store contains invalid encrypted JSON")
 		}
+		migrateToKeychain = c.secretStore != nil
+	} else if disk.KeyRef != "" {
+		if c.secretStore == nil {
+			return store, errors.New("Baley keychain-backed credential store is unavailable in this runtime")
+		}
+		encoded, keychainErr := c.secretStore.Get(credentialKeychainService, disk.KeyRef)
+		if keychainErr != nil {
+			return store, fmt.Errorf("read Baley device secret from OS keychain: %w", keychainErr)
+		}
+		plaintext, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
+		if decodeErr != nil || json.Unmarshal(plaintext, &store) != nil {
+			return store, errors.New("Baley keychain credential payload is invalid")
+		}
+		store.KeyRef = disk.KeyRef
 	} else if err = json.Unmarshal(raw, &store); err != nil {
 		return store, errors.New("Baley credential store is invalid JSON")
+	} else {
+		// Pre-v5 plaintext metadata is safe to migrate even if it only contains a
+		// short-lived Agent token. Never leave it as a fallback once keychain
+		// support is active.
+		migrateToKeychain = c.secretStore != nil
 	}
-	store.Version = 4
+	store.Version = 5
 	store.ServerURL = c.base
 	if store.Workspaces == nil {
 		store.Workspaces = map[string]workspaceCredential{}
@@ -311,7 +335,17 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 	if store.PendingConnections == nil {
 		store.PendingConnections = map[string]pendingWorkspaceConnection{}
 	}
-	if disk.Ciphertext == "" && c.gatewayToken != "" {
+	if migrateToKeychain {
+		// A migrated registered gateway must renew on the next call. This proves
+		// the keychain copy can be used and cannot prolong a stale Agent token.
+		for workspaceID, credential := range store.Workspaces {
+			if credential.GatewaySecret != "" {
+				credential.AgentToken = ""
+				store.Workspaces[workspaceID] = credential
+			}
+		}
+	}
+	if migrateToKeychain || (disk.Ciphertext == "" && disk.KeyRef == "" && c.gatewayToken != "" && c.secretStore == nil) {
 		if err = c.writeCredentialStore(ctx, store); err != nil {
 			return store, fmt.Errorf("migrate Baley credential store: %w", err)
 		}
@@ -327,18 +361,31 @@ func (c *client) writeCredentialStore(ctx context.Context, store credentialStore
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create Baley credential directory: %w", err)
 	}
-	store.Version = 4
+	store.Version = 5
 	store.ServerURL = c.base
-	for _, credential := range store.Workspaces {
-		if credential.GatewaySecret != "" && c.gatewayToken == "" {
-			return errors.New("registered MCP gateway credential requires encrypted local storage")
-		}
-	}
 	raw, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return err
 	}
-	if c.gatewayToken != "" {
+	if c.secretStore != nil {
+		if store.KeyRef == "" {
+			store.KeyRef, err = credentialStoreKeyRef()
+			if err != nil {
+				return err
+			}
+			raw, err = json.MarshalIndent(store, "", "  ")
+			if err != nil {
+				return err
+			}
+		}
+		if err = c.secretStore.Set(credentialKeychainService, store.KeyRef, base64.RawURLEncoding.EncodeToString(raw)); err != nil {
+			return fmt.Errorf("write Baley device secret to OS keychain: %w", err)
+		}
+		raw, err = json.MarshalIndent(credentialStoreDisk{Version: 5, ServerURL: c.base, KeyRef: store.KeyRef}, "", "  ")
+		if err != nil {
+			return err
+		}
+	} else if c.gatewayToken != "" {
 		ciphertext, encryptErr := c.encryptCredentialStore(raw)
 		if encryptErr != nil {
 			return fmt.Errorf("encrypt Baley credential store: %w", encryptErr)
@@ -367,6 +414,14 @@ func (c *client) writeCredentialStore(ctx context.Context, store credentialStore
 		return fmt.Errorf("replace Baley credential store: %w", err)
 	}
 	return nil
+}
+
+func credentialStoreKeyRef() (string, error) {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate Baley keychain reference: %w", err)
+	}
+	return "credential-store-" + base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func (c *client) credentialStoreAEAD() (cipher.AEAD, error) {

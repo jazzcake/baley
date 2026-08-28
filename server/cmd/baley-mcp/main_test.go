@@ -40,7 +40,8 @@ func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
 	}
 	readOnly := map[string]bool{
 		"baley_workspace_get": true, "baley_workspace_graph": true,
-		"baley_task_get": true, "baley_task_acceptance_get": true,
+		"baley_mcp_diagnostics": true,
+		"baley_task_get":        true, "baley_task_acceptance_get": true,
 		"baley_lane_brief": true, "baley_backlog_list": true,
 		"baley_backlog_get": true, "baley_gate_status": true,
 		"baley_decision_list": true, "baley_event_list": true,

@@ -12,8 +12,11 @@ func TestValidateServerURLAllowsTailnetHTTPSForHTTPGateway(t *testing.T) {
 	}
 }
 
-func TestValidateServerURLKeepsStdioLoopbackOnly(t *testing.T) {
-	if _, err := validateServerURL("https://jazzcake-home.tail87e929.ts.net/api", "stdio"); err == nil {
-		t.Fatal("stdio accepted a remote HTTPS URL")
+func TestValidateServerURLAllowsRemoteHTTPSForStdio(t *testing.T) {
+	if _, err := validateServerURL("https://jazzcake-home.tail87e929.ts.net/api", "stdio"); err != nil {
+		t.Fatalf("stdio rejected remote HTTPS URL: %v", err)
+	}
+	if _, err := validateServerURL("http://baley.example/api", "stdio"); err == nil {
+		t.Fatal("stdio accepted a remote HTTP URL")
 	}
 }
