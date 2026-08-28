@@ -14,6 +14,8 @@ $binary = Join-Path $installRoot "baley-mcp.exe"
 $credentialStore = Join-Path $installRoot "credentials.json"
 New-Item -ItemType Directory -Force $installRoot | Out-Null
 go -C (Join-Path $repoRoot "server") build -o $binary ./cmd/baley-mcp
+if ($LASTEXITCODE -ne 0) { throw "Baley MCP build failed" }
 codex mcp remove baley 2>$null
 codex mcp add baley --env "BALEY_SERVER_URL=$($ServerURL.TrimEnd('/'))" --env "BALEY_MCP_CREDENTIAL_STORE=$credentialStore" -- $binary
+if ($LASTEXITCODE -ne 0) { throw "Codex MCP registration failed" }
 Write-Output "Baley MCP is registered as tokenless stdio. Restart Codex Desktop or begin a new CLI session."

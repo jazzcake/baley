@@ -286,6 +286,7 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 	if path == "" {
 		return store, errors.New("Baley credential store is not configured")
 	}
+	c.cleanupExpiredLegacyBackup()
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
@@ -403,22 +404,34 @@ func (c *client) backupLegacyCredentialStore(raw []byte) error {
 }
 
 func (c *client) legacyRollbackEligible() (bool, time.Time) {
+	c.cleanupExpiredLegacyBackup()
 	raw, err := os.ReadFile(c.legacyMarkerPath())
 	if err != nil {
 		return false, time.Time{}
 	}
 	var marker legacyMigrationMarker
 	if json.Unmarshal(raw, &marker) != nil || marker.Version != 1 || !marker.ExpiresAt.After(time.Now().UTC()) {
-		// This is an encrypted legacy backup created by this process. Expiry is
-		// enforced by removal, not merely hidden by diagnostics.
-		_ = os.Remove(c.legacyBackupPath())
-		_ = os.Remove(c.legacyMarkerPath())
 		return false, time.Time{}
 	}
 	if _, err = os.Stat(c.legacyBackupPath()); err != nil {
 		return false, time.Time{}
 	}
 	return true, marker.ExpiresAt
+}
+
+func (c *client) cleanupExpiredLegacyBackup() {
+	raw, err := os.ReadFile(c.legacyMarkerPath())
+	if err != nil {
+		return
+	}
+	var marker legacyMigrationMarker
+	if json.Unmarshal(raw, &marker) == nil && marker.Version == 1 && marker.ExpiresAt.After(time.Now().UTC()) {
+		return
+	}
+	// This is an encrypted legacy backup created by this process. Expiry is
+	// enforced on every normal credential-store read, not only diagnostics.
+	_ = os.Remove(c.legacyBackupPath())
+	_ = os.Remove(c.legacyMarkerPath())
 }
 
 // migrateLegacyCredentialStore performs the one permitted use of the former
