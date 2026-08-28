@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, LayoutGrid, LogOut, Plus, Settings, X } from "lucide-react";
+import { Check, ChevronDown, LayoutGrid, LogOut, Plus, Settings, ShieldCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
 	attachExistingAccount,
@@ -26,10 +26,6 @@ import type {
   WorkspaceMembership,
   WorkspaceRole,
 } from "../auth/model";
-
-type LoginScreenProps = {
-  onLogin: (loginId: string, password: string) => Promise<void>;
-};
 
 export function MCPConnectionApproval({
   workspace,
@@ -141,76 +137,39 @@ function moveMenuFocus(event: React.KeyboardEvent<HTMLElement>) {
   items[nextIndex]?.focus();
 }
 
-export function LoginScreen({ onLogin }: LoginScreenProps) {
-  const navigate = useNavigate();
-  const passwordRef = useRef<HTMLInputElement>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string>();
-	const [oidcProviders, setOIDCProviders] = useState<OIDCProvider[]>([]);
+export function LoginScreen() {
+  const [oidcProviders, setOIDCProviders] = useState<OIDCProvider[]>();
 
-	useEffect(() => {
-		const controller = new AbortController();
-		void fetchOIDCProviders().then((items) => {
-			if (!controller.signal.aborted) setOIDCProviders(items);
-		}).catch(() => undefined);
-		return () => controller.abort();
-	}, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchOIDCProviders().then((items) => {
+      if (!controller.signal.aborted) setOIDCProviders(items);
+    }).catch(() => {
+      if (!controller.signal.aborted) setOIDCProviders([]);
+    });
+    return () => controller.abort();
+  }, []);
 
-	const startOIDC = (provider: OIDCProvider) => {
-		traceViewer("oidc-login:event", { providerId: provider.id, authState: "anonymous", calculatedTarget: "authorization-redirect" });
-		window.location.assign(oidcLoginURL(provider.id));
-	};
-
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (submitting) return;
-    const data = new FormData(event.currentTarget);
-    const loginId = String(data.get("loginId") ?? "");
-    const password = String(data.get("password") ?? "");
-    if (passwordRef.current) passwordRef.current.value = "";
-    setSubmitting(true);
-    setError(undefined);
-    try {
-      await onLogin(loginId, password);
-      navigate("/workspaces", { replace: true });
-    } catch (reason) {
-      const retry = reason instanceof APIError && reason.status === 429 && reason.retryAfter
-        ? ` 다시 시도 가능: ${reason.retryAfter}`
-        : "";
-      setError(`아이디 또는 암호를 확인해주세요.${retry}`);
-    } finally {
-      setSubmitting(false);
-    }
+  const provider = oidcProviders?.find((item) => item.id === "google") ?? oidcProviders?.[0];
+  const startOIDC = () => {
+    if (!provider) return;
+    traceViewer("oidc-login:event", { providerId: provider.id, authState: "anonymous", calculatedTarget: "authorization-redirect" });
+    window.location.assign(oidcLoginURL(provider.id));
   };
 
-  return <main className="auth-shell">
-    <section className="auth-card" aria-labelledby="login-title">
+  return <main className="auth-shell login-shell">
+    <section className="auth-card login-card" aria-labelledby="login-title">
       <div className="brand-mark auth-brand">B</div>
       <span className="auth-kicker">BALEY ACCOUNT</span>
       <h1 id="login-title">로그인</h1>
-      <p>소속된 Workspace와 권한으로 안전하게 작업을 확인합니다.</p>
-      <form onSubmit={submit}>
-        <label htmlFor="login-id">아이디</label>
-        <input id="login-id" name="loginId" autoComplete="username" required />
-        <label htmlFor="login-password">암호</label>
-        <input
-          ref={passwordRef}
-          id="login-password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-        />
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <button className="primary-button" type="submit" disabled={submitting}>
-          {submitting ? "확인 중…" : "로그인"}
-        </button>
-      </form>
-		{oidcProviders.length > 0 && <div className="oidc-login-options" aria-label="OIDC login options">
-			{oidcProviders.map((provider) => <button key={provider.id} type="button" className="secondary-button" onClick={() => startOIDC(provider)}>
-				{provider.id === "google" ? "Google로 계속" : `${provider.label}로 계속`}
-			</button>)}
-		</div>}
+      <p>Google 계정으로 안전하게 로그인하고, 권한이 있는 Workspace로 돌아가세요.</p>
+      {!oidcProviders && <p className="login-provider-status" role="status">로그인 제공자를 확인하는 중…</p>}
+      {provider && <button className="google-login-button" type="button" onClick={startOIDC}>
+        <span className="google-login-mark" aria-hidden="true">G</span>
+        {provider.id === "google" ? "Google로 계속" : `${provider.label}로 계속`}
+      </button>}
+      {oidcProviders?.length === 0 && <div className="form-error" role="alert">현재 사용할 수 있는 로그인 제공자가 없습니다.</div>}
+      <p className="login-security-note"><ShieldCheck size={15} aria-hidden="true" /> Google 인증은 Workspace 권한이나 사람 전용 승인 권한을 변경하지 않습니다.</p>
     </section>
   </main>;
 }

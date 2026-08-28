@@ -14,7 +14,6 @@ import {
   fetchWorkspaceMembers,
   fetchWorkspaces,
 	fetchOIDCProviders,
-  login,
   logout,
   removeWorkspaceMember,
   resetMemberPassword,
@@ -31,7 +30,6 @@ import type { WorkspaceFixture } from "./domain/model";
 vi.mock("./api/auth", () => ({
   fetchSession: vi.fn(),
   fetchWorkspaces: vi.fn(),
-	login: vi.fn(),
 	fetchOIDCProviders: vi.fn().mockResolvedValue([]),
   logout: vi.fn(),
   createWorkspace: vi.fn(),
@@ -145,21 +143,15 @@ describe("authenticated Workspace routing", () => {
     expect(await screen.findByRole("heading", { name: "안전한 작업 흐름, 명확한 사람의 승인" })).toBeTruthy();
   });
 
-  it("clears the password input after submit and enters the account Workspace list", async () => {
+  it("shows Google as the only login action without password inputs", async () => {
     vi.mocked(fetchSession).mockRejectedValueOnce(new APIError("authentication required", 401, "unauthenticated"));
-    vi.mocked(login).mockResolvedValue(session);
+    vi.mocked(fetchOIDCProviders).mockResolvedValueOnce([{ id: "google", label: "Google" }]);
     window.history.replaceState({}, "", "/login");
     render(<App />);
 
-    const loginId = await screen.findByLabelText("아이디");
-    const password = screen.getByLabelText("암호") as HTMLInputElement;
-    fireEvent.change(loginId, { target: { value: "owner" } });
-    fireEvent.change(password, { target: { value: "a sufficiently long password" } });
-    fireEvent.submit(password.closest("form")!);
-
-    expect(password.value).toBe("");
-    await waitFor(() => expect(login).toHaveBeenCalledWith("owner", "a sufficiently long password"));
-    expect(await screen.findByRole("heading", { name: "Pilot Owner님의 Workspace" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Google로 계속" })).toBeTruthy();
+    expect(screen.queryByLabelText("아이디")).toBeNull();
+    expect(screen.queryByLabelText("암호")).toBeNull();
   });
 
   it("lets a user log out from the Workspace chooser", async () => {

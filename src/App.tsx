@@ -79,7 +79,7 @@ function AppRoutes() {
   if (auth.state.status === "anonymous") {
     return <Routes>
 		<Route path="/" element={<LoginLanding />} />
-      <Route path="/login" element={<LoginScreen onLogin={auth.login} />} />
+      <Route path="/login" element={<LoginScreen />} />
 		<Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>;
   }
