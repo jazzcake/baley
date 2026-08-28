@@ -135,3 +135,22 @@ func TestCORSPreflightUsesConfiguredOrigin(t *testing.T) {
 		t.Fatalf("Access-Control-Allow-Origin=%q", got)
 	}
 }
+
+func TestPhaseTasksRejectsInvalidPageBoundsBeforeRepositoryRead(t *testing.T) {
+	handler := (&API{}).Handler()
+	for _, test := range []struct {
+		path string
+		code string
+	}{
+		{path: "/v1/workspaces/workspace/phases/active/tasks?cursor=-1", code: "invalid_cursor"},
+		{path: "/v1/workspaces/workspace/phases/active/tasks?cursor=not-a-number", code: "invalid_cursor"},
+		{path: "/v1/workspaces/workspace/phases/active/tasks?limit=0", code: "invalid_limit"},
+		{path: "/v1/workspaces/workspace/phases/active/tasks?limit=101", code: "invalid_limit"},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), test.code) {
+			t.Fatalf("%s status=%d body=%s", test.path, response.Code, response.Body.String())
+		}
+	}
+}

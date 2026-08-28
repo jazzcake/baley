@@ -964,7 +964,7 @@ func (c *client) phaseTasks(ctx context.Context, _ *mcp.CallToolRequest, in phas
 	if in.Cursor < 0 {
 		return nil, nil, errors.New("cursor must be a non-negative Task public ID")
 	}
-	if in.Limit < 0 {
+	if in.Limit < 0 || in.Limit > 100 {
 		return nil, nil, errors.New("limit must be between 1 and 100")
 	}
 	values := url.Values{}

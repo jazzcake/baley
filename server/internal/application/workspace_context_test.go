@@ -1,6 +1,7 @@
 package application
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -25,6 +26,36 @@ func TestWorkspaceContextOmitsCompletedPhasesAndTaskBodies(t *testing.T) {
 	if got := context.Phases[0].LaneCounts[1]; got.LaneID != "server" || got.StatusCounts["in_progress"] != 1 {
 		t.Fatalf("server count=%#v", got)
 	}
+	encoded, err := json.Marshal(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"hidden", "must not project", "also hidden", `"description"`, `"title"`} {
+		if bytes.Contains(encoded, []byte(forbidden)) {
+			t.Fatalf("compact context leaked Task detail %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestWorkspaceContextUsesRevisionAsSnapshotMarkerAndStableOrdering(t *testing.T) {
+	snapshot := Snapshot{
+		Workspace: WorkspaceProjection{ID: "w", Revision: 42},
+		Lanes:     []LaneProjection{{ID: "z", Name: "Zulu"}, {ID: "a", Name: "Alpha"}},
+		Phases:    []PhaseProjection{{ID: "later", Name: "Later", State: "planned", Position: 2}, {ID: "now", Name: "Now", State: "active", Position: 1}},
+		Tasks:     []TaskProjection{{PublicID: 10, LaneID: "z", PhaseID: "now", Status: "pending"}},
+	}
+	context := WorkspaceContext(snapshot)
+	if context.Workspace.Revision != 42 || len(context.Phases) != 2 || context.Phases[0].ID != "now" || context.Phases[1].ID != "later" {
+		t.Fatalf("context is not a stable revisioned summary: %#v", context)
+	}
+	if got := context.Phases[0].LaneCounts; len(got) != 2 || got[0].LaneID != "a" || got[1].LaneID != "z" || got[1].StatusCounts["pending"] != 1 {
+		t.Fatalf("lane order or counts=%#v", got)
+	}
+	snapshot.Workspace.Revision++
+	refreshed := WorkspaceContext(snapshot)
+	if refreshed.Workspace.Revision != 43 || refreshed.Phases[0].ID != context.Phases[0].ID {
+		t.Fatalf("revision change did not produce a refresh marker: %#v", refreshed)
+	}
 }
 
 func TestPhaseTasksPageIsBoundedAndCursorOrdered(t *testing.T) {
@@ -32,6 +63,23 @@ func TestPhaseTasksPageIsBoundedAndCursorOrdered(t *testing.T) {
 	page, cursor, more := PhaseTasksPage(snapshot, "p", 10, 1)
 	if len(page) != 1 || page[0].PublicID != 20 || cursor != 20 || !more {
 		t.Fatalf("page=%#v cursor=%d more=%v", page, cursor, more)
+	}
+}
+
+func TestPhaseTasksPageKeepsCursorsScopedToTheSelectedPhase(t *testing.T) {
+	snapshot := Snapshot{Tasks: []TaskProjection{
+		{PublicID: 1, PhaseID: "a", Title: "a-one"},
+		{PublicID: 3, PhaseID: "a", Title: "a-three"},
+		{PublicID: 2, PhaseID: "b", Title: "b-two"},
+		{PublicID: 4, PhaseID: "b", Title: "b-four"},
+	}}
+	page, cursor, more := PhaseTasksPage(snapshot, "b", 1, 1)
+	if len(page) != 1 || page[0].PublicID != 2 || page[0].Title != "b-two" || cursor != 2 || !more {
+		t.Fatalf("phase B page=%#v cursor=%d more=%v", page, cursor, more)
+	}
+	page, cursor, more = PhaseTasksPage(snapshot, "a", 2, 100)
+	if len(page) != 1 || page[0].PublicID != 3 || cursor != 0 || more {
+		t.Fatalf("phase A page=%#v cursor=%d more=%v", page, cursor, more)
 	}
 }
 

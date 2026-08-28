@@ -59,6 +59,19 @@ Restart Codex Desktop fully after changing its registration. The first request
 for an unregistered Workspace returns the normal signed-in gateway link; retry the
 same request after approval.
 
+## Workspace discovery payload
+
+Start an unfamiliar Workspace with `baley_workspace_context`. It is a revisioned
+summary of non-completed Phases and per-Lane status counts; it deliberately omits
+Task identities, descriptions, graph edges, evidence, and completed Phases. Treat
+`workspace.revision` as the snapshot marker: refresh the compact summary when it
+changes, rather than assuming a delta history is embedded in the response.
+
+Use `baley_phase_tasks` only after selecting one returned Phase ID. Its public-ID
+cursor is scoped by that explicit Phase and the page size is 1–100 (50 by default).
+Use `baley_workspace_graph` only for callers that explicitly need the full,
+compatibility-preserved Viewer-style projection.
+
 ## Migration, rollback, and diagnostics
 
 A legacy encrypted credential store can be opened once with its existing local

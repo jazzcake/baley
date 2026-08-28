@@ -231,6 +231,30 @@ func TestClientSendsConfiguredAgentTokenWithoutPuttingItInThePayload(t *testing.
 	}
 }
 
+func TestPhaseTasksUsesOneExplicitBoundedPhasePath(t *testing.T) {
+	var gotPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"phaseId":"active","items":[],"nextCursor":0,"hasMore":false}`))
+	}))
+	defer server.Close()
+	c := &client{base: server.URL, http: server.Client()}
+	result, _, err := c.phaseTasks(context.Background(), nil, phaseTasksInput{WorkspaceID: "workspace", PhaseID: "active", Cursor: 25, Limit: 100})
+	if err != nil || result.IsError || len(gotPaths) != 1 || gotPaths[0] != "/v1/workspaces/workspace/phases/active/tasks?cursor=25&limit=100" {
+		t.Fatalf("result=%#v err=%v paths=%q", result, err, gotPaths)
+	}
+	result, _, err = c.phaseTasks(context.Background(), nil, phaseTasksInput{WorkspaceID: "workspace", PhaseID: "active"})
+	if err != nil || result.IsError || len(gotPaths) != 2 || gotPaths[1] != "/v1/workspaces/workspace/phases/active/tasks" {
+		t.Fatalf("default bounded page result=%#v err=%v paths=%q", result, err, gotPaths)
+	}
+	for _, input := range []phaseTasksInput{{WorkspaceID: "workspace", PhaseID: "active", Cursor: -1}, {WorkspaceID: "workspace", PhaseID: "active", Limit: -1}, {WorkspaceID: "workspace", PhaseID: "active", Limit: 101}} {
+		if _, _, err := c.phaseTasks(context.Background(), nil, input); err == nil {
+			t.Fatalf("invalid Phase page input accepted: %#v", input)
+		}
+	}
+}
+
 func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
 	const token = "workspace-scoped-agent-token"

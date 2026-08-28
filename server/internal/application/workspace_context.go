@@ -3,8 +3,10 @@ package application
 import "sort"
 
 // WorkspaceContextProjection is the small, first-read Workspace payload used by
-// MCP clients. It deliberately has no Task bodies, graph edges, evidence, or
-// completed Phases; callers opt into those only after selecting a Phase.
+// MCP clients. Workspace.Revision is the snapshot marker: callers discard a
+// cached summary when it changes rather than treating this response as a graph
+// delta. The projection deliberately has no Task bodies, graph edges, evidence,
+// or completed Phases; callers opt into those only after selecting a Phase.
 type WorkspaceContextProjection struct {
 	Workspace          WorkspaceProjection      `json:"workspace"`
 	Phases             []PhaseContextProjection `json:"phases"`
@@ -69,7 +71,9 @@ func WorkspaceContext(snapshot Snapshot) WorkspaceContextProjection {
 }
 
 // PhaseTasksPage returns a bounded, public-ID cursor page for an explicitly
-// selected active Phase. It is intentionally separate from WorkspaceContext.
+// selected non-completed Phase. The cursor is only a public-ID lower bound, so
+// its scope is the selected Phase rather than shared state from another page.
+// It is intentionally separate from WorkspaceContext.
 func PhaseTasksPage(snapshot Snapshot, phaseID string, afterPublicID, limit int) ([]TaskProjection, int, bool) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
