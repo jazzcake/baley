@@ -79,6 +79,62 @@ func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
 	}
 }
 
+func TestPhaseTasksAdvertisesBoundedPaginationSchema(t *testing.T) {
+	ctx := context.Background()
+	server := newMCPServer(&client{})
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+
+	listed, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	for _, tool := range listed.Tools {
+		if tool.Name == "baley_phase_tasks" {
+			schema, _ = tool.InputSchema.(map[string]any)
+			break
+		}
+	}
+	if schema == nil {
+		t.Fatal("baley_phase_tasks schema was not advertised")
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties=%#v", schema["properties"])
+	}
+	limit, ok := properties["limit"].(map[string]any)
+	if !ok {
+		t.Fatalf("limit schema=%#v", properties["limit"])
+	}
+	if got, want := limit["minimum"], float64(1); got != want {
+		t.Errorf("limit minimum=%v, want %v", got, want)
+	}
+	if got, want := limit["maximum"], float64(100); got != want {
+		t.Errorf("limit maximum=%v, want %v", got, want)
+	}
+	if got, want := limit["default"], float64(50); got != want {
+		t.Errorf("limit default=%v, want %v", got, want)
+	}
+	cursor, ok := properties["cursor"].(map[string]any)
+	if !ok || cursor["minimum"] != float64(0) {
+		t.Errorf("cursor schema=%#v, want non-negative integer", cursor)
+	}
+	required, ok := schema["required"].([]any)
+	if !ok || len(required) != 2 || required[0] != "workspaceId" || required[1] != "phaseId" {
+		t.Errorf("schema required=%#v, want workspaceId and phaseId", schema["required"])
+	}
+}
+
 func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t *testing.T) {
 	const gatewayToken = "local-gateway-token"
 	const workspaceToken = "workspace-agent-token"
