@@ -165,7 +165,7 @@ describe("authenticated Workspace routing", () => {
   it("lets a user log out from the Workspace chooser", async () => {
     window.history.replaceState({}, "", "/workspaces");
     render(<App />);
-    const logoutButton = await screen.findByRole("button", { name: "로그아웃" });
+    const logoutButton = await screen.findByRole("button", { name: "Logout" });
     fireEvent.click(logoutButton);
     await waitFor(() => expect(logout).toHaveBeenCalledWith("csrf"));
     expect(await screen.findByRole("heading", { name: "로그인" })).toBeTruthy();

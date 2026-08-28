@@ -290,46 +290,48 @@ export function WorkspaceChooser({
     <header>
       <div className="brand-mark">B</div>
       <div><span>BALEY WORKSPACES</span><h1>{account.displayName}님의 Workspace</h1></div>
-      <div className="workspace-chooser-create">
-        <button
-          ref={createTriggerRef}
-          type="button"
-          className="workspace-chooser-create-trigger"
-          aria-expanded={creating}
-          onClick={() => {
-            traceViewer("workspace-create:event", {
-              source: "workspace-chooser",
-              event: "trigger-click",
-              currentOpenState: creating,
-              calculatedOpenState: !creating,
-            });
-            setCreating((current) => !current);
-            setCreateError(undefined);
-            window.setTimeout(() => createNameRef.current?.focus(), 0);
-          }}
-        ><Plus size={16} aria-hidden="true" /> 새 Workspace</button>
-        {creating && <form className="workspace-create-popover workspace-chooser-create-popover" onSubmit={submitWorkspace}>
-          <label htmlFor="workspace-chooser-create-name">Workspace 이름</label>
-          <input ref={createNameRef} id="workspace-chooser-create-name" maxLength={120} required />
-          {createError && <span className="form-error" role="alert">{createError}</span>}
-          <span className="workspace-create-actions">
-            <button type="button" onClick={() => {
-              setCreating(false);
+      <div className="workspace-chooser-actions">
+        <div className="workspace-chooser-create">
+          <button
+            ref={createTriggerRef}
+            type="button"
+            className="workspace-chooser-create-trigger"
+            aria-expanded={creating}
+            onClick={() => {
+              traceViewer("workspace-create:event", {
+                source: "workspace-chooser",
+                event: "trigger-click",
+                currentOpenState: creating,
+                calculatedOpenState: !creating,
+              });
+              setCreating((current) => !current);
               setCreateError(undefined);
-              createTriggerRef.current?.focus();
-            }}>취소</button>
-            <button type="submit" disabled={createBusy}>{createBusy ? "생성 중…" : "생성"}</button>
-          </span>
-        </form>}
-		<button type="button" className="account-menu-logout workspace-chooser-logout" disabled={logoutBusy} onClick={() => {
-			if (logoutBusy) return;
-			setLogoutBusy(true);
-			setLogoutError(undefined);
-			traceViewer("workspace-chooser-logout:event", { accountId: account.id, currentState: "authenticated", calculatedTargetState: "anonymous" });
-			void onLogout().catch((reason: unknown) => {
-				setLogoutError(reason instanceof Error ? reason.message : "로그아웃하지 못했습니다.");
-			}).finally(() => setLogoutBusy(false));
-		}}><LogOut size={16} />{logoutBusy ? "로그아웃 중…" : "로그아웃"}</button>
+              window.setTimeout(() => createNameRef.current?.focus(), 0);
+            }}
+          ><Plus size={16} aria-hidden="true" /> 새 Workspace</button>
+          {creating && <form className="workspace-create-popover workspace-chooser-create-popover" onSubmit={submitWorkspace}>
+            <label htmlFor="workspace-chooser-create-name">Workspace 이름</label>
+            <input ref={createNameRef} id="workspace-chooser-create-name" maxLength={120} required />
+            {createError && <span className="form-error" role="alert">{createError}</span>}
+            <span className="workspace-create-actions">
+              <button type="button" onClick={() => {
+                setCreating(false);
+                setCreateError(undefined);
+                createTriggerRef.current?.focus();
+              }}>취소</button>
+              <button type="submit" disabled={createBusy}>{createBusy ? "생성 중…" : "생성"}</button>
+            </span>
+          </form>}
+        </div>
+        <button type="button" className="workspace-chooser-create-trigger workspace-chooser-logout" disabled={logoutBusy} onClick={() => {
+          if (logoutBusy) return;
+          setLogoutBusy(true);
+          setLogoutError(undefined);
+          traceViewer("workspace-chooser-logout:event", { accountId: account.id, currentState: "authenticated", calculatedTargetState: "anonymous" });
+          void onLogout().catch((reason: unknown) => {
+            setLogoutError(reason instanceof Error ? reason.message : "로그아웃하지 못했습니다.");
+          }).finally(() => setLogoutBusy(false));
+        }}><LogOut size={16} />{logoutBusy ? "Logging out…" : "Logout"}</button>
       </div>
     </header>
     {logoutError && <div className="form-error workspace-chooser-logout-error" role="alert">{logoutError}</div>}
