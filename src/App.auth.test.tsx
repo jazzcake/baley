@@ -138,6 +138,13 @@ describe("authenticated Workspace routing", () => {
     vi.unstubAllEnvs();
   });
 
+  it("shows the login landing page at the public root", async () => {
+    vi.mocked(fetchSession).mockRejectedValueOnce(new APIError("authentication required", 401, "unauthenticated"));
+    window.history.replaceState({}, "", "/");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "안전한 작업 흐름, 명확한 사람의 승인" })).toBeTruthy();
+  });
+
   it("clears the password input after submit and enters the account Workspace list", async () => {
     vi.mocked(fetchSession).mockRejectedValueOnce(new APIError("authentication required", 401, "unauthenticated"));
     vi.mocked(login).mockResolvedValue(session);
@@ -153,6 +160,15 @@ describe("authenticated Workspace routing", () => {
     expect(password.value).toBe("");
     await waitFor(() => expect(login).toHaveBeenCalledWith("owner", "a sufficiently long password"));
     expect(await screen.findByRole("heading", { name: "Pilot Owner님의 Workspace" })).toBeTruthy();
+  });
+
+  it("lets a user log out from the Workspace chooser", async () => {
+    window.history.replaceState({}, "", "/workspaces");
+    render(<App />);
+    const logoutButton = await screen.findByRole("button", { name: "로그아웃" });
+    fireEvent.click(logoutButton);
+    await waitFor(() => expect(logout).toHaveBeenCalledWith("csrf"));
+    expect(await screen.findByRole("heading", { name: "로그인" })).toBeTruthy();
   });
 
   it("lets the Owner approve a one-time Codex Operator connection", async () => {

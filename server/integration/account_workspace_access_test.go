@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jazzcake/baley/server/internal/application"
 	"github.com/jazzcake/baley/server/internal/authn"
@@ -81,6 +82,34 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	}
 	if err = repo.ValidateEnforcedOwners(ctx); err != nil {
 		t.Fatal(err)
+	}
+	// An initial OIDC login makes a deliberately empty Account. Linking that
+	// verified identity from the established Account must preserve the latter's
+	// membership while retiring the empty source Account.
+	createdIdentity, err := repo.CreateExternalIdentityAccount(ctx, "google", "https://accounts.google.com", "test-google-subject", "Google User", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkedIdentity, err := repo.LinkExternalIdentity(ctx, accountID, "google", "https://accounts.google.com", "test-google-subject", "Google User", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkedIdentity.AccountID != accountID {
+		t.Fatalf("linked identity account=%s, want %s", linkedIdentity.AccountID, accountID)
+	}
+	var sourceStatus string
+	if err = repo.Pool.QueryRow(ctx, "SELECT status FROM accounts WHERE id=$1", createdIdentity.AccountID).Scan(&sourceStatus); err != nil {
+		t.Fatal(err)
+	}
+	if sourceStatus != "disabled" {
+		t.Fatalf("OIDC source account status=%s, want disabled", sourceStatus)
+	}
+	var linkedAccountID string
+	if err = repo.Pool.QueryRow(ctx, "SELECT account_id::text FROM account_external_identities WHERE issuer=$1 AND subject=$2", "https://accounts.google.com", "test-google-subject").Scan(&linkedAccountID); err != nil {
+		t.Fatal(err)
+	}
+	if linkedAccountID != accountID {
+		t.Fatalf("OIDC identity account=%s, want %s", linkedAccountID, accountID)
 	}
 	if _, err = repo.CreateOwnedWorkspace(ctx, postgres.DemoWorkspaceID, "Baley Pilot", postgres.DemoHumanActorID); err == nil {
 		t.Fatal("seeded Workspace was misclassified as an idempotent create retry")

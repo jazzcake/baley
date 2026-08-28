@@ -21,6 +21,17 @@ BALEY_OIDC_POST_LOGIN_URL=https://<configured-viewer-host>/workspaces
 Register the redirect URL exactly as shown. The API refuses a post-login URL
 whose origin is not one of `BALEY_VIEWER_ORIGINS`.
 
+For the local Pilot Compose deployment, create the ignored file
+`.tmp/local-pilot/secrets/google_oidc_client_secret` (one secret, newline
+allowed) and start the API with:
+
+```text
+BALEY_GOOGLE_OIDC_CLIENT_ID=<Google OAuth web client ID>
+BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE=/legacy-secrets/google_oidc_client_secret
+BALEY_GOOGLE_OIDC_REDIRECT_URL=https://jazzcake-home.tail87e929.ts.net/api/v1/auth/oidc/google/callback
+BALEY_OIDC_POST_LOGIN_URL=https://jazzcake-home.tail87e929.ts.net/workspaces
+```
+
 ## Internal and air-gapped providers
 
 Add standards-compatible internal providers with `BALEY_OIDC_PROVIDERS`; each
@@ -54,6 +65,11 @@ Google variables.
 - Use the Account menu's **Google account link** or internal-provider link
   action while already authenticated to attach another `(issuer, subject)` to
   that same Account. Email cannot authorize linking.
+- If an initial OIDC sign-in created an empty Account, linking that identity
+  from an established Account safely retires the empty Account and preserves
+  the established Account's memberships and roles. The transfer is permitted
+  only when the source has no password, no active membership, and no other
+  external identity; it revokes the source sessions and leaves an audit event.
 - Logout revokes the active Baley session. Account disable, membership changes,
   and local-gateway revocation retain the #142 gateway/session invalidation
   behaviour. OIDC does not issue an Agent credential with human approval

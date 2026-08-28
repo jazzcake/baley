@@ -19,7 +19,7 @@ import { BacklogList, BacklogRail } from "./components/BacklogRail";
 import { LaneAnchorColumn } from "./components/LaneAnchorColumn";
 import { TaskSearch } from "./components/TaskSearch";
 import { laneColorMap } from "./components/lane-palette";
-import { LoginScreen, MCPConnectionApproval, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
+import { LoginLanding, LoginScreen, MCPConnectionApproval, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
 import { traceViewer } from "./debug/viewer-trace";
 import type { BacklogItem, Task, WorkspaceFixture } from "./domain/model";
 
@@ -78,8 +78,9 @@ function AppRoutes() {
   }
   if (auth.state.status === "anonymous") {
     return <Routes>
+		<Route path="/" element={<LoginLanding />} />
       <Route path="/login" element={<LoginScreen onLogin={auth.login} />} />
-      <Route path="*" element={<Navigate to="/login" replace />} />
+		<Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>;
   }
   return <Routes>
@@ -88,6 +89,7 @@ function AppRoutes() {
       account={auth.state.account}
       memberships={auth.state.memberships}
       csrfToken={auth.state.csrfToken}
+		onLogout={auth.logout}
       onMembershipsChanged={auth.refreshWorkspaces}
     />} />
     <Route path="/workspaces/:workspaceId/*" element={<WorkspaceRoute />} />

@@ -250,7 +250,36 @@ func (r *Repository) LinkExternalIdentity(ctx context.Context, accountID, provid
 	var existing string
 	err = tx.QueryRow(ctx, "SELECT account_id::text FROM account_external_identities WHERE issuer=$1 AND subject=$2 FOR UPDATE", issuer, subject).Scan(&existing)
 	if err == nil && existing != accountID {
-		return authn.ExternalIdentity{}, errors.New("OIDC identity is linked to another account")
+		// A first OIDC sign-in can create an otherwise empty account before the
+		// human has linked that verified identity to their established local
+		// Account. Permit that narrow, audited transfer only: it must have no
+		// password, no active memberships, and no additional identities. An
+		// identity belonging to an established Account is never transferable by
+		// this shortcut.
+		var sourceActiveMemberships, sourceCredentials, sourceIdentities int
+		if err = tx.QueryRow(ctx, `SELECT
+			(SELECT count(*) FROM workspace_memberships WHERE actor_id=source.actor_id AND active),
+			(SELECT count(*) FROM account_credentials WHERE account_id=source.id),
+			(SELECT count(*) FROM account_external_identities WHERE account_id=source.id)
+			FROM accounts source WHERE source.id=$1 FOR UPDATE`, existing).
+			Scan(&sourceActiveMemberships, &sourceCredentials, &sourceIdentities); err != nil {
+			return authn.ExternalIdentity{}, err
+		}
+		if sourceActiveMemberships != 0 || sourceCredentials != 0 || sourceIdentities != 1 {
+			return authn.ExternalIdentity{}, errors.New("OIDC identity is linked to another account")
+		}
+		if _, err = tx.Exec(ctx, "UPDATE account_external_identities SET account_id=$1,last_authenticated_at=$2 WHERE issuer=$3 AND subject=$4", accountID, now, issuer, subject); err != nil {
+			return authn.ExternalIdentity{}, err
+		}
+		if _, err = tx.Exec(ctx, "UPDATE account_sessions SET revoked_at=COALESCE(revoked_at,$1) WHERE account_id=$2", now, existing); err != nil {
+			return authn.ExternalIdentity{}, err
+		}
+		if _, err = tx.Exec(ctx, "UPDATE accounts SET status='disabled',disabled_at=COALESCE(disabled_at,$1),updated_at=$1 WHERE id=$2 AND status='active'", now, existing); err != nil {
+			return authn.ExternalIdentity{}, err
+		}
+		if err = insertSecurityEvent(ctx, tx, "", accountID, value.ActorID, "authentication.oidc_identity_relinked", "external_identity", externalIdentityEntityID(issuer, subject), map[string]any{"providerId": providerID, "sourceAccountRetired": true}); err != nil {
+			return authn.ExternalIdentity{}, err
+		}
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return authn.ExternalIdentity{}, err

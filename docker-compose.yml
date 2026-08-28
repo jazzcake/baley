@@ -10,6 +10,13 @@ services:
       BALEY_VIEWER_ORIGINS: http://127.0.0.1:5174,http://jazzcake-home.tail87e929.ts.net,https://jazzcake-home.tail87e929.ts.net
       BALEY_MCP_APPROVAL_ORIGIN: https://jazzcake-home.tail87e929.ts.net
       BALEY_COOKIE_SECURE: "false"
+      # OAuth client ID is public configuration. The client secret is mounted
+      # read-only from the ignored local secret path; it is never a Compose
+      # literal, source-controlled value, or Codex Authorization header.
+      BALEY_GOOGLE_OIDC_CLIENT_ID: ${BALEY_GOOGLE_OIDC_CLIENT_ID:-}
+      BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE: ${BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE:-}
+      BALEY_GOOGLE_OIDC_REDIRECT_URL: ${BALEY_GOOGLE_OIDC_REDIRECT_URL:-}
+      BALEY_OIDC_POST_LOGIN_URL: ${BALEY_OIDC_POST_LOGIN_URL:-}
     ports:
       - "127.0.0.1:8080:8080"
     networks:

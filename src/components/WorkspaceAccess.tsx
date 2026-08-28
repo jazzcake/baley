@@ -215,21 +215,41 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
   </main>;
 }
 
+export function LoginLanding() {
+  const navigate = useNavigate();
+  return <main className="auth-shell landing-shell">
+    <section className="auth-card landing-card" aria-labelledby="landing-title">
+      <div className="brand-mark auth-brand">B</div>
+      <span className="auth-kicker">BALEY WORKSPACE</span>
+      <h1 id="landing-title">안전한 작업 흐름, 명확한 사람의 승인</h1>
+      <p>Baley Account로 로그인하면 권한이 있는 Workspace와 MCP 작업 환경으로 안전하게 돌아갑니다.</p>
+      <button className="primary-button" type="button" onClick={() => {
+        traceViewer("login-landing:event", { event: "start-click", calculatedTarget: "/login", renderedState: "landing" });
+        navigate("/login");
+      }}>로그인 시작</button>
+    </section>
+  </main>;
+}
+
 export function WorkspaceChooser({
-  account,
-  memberships,
-  csrfToken,
-  onMembershipsChanged,
+	account,
+	memberships,
+	csrfToken,
+	onLogout,
+	onMembershipsChanged,
 }: {
-  account: Account;
-  memberships: WorkspaceMembership[];
-  csrfToken: string;
-  onMembershipsChanged: () => Promise<void>;
+	account: Account;
+	memberships: WorkspaceMembership[];
+	csrfToken: string;
+	onLogout: () => Promise<void>;
+	onMembershipsChanged: () => Promise<void>;
 }) {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
-  const [createError, setCreateError] = useState<string>();
+	const [createError, setCreateError] = useState<string>();
+	const [logoutBusy, setLogoutBusy] = useState(false);
+	const [logoutError, setLogoutError] = useState<string>();
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const createNameRef = useRef<HTMLInputElement>(null);
 
@@ -301,8 +321,18 @@ export function WorkspaceChooser({
             <button type="submit" disabled={createBusy}>{createBusy ? "생성 중…" : "생성"}</button>
           </span>
         </form>}
+		<button type="button" className="account-menu-logout workspace-chooser-logout" disabled={logoutBusy} onClick={() => {
+			if (logoutBusy) return;
+			setLogoutBusy(true);
+			setLogoutError(undefined);
+			traceViewer("workspace-chooser-logout:event", { accountId: account.id, currentState: "authenticated", calculatedTargetState: "anonymous" });
+			void onLogout().catch((reason: unknown) => {
+				setLogoutError(reason instanceof Error ? reason.message : "로그아웃하지 못했습니다.");
+			}).finally(() => setLogoutBusy(false));
+		}}><LogOut size={16} />{logoutBusy ? "로그아웃 중…" : "로그아웃"}</button>
       </div>
     </header>
+    {logoutError && <div className="form-error workspace-chooser-logout-error" role="alert">{logoutError}</div>}
     {memberships.length === 0
       ? <section className="chooser-empty"><h2>소속된 Workspace가 없습니다</h2><p>Owner에게 참여 요청을 보내주세요.</p></section>
       : <ul className="workspace-card-grid">
