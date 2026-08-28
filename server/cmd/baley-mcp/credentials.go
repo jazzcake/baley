@@ -47,6 +47,13 @@ type credentialStoreDisk struct {
 	Ciphertext string `json:"ciphertext,omitempty"`
 }
 
+type legacyMigrationMarker struct {
+	Version   int       `json:"version"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+const legacyRollbackWindow = 15 * time.Minute
+
 type pendingWorkspaceConnection struct {
 	ID, Secret, ApprovalURL string
 }
@@ -117,7 +124,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 		if resumeErr == nil && response.AgentToken != "" {
 			credential.AgentToken, credential.ConnectedAt = response.AgentToken, time.Now().UTC()
 			store.Workspaces[workspaceID] = credential
-			if err = c.writeCredentialStore(ctx, store); err != nil {
+			if err = c.writeCredentialStore(ctx, &store); err != nil {
 				return "", nil, err
 			}
 			return credential.AgentToken, nil, nil
@@ -127,7 +134,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			return "", nil, resumeErr
 		}
 		delete(store.Workspaces, workspaceID)
-		if err = c.writeCredentialStore(ctx, store); err != nil {
+		if err = c.writeCredentialStore(ctx, &store); err != nil {
 			return "", nil, err
 		}
 	}
@@ -140,7 +147,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 				return "", nil, err
 			}
 			delete(store.PendingConnections, workspaceID)
-			if writeErr := c.writeCredentialStore(ctx, store); writeErr != nil {
+			if writeErr := c.writeCredentialStore(ctx, &store); writeErr != nil {
 				return "", nil, writeErr
 			}
 			// A not-found connection request has expired or been consumed. Start
@@ -152,7 +159,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			// The token itself is the authoritative successful hand-off.
 			store.Workspaces[workspaceID] = workspaceCredential{AgentToken: response.AgentToken, GatewaySecret: response.GatewaySecret, ConnectedAt: time.Now().UTC()}
 			delete(store.PendingConnections, workspaceID)
-			if err = c.writeCredentialStore(ctx, store); err != nil {
+			if err = c.writeCredentialStore(ctx, &store); err != nil {
 				return "", nil, err
 			}
 			return response.AgentToken, nil, nil
@@ -172,7 +179,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 		return "", nil, err
 	}
 	store.PendingConnections[workspaceID] = pending
-	if err = c.writeCredentialStore(ctx, store); err != nil {
+	if err = c.writeCredentialStore(ctx, &store); err != nil {
 		return "", nil, err
 	}
 	return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
@@ -306,6 +313,11 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 			return store, errors.New("Baley credential store contains invalid encrypted JSON")
 		}
 		migrateToKeychain = c.secretStore != nil
+		if migrateToKeychain {
+			if err = c.backupLegacyCredentialStore(raw); err != nil {
+				return store, fmt.Errorf("prepare legacy credential rollback: %w", err)
+			}
+		}
 	} else if disk.KeyRef != "" {
 		if c.secretStore == nil {
 			return store, errors.New("Baley keychain-backed credential store is unavailable in this runtime")
@@ -346,14 +358,142 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 		}
 	}
 	if migrateToKeychain || (disk.Ciphertext == "" && disk.KeyRef == "" && c.gatewayToken != "" && c.secretStore == nil) {
-		if err = c.writeCredentialStore(ctx, store); err != nil {
+		if err = c.writeCredentialStore(ctx, &store); err != nil {
 			return store, fmt.Errorf("migrate Baley credential store: %w", err)
 		}
 	}
 	return store, nil
 }
 
-func (c *client) writeCredentialStore(ctx context.Context, store credentialStore) error {
+func (c *client) legacyBackupPath() string { return c.credentialStorePath + ".legacy.bak" }
+
+func (c *client) legacyMarkerPath() string { return c.credentialStorePath + ".migration.json" }
+
+func writePrivateFile(path string, raw []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".baley-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if err = temporary.Chmod(0o600); err == nil {
+		_, err = temporary.Write(raw)
+	}
+	if closeErr := temporary.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(temporaryName, path)
+}
+
+func (c *client) backupLegacyCredentialStore(raw []byte) error {
+	if err := writePrivateFile(c.legacyBackupPath(), raw); err != nil {
+		return err
+	}
+	marker, err := json.Marshal(legacyMigrationMarker{Version: 1, ExpiresAt: time.Now().UTC().Add(legacyRollbackWindow)})
+	if err != nil {
+		return err
+	}
+	return writePrivateFile(c.legacyMarkerPath(), marker)
+}
+
+func (c *client) legacyRollbackEligible() (bool, time.Time) {
+	raw, err := os.ReadFile(c.legacyMarkerPath())
+	if err != nil {
+		return false, time.Time{}
+	}
+	var marker legacyMigrationMarker
+	if json.Unmarshal(raw, &marker) != nil || marker.Version != 1 || !marker.ExpiresAt.After(time.Now().UTC()) {
+		return false, time.Time{}
+	}
+	if _, err = os.Stat(c.legacyBackupPath()); err != nil {
+		return false, time.Time{}
+	}
+	return true, marker.ExpiresAt
+}
+
+// migrateLegacyCredentialStore performs the one permitted use of the former
+// local gateway token. The reissued Agent credential proves the copied gateway
+// registration remains valid; a revoke or membership removal is never masked.
+func (c *client) migrateLegacyCredentialStore(ctx context.Context) error {
+	if c.secretStore == nil {
+		return errors.New("OS keychain is unavailable; cannot migrate Baley credentials safely")
+	}
+	if c.gatewayToken == "" {
+		return errors.New("BALEY_MCP_GATEWAY_TOKEN is required once to migrate a legacy Baley credential store")
+	}
+	store, err := c.readCredentialStore(ctx)
+	if err != nil {
+		return err
+	}
+	for workspaceID, credential := range store.Workspaces {
+		if credential.GatewaySecret == "" || store.GatewayID == "" {
+			continue
+		}
+		response, resumeErr := c.resumeWorkspaceGateway(ctx, workspaceID, store.GatewayID, credential.GatewaySecret)
+		if resumeErr != nil {
+			var statusError connectionHTTPStatusError
+			if errors.As(resumeErr, &statusError) && statusError.StatusCode == http.StatusUnauthorized {
+				delete(store.Workspaces, workspaceID)
+				continue
+			}
+			return fmt.Errorf("validate migrated gateway registration: %w", resumeErr)
+		}
+		if response.AgentToken == "" {
+			return errors.New("Baley returned no Agent credential while validating migrated gateway")
+		}
+		credential.AgentToken, credential.ConnectedAt = response.AgentToken, time.Now().UTC()
+		store.Workspaces[workspaceID] = credential
+	}
+	return c.writeCredentialStore(ctx, &store)
+}
+
+func (c *client) rollbackLegacyCredentialStore() error {
+	if c.secretStore == nil {
+		return errors.New("OS keychain is unavailable; no tokenless credential store can be rolled back")
+	}
+	if c.gatewayToken == "" {
+		return errors.New("BALEY_MCP_GATEWAY_TOKEN is required for the one-time local legacy rollback")
+	}
+	eligible, _ := c.legacyRollbackEligible()
+	if !eligible {
+		return errors.New("no eligible legacy credential rollback is available")
+	}
+	backup, err := os.ReadFile(c.legacyBackupPath())
+	if err != nil {
+		return err
+	}
+	var legacy credentialStoreDisk
+	if json.Unmarshal(backup, &legacy) != nil || legacy.Ciphertext == "" {
+		return errors.New("legacy credential rollback data is invalid")
+	}
+	raw, err := os.ReadFile(c.credentialStorePath)
+	if err != nil {
+		return err
+	}
+	var current credentialStoreDisk
+	if json.Unmarshal(raw, &current) != nil {
+		return errors.New("current Baley credential store is invalid")
+	}
+	if err = writePrivateFile(c.credentialStorePath, backup); err != nil {
+		return err
+	}
+	if current.KeyRef != "" {
+		if err = c.secretStore.Delete(credentialKeychainService, current.KeyRef); err != nil {
+			return fmt.Errorf("remove rolled-back Baley keychain credential: %w", err)
+		}
+	}
+	_ = os.Remove(c.legacyBackupPath())
+	_ = os.Remove(c.legacyMarkerPath())
+	return nil
+}
+
+func (c *client) writeCredentialStore(ctx context.Context, store *credentialStore) error {
 	path := c.credentialStorePath
 	if path == "" {
 		return errors.New("Baley credential store is not configured")
@@ -395,23 +535,8 @@ func (c *client) writeCredentialStore(ctx context.Context, store credentialStore
 			return err
 		}
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".credentials-*.tmp")
-	if err != nil {
-		return err
-	}
-	temporaryName := temporary.Name()
-	defer os.Remove(temporaryName)
-	if err = temporary.Chmod(0o600); err == nil {
-		_, err = temporary.Write(raw)
-	}
-	if closeErr := temporary.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
+	if err = writePrivateFile(path, raw); err != nil {
 		return fmt.Errorf("write Baley credential store: %w", err)
-	}
-	if err = os.Rename(temporaryName, path); err != nil {
-		return fmt.Errorf("replace Baley credential store: %w", err)
 	}
 	return nil
 }
@@ -481,5 +606,5 @@ func (c *client) removeWorkspaceCredential(ctx context.Context, workspaceID stri
 		}
 	}
 	delete(store.PendingConnections, workspaceID)
-	return c.writeCredentialStore(ctx, store)
+	return c.writeCredentialStore(ctx, &store)
 }

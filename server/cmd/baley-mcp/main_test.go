@@ -39,7 +39,8 @@ func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
 		t.Fatal(err)
 	}
 	readOnly := map[string]bool{
-		"baley_workspace_get": true, "baley_workspace_graph": true,
+		"baley_workspace_get": true, "baley_workspace_context": true, "baley_workspace_graph": true,
+		"baley_phase_tasks":     true,
 		"baley_mcp_diagnostics": true,
 		"baley_task_get":        true, "baley_task_acceptance_get": true,
 		"baley_lane_brief": true, "baley_backlog_list": true,
@@ -330,7 +331,7 @@ func TestClientPreservesStoredCredentialForMissingWorkspaceResource(t *testing.T
 
 	storePath := filepath.Join(t.TempDir(), "credentials.json")
 	c := &client{base: server.URL, http: server.Client(), credentialStorePath: storePath, agentActorID: "agent"}
-	if err := c.writeCredentialStore(context.Background(), credentialStore{
+	if err := c.writeCredentialStore(context.Background(), &credentialStore{
 		Version: 1, ServerURL: server.URL,
 		Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: token}},
 	}); err != nil {
@@ -377,7 +378,7 @@ func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t 
 		base: server.URL, http: server.Client(), credentialStorePath: storePath,
 		agentActorID: "agent",
 	}
-	if err := c.writeCredentialStore(context.Background(), credentialStore{
+	if err := c.writeCredentialStore(context.Background(), &credentialStore{
 		Version: 1, ServerURL: server.URL,
 		Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: "stale-or-cross-workspace-token"}},
 	}); err != nil {

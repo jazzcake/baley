@@ -35,6 +35,12 @@ type client struct {
 type workspaceInput struct {
 	WorkspaceID string `json:"workspaceId" jsonschema:"Baley workspace ID"`
 }
+type phaseTasksInput struct {
+	WorkspaceID string `json:"workspaceId" jsonschema:"Baley workspace ID"`
+	PhaseID     string `json:"phaseId" jsonschema:"Non-completed Phase ID to expand explicitly"`
+	Cursor      int    `json:"cursor,omitempty" jsonschema:"Task public-ID cursor returned by a prior page"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"Page size from 1 to 100; default 50"`
+}
 type diagnosticsInput struct{}
 type taskInput struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -553,8 +559,8 @@ type gateTaskExecuteInput struct {
 
 func main() {
 	mode := "stdio"
-	if len(os.Args) > 2 || (len(os.Args) == 2 && os.Args[1] != "serve-http") {
-		log.Fatal("usage: baley-mcp [serve-http]")
+	if len(os.Args) > 2 || (len(os.Args) == 2 && os.Args[1] != "serve-http" && os.Args[1] != "migrate-legacy" && os.Args[1] != "rollback-legacy" && os.Args[1] != "diagnose") {
+		log.Fatal("usage: baley-mcp [serve-http|migrate-legacy|rollback-legacy|diagnose]")
 	}
 	if len(os.Args) == 2 {
 		mode = os.Args[1]
@@ -563,7 +569,11 @@ func main() {
 	if base == "" {
 		base = "http://127.0.0.1:8080"
 	}
-	if _, err := validateServerURL(base, mode); err != nil {
+	validationMode := mode
+	if mode != "serve-http" {
+		validationMode = "stdio"
+	}
+	if _, err := validateServerURL(base, validationMode); err != nil {
 		log.Fatal(err)
 	}
 	c := &client{
@@ -578,11 +588,29 @@ func main() {
 	if c.agentActorID == "" {
 		c.agentActorID = "00000000-0000-4000-8000-000000000003"
 	}
-	server := newMCPServer(c)
-	if mode == "serve-http" {
+	switch mode {
+	case "serve-http":
 		serveHTTP(c)
 		return
+	case "migrate-legacy":
+		if err := c.migrateLegacyCredentialStore(context.Background()); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Baley legacy credentials migrated to the OS keychain and gateway registrations revalidated.")
+		return
+	case "rollback-legacy":
+		if err := c.rollbackLegacyCredentialStore(); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Baley local credential migration rolled back. Server-side revocation and membership rules remain enforced.")
+		return
+	case "diagnose":
+		if err := json.NewEncoder(os.Stdout).Encode(c.localDiagnostics()); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
+	server := newMCPServer(c)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)
 	}
@@ -662,7 +690,9 @@ func newMCPServer(c *client) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "baley", Version: "0.1.0"}, nil)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_get", "Read Workspace metadata"), c.workspaceGet)
 	mcp.AddTool(server, readOnlyTool("baley_mcp_diagnostics", "Report tokenless credential-store, keychain, and local transport safety without exposing secrets"), c.diagnostics)
+	mcp.AddTool(server, readOnlyTool("baley_workspace_context", "Read compact non-completed Phase and Lane status counts; expand a named Phase only when Task detail is needed"), c.workspaceContext)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_graph", "Read the current Workspace graph"), c.workspaceGraph)
+	mcp.AddTool(server, readOnlyTool("baley_phase_tasks", "List one explicitly selected non-completed Phase's Tasks with a bounded cursor page"), c.phaseTasks)
 	mcp.AddTool(server, readOnlyTool("baley_task_get", "Read one Task by public ID"), c.taskGet)
 	mcp.AddTool(server, readOnlyTool("baley_task_acceptance_get", "Read a Task acceptance binding, policy/profile, assignments, and typed evidence"), c.taskAcceptanceGet)
 	mcp.AddTool(server, readOnlyTool("baley_lane_brief", "Build a read-only active-Run-first lane recovery brief with evidence mismatch classification"), c.laneBrief)
@@ -927,7 +957,28 @@ func approvalAttestation(approvedByActorID, approvedCommandHash, decisionSnapsho
 func (c *client) workspaceGraph(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/graph")
 }
+func (c *client) workspaceContext(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/context")
+}
+func (c *client) phaseTasks(ctx context.Context, _ *mcp.CallToolRequest, in phaseTasksInput) (*mcp.CallToolResult, any, error) {
+	values := url.Values{}
+	if in.Cursor > 0 {
+		values.Set("cursor", fmt.Sprint(in.Cursor))
+	}
+	if in.Limit > 0 {
+		values.Set("limit", fmt.Sprint(in.Limit))
+	}
+	path := "/v1/workspaces/" + url.PathEscape(in.WorkspaceID) + "/phases/" + url.PathEscape(in.PhaseID) + "/tasks"
+	if query := values.Encode(); query != "" {
+		path += "?" + query
+	}
+	return c.get(ctx, path)
+}
 func (c *client) diagnostics(_ context.Context, _ *mcp.CallToolRequest, _ diagnosticsInput) (*mcp.CallToolResult, any, error) {
+	result := c.localDiagnostics()
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Baley MCP diagnostics collected without exposing credentials."}}, StructuredContent: result}, result, nil
+}
+func (c *client) localDiagnostics() map[string]any {
 	result := map[string]any{
 		"serverURL":                 c.base,
 		"credentialStoreConfigured": c.credentialStorePath != "",
@@ -956,7 +1007,13 @@ func (c *client) diagnostics(_ context.Context, _ *mcp.CallToolRequest, _ diagno
 			result["credentialStoreState"] = "legacy_plaintext_migration_required"
 		}
 	}
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Baley MCP diagnostics collected without exposing credentials."}}, StructuredContent: result}, result, nil
+	if eligible, expiresAt := c.legacyRollbackEligible(); eligible {
+		result["legacyRollbackEligible"] = true
+		result["legacyRollbackExpiresAt"] = expiresAt
+	} else {
+		result["legacyRollbackEligible"] = false
+	}
+	return result
 }
 func (c *client) workspaceGet(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID))

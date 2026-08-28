@@ -1,35 +1,31 @@
-# Baley shared HTTP MCP migration — handoff prompt
+# Baley tokenless MCP migration handoff
 
-Use this prompt in every Baley-using project after the Baley host has deployed
-the shared Streamable HTTP MCP adapter.
+Use this handoff in every Baley-using project after the host deploys the
+tokenless local MCP binary.
 
 ```text
-Baley MCP has moved from a per-session stdio launcher to the shared local
-Streamable HTTP endpoint.
+Baley MCP uses a local tokenless stdio process. Do not put a Baley token in
+Codex config, a project environment file, a URL, or an Authorization header.
 
-Do not add or run D:\Project_AI\baley\scripts\run-baley-mcp.ps1 in this
-project's Codex configuration. It is rollback-only development compatibility.
-
-Prerequisites on the host:
-1. Baley Docker services include a healthy `mcp` container.
-2. Codex is registered as:
-   codex mcp add baley --url http://127.0.0.1:8091/mcp --bearer-token-env-var BALEY_MCP_GATEWAY_TOKEN
-3. BALEY_MCP_GATEWAY_TOKEN is synchronized from Baley's local gateway setup and
-   Codex has been restarted after synchronization.
+Host setup:
+1. Install the host-provided tokenless registration (on macOS run
+   ./scripts/install-baley-mcp-macos.sh).
+2. Codex starts baley-mcp directly with BALEY_SERVER_URL and
+   BALEY_MCP_CREDENTIAL_STORE only. The device-bound secret remains in the OS
+   Keychain / Credential Manager.
+3. Fully restart Codex Desktop or begin a new Codex CLI session.
 
 For this project:
-1. Keep its `baley.yaml` Workspace binding unchanged.
-2. Start a new Codex thread and call a read-only Baley tool for that Workspace.
-3. If the response is unauthenticated, do not put a token in a URL, project
-   config, prompt, or log. Ask the Baley host operator to run
-   scripts\sync-baley-mcp-http-token.ps1 and restart Codex.
-4. If the response is forbidden or not found, treat it as a genuine Workspace
-   token/capability boundary. Use the Baley connection/approval workflow; do
-   not bypass it with direct HTTP or database access.
-5. Do not create a per-project MCP launcher, worktree-specific token file, or
-   `go run ./cmd/baley-mcp` process. All Codex sessions share the Docker MCP
-   adapter.
+1. Keep its baley.yaml Workspace binding unchanged.
+2. Start a new Codex thread and make a read-only Baley request for that
+   Workspace.
+3. If the response requests Workspace connection approval, have the signed-in
+   Workspace Owner approve the normal URL and retry the same request.
+4. If it is forbidden or not found, treat that as the genuine Workspace,
+   membership, or gateway-revocation boundary. Do not bypass it with direct
+   HTTP, a database, or a token.
+5. Use baley_mcp_diagnostics or `baley-mcp diagnose` for redacted diagnosis.
 
-Refer to D:\Project_AI\baley\docs\streamable-http-mcp-operations.md for
-operations, diagnosis, and the temporary stdio rollback procedure.
+Task confirmation, Gate changes, Gate Task pass, and Gate passage remain
+human-only even though the MCP connection is automatic.
 ```

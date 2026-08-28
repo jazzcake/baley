@@ -56,10 +56,21 @@ same request after approval.
 ## Migration, rollback, and diagnostics
 
 A legacy encrypted credential store can be opened once with its existing local
-gateway token, then rewritten as a Keychain-backed store. The migration clears
-the cached Agent token for a registered gateway so the next call proves a fresh
-server renewal. It never writes a decrypted secret to disk. A revoked gateway
-cannot be restored by migration or rollback; it requires a new Owner approval.
+gateway token, then rewritten as a Keychain-backed store. Run the migration in
+an interactive shell only; do not add that variable to Codex configuration:
+
+```bash
+BALEY_MCP_GATEWAY_TOKEN='existing-local-value' baley-mcp migrate-legacy
+```
+
+The migration clears the cached Agent token and revalidates every registered
+gateway with the server before it reports success. It never writes a decrypted
+secret to disk. A 15-minute encrypted rollback copy is retained solely for a
+failed local migration; use `baley-mcp rollback-legacy` with the existing local
+value during that window. The rollback restores only the former local file and
+does not restore a revoked gateway or removed membership: the server still
+rejects its next renewal. After the window, enroll again through Owner approval
+instead of retaining legacy material.
 
 Use `baley_mcp_diagnostics` for redacted state only:
 
@@ -71,4 +82,5 @@ Use `baley_mcp_diagnostics` for redacted state only:
 
 If Keychain access is unavailable, stop and fix the OS credential-manager
 permission. Baley must not fall back to a plaintext file or a Codex token
-environment variable.
+environment variable. `baley-mcp diagnose` provides the same redacted local
+state before Codex is configured.

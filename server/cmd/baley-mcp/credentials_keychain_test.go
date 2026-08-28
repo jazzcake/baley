@@ -71,7 +71,7 @@ func TestKeychainStoreResumesGatewayWithoutGatewayToken(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	first := &client{base: server.URL, http: server.Client(), credentialStorePath: path, secretStore: keychain}
-	if err := first.writeCredentialStore(context.Background(), credentialStore{ServerURL: server.URL, GatewayID: "device-1", Workspaces: map[string]workspaceCredential{workspaceID: {GatewaySecret: gatewaySecret}}}); err != nil {
+	if err := first.writeCredentialStore(context.Background(), &credentialStore{ServerURL: server.URL, GatewayID: "device-1", Workspaces: map[string]workspaceCredential{workspaceID: {GatewaySecret: gatewaySecret}}}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
@@ -95,7 +95,7 @@ func TestLegacyTokenStoreMigratesToKeychainAndForcesGatewayRenewal(t *testing.T)
 	const gatewaySecret = "registered-gateway-secret"
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	legacy := &client{base: "https://baley.example/api", gatewayToken: legacyToken, credentialStorePath: path}
-	if err := legacy.writeCredentialStore(context.Background(), credentialStore{ServerURL: legacy.base, GatewayID: "device-1", Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: "old-agent-token", GatewaySecret: gatewaySecret}}}); err != nil {
+	if err := legacy.writeCredentialStore(context.Background(), &credentialStore{ServerURL: legacy.base, GatewayID: "device-1", Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: "old-agent-token", GatewaySecret: gatewaySecret}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -118,5 +118,42 @@ func TestLegacyTokenStoreMigratesToKeychainAndForcesGatewayRenewal(t *testing.T)
 	}
 	if len(keychain.values) != 1 {
 		t.Fatalf("keychain entries=%d, want 1", len(keychain.values))
+	}
+	if eligible, _ := migrated.legacyRollbackEligible(); !eligible {
+		t.Fatal("legacy rollback was not available immediately after migration")
+	}
+	if err := migrated.rollbackLegacyCredentialStore(); err != nil {
+		t.Fatal(err)
+	}
+	rolledBack, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(rolledBack), "ciphertext") || strings.Contains(string(rolledBack), gatewaySecret) {
+		t.Fatalf("legacy rollback failed: raw=%s err=%v", rolledBack, err)
+	}
+	if len(keychain.values) != 0 {
+		t.Fatalf("keychain entries=%d after rollback, want 0", len(keychain.values))
+	}
+}
+
+func TestMigrateLegacyCredentialStoreRevalidatesAndDropsRevokedGateway(t *testing.T) {
+	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
+	const legacyToken = "legacy-local-gateway-token"
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	legacy := &client{base: "https://baley.example/api", gatewayToken: legacyToken, credentialStorePath: path}
+	if err := legacy.writeCredentialStore(context.Background(), &credentialStore{ServerURL: legacy.base, GatewayID: "device-1", Workspaces: map[string]workspaceCredential{workspaceID: {GatewaySecret: "revoked"}}}); err != nil {
+		t.Fatal(err)
+	}
+	keychain := &memorySecretStore{}
+	migrated := &client{base: legacy.base, gatewayToken: legacyToken, credentialStorePath: path, secretStore: keychain, http: &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusUnauthorized, Header: make(http.Header), Body: http.NoBody, Request: r}, nil
+	})}}
+	if err := migrated.migrateLegacyCredentialStore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	store, err := migrated.readCredentialStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Workspaces) != 0 {
+		t.Fatalf("revoked gateway survived migration: %#v", store.Workspaces)
 	}
 }

@@ -78,7 +78,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}/reject", a.rejectMCPConnection)
 	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/mcp-gateways/{gatewayId}", a.revokeMCPGateway)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}", a.workspace)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/context", a.workspaceContext)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/graph", a.graph)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/phases/{phaseId}/tasks", a.phaseTasks)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/tasks/{publicId}", a.task)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/tasks/{publicId}/acceptance", a.taskAcceptance)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/lanes/{laneId}/brief", a.laneBrief)
@@ -733,6 +735,14 @@ func (a *API) workspace(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, s.Workspace)
 }
+func (a *API) workspaceContext(w http.ResponseWriter, r *http.Request) {
+	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, application.WorkspaceContext(s))
+}
 func (a *API) graph(w http.ResponseWriter, r *http.Request) {
 	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
 	if err != nil {
@@ -746,6 +756,41 @@ func (a *API) graph(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, map[string]any{"workspace": s.Workspace, "phases": s.Phases, "lanes": s.Lanes, "tasks": s.Tasks, "backlogItems": activeBacklog, "dependencies": s.Dependencies, "gates": s.Gates, "runs": s.Runs, "repositories": s.Repositories, "records": s.Records, "commits": s.Commits, "gitObservations": s.GitObservations, "acceptancePolicy": s.AcceptancePolicy, "evidenceProfiles": s.EvidenceProfiles, "acceptanceAssignments": s.AcceptanceAssignments, "acceptanceEvidence": s.AcceptanceEvidence, "decisions": projectDecisions(s)})
+}
+
+func (a *API) phaseTasks(w http.ResponseWriter, r *http.Request) {
+	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	phaseID := r.PathValue("phaseId")
+	found, completed := false, false
+	for _, phase := range s.Phases {
+		if phase.ID == phaseID {
+			found, completed = true, phase.State == "completed"
+			break
+		}
+	}
+	if !found || completed {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]string{"code": "not_found", "message": "active phase not found"}})
+		return
+	}
+	cursor := 0
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		cursor, err = strconv.Atoi(raw)
+	}
+	if err != nil || cursor < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_cursor", "message": "cursor must be a non-negative Task public ID"}})
+		return
+	}
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if r.URL.Query().Get("limit") != "" && (err != nil || limit <= 0 || limit > 100) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_limit", "message": "limit must be between 1 and 100"}})
+		return
+	}
+	tasks, nextCursor, hasMore := application.PhaseTasksPage(s, phaseID, cursor, limit)
+	writeJSON(w, http.StatusOK, map[string]any{"phaseId": phaseID, "items": tasks, "nextCursor": nextCursor, "hasMore": hasMore})
 }
 
 func (a *API) taskAcceptance(w http.ResponseWriter, r *http.Request) {

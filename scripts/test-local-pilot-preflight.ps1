@@ -32,32 +32,8 @@ $checks += Add-Check "recent-restore-verification" $recentVerification $(if ($la
 $worktree = @(& git -C $repoRoot status --porcelain)
 $checks += Add-Check "clean-worktree" ($worktree.Count -eq 0) $(if ($worktree.Count -eq 0) { "clean" } else { "$($worktree.Count) pending entries" })
 
-$serverURL = "http://127.0.0.1:8080"
-$workspaceID = "00000000-0000-4000-8000-000000000001"
-$environmentPath = Join-Path $repoRoot ".env.baley-mcp.local"
-$credentialStorePath = Join-Path $repoRoot ".tmp\baley-mcp\credentials.json"
-. (Join-Path $PSScriptRoot "baley-mcp-env.ps1")
-$agentToken = $null
-try {
-  if (Test-Path -LiteralPath $credentialStorePath) {
-    $credentialStore = Get-Content -LiteralPath $credentialStorePath -Raw | ConvertFrom-Json
-    $credentialProperty = $credentialStore.workspaces.PSObject.Properties[$workspaceID]
-    if ($null -ne $credentialProperty) {
-      $agentToken = $credentialProperty.Value.agentToken
-    }
-    $credentialStore = $null
-  }
-  if ([string]::IsNullOrWhiteSpace($agentToken) -and (Test-Path -LiteralPath $environmentPath)) {
-    $localEnvironment = Read-BaleyMCPEnvironment -Path $environmentPath
-    $agentToken = $localEnvironment.BALEY_AGENT_TOKEN
-    $localEnvironment = $null
-  }
-} catch {}
-$environmentIgnored = @(& git -C $repoRoot check-ignore -- ".env.baley-mcp.local").Count -eq 1
-$checks += Add-Check "mcp-env-gitignored" $environmentIgnored ".env.baley-mcp.local"
-$credentialStoreIgnored = @(& git -C $repoRoot check-ignore -- ".tmp/baley-mcp/credentials.json").Count -eq 1
-$checks += Add-Check "mcp-credential-store-gitignored" $credentialStoreIgnored ".tmp/baley-mcp/credentials.json"
-$mcpHTTPRegistration = $false
+$mcpStdioRegistration = $false
+$mcpTokenFree = $false
 $codexCLI = $null
 try { $codexCLI = Resolve-CodexCLI } catch {}
 if ($null -ne $codexCLI) {
@@ -65,62 +41,32 @@ if ($null -ne $codexCLI) {
     $mcpConfigJSON = (& $codexCLI mcp get baley --json 2>$null | Out-String)
     if ($LASTEXITCODE -eq 0) {
       $mcpConfig = $mcpConfigJSON | ConvertFrom-Json
-      $mcpHTTPRegistration =
-        $mcpConfig.transport.type -eq "streamable_http" -and
-        $mcpConfig.transport.url -eq "http://127.0.0.1:8091/mcp" -and
-        $mcpConfig.transport.bearer_token_env_var -eq "BALEY_MCP_GATEWAY_TOKEN"
+      $envProperties = @($mcpConfig.env.PSObject.Properties.Name)
+      $mcpStdioRegistration = $mcpConfig.transport.type -eq "stdio" -and $envProperties -contains "BALEY_SERVER_URL" -and $envProperties -contains "BALEY_MCP_CREDENTIAL_STORE"
+      $mcpTokenFree = -not ($envProperties -contains "BALEY_MCP_GATEWAY_TOKEN") -and -not ($envProperties -contains "BALEY_AGENT_TOKEN")
     }
   } catch {}
 }
-$checks += Add-Check "codex-mcp-shared-http" $mcpHTTPRegistration "Streamable HTTP adapter uses BALEY_MCP_GATEWAY_TOKEN without URL credentials"
+$checks += Add-Check "codex-mcp-tokenless-stdio" $mcpStdioRegistration "direct stdio with server URL and credential-store path"
+$checks += Add-Check "codex-mcp-no-token-environment" $mcpTokenFree "no Baley gateway or Agent token in Codex MCP environment"
+
 $baleyPluginInstalled = $false
 $baleyPluginSkills = $false
 if ($null -ne $codexCLI) {
   try {
     $pluginList = (& $codexCLI plugin list --json 2>$null | Out-String) | ConvertFrom-Json
-    $baleyPlugin = @($pluginList.installed | Where-Object {
-      $_.pluginId -eq "baley@personal" -and $_.enabled
-    }) | Select-Object -First 1
+    $baleyPlugin = @($pluginList.installed | Where-Object { $_.pluginId -eq "baley@personal" -and $_.enabled }) | Select-Object -First 1
     if ($null -ne $baleyPlugin) {
       $baleyPluginInstalled = $true
       $pluginCache = Join-Path $env:USERPROFILE ".codex\plugins\cache\personal\baley\$($baleyPlugin.version)\skills"
-      $baleyPluginSkills =
-        (Test-Path -LiteralPath (Join-Path $pluginCache "baley-manage-work\SKILL.md") -PathType Leaf) -and
-        (Test-Path -LiteralPath (Join-Path $pluginCache "baley-adopt-project\SKILL.md") -PathType Leaf)
+      $baleyPluginSkills = (Test-Path -LiteralPath (Join-Path $pluginCache "baley-manage-work\SKILL.md") -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $pluginCache "baley-adopt-project\SKILL.md") -PathType Leaf)
     }
   } catch {}
 }
 $checks += Add-Check "baley-plugin-installed" $baleyPluginInstalled "baley@personal enabled"
 $checks += Add-Check "baley-plugin-skills" $baleyPluginSkills "baley:baley-manage-work and baley:baley-adopt-project"
-$agentRead = $false
-$agentAdminDenied = $false
-$workspace = $null
-$task124 = $null
-$gate4 = $null
-if (![string]::IsNullOrWhiteSpace($agentToken)) {
-  try {
-    $headers = @{ Authorization = "Bearer $agentToken" }
-    $workspace = Invoke-RestMethod -Uri "$serverURL/v1/workspaces/$workspaceID" -Headers $headers
-    $task124 = Invoke-RestMethod -Uri "$serverURL/v1/workspaces/$workspaceID/tasks/124" -Headers $headers
-    $gate4 = Invoke-RestMethod -Uri "$serverURL/v1/workspaces/$workspaceID/gates/G%234/status" -Headers $headers
-    $agentRead = $workspace.id -eq $workspaceID
-    try {
-      Invoke-RestMethod -Uri "$serverURL/v1/workspaces/$workspaceID/members" -Headers $headers | Out-Null
-    } catch {
-      $agentAdminDenied = $_.Exception.Response.StatusCode.value__ -eq 403
-    }
-  } catch {}
-}
-$checks += Add-Check "agent-token-read" $agentRead "Workspace-scoped operator credential"
-$checks += Add-Check "agent-admin-denied" $agentAdminDenied "members endpoint returns 403"
-$checks += Add-Check "embedding-pilot-active" ($null -ne $workspace -and $workspace.activePhaseId -eq "embedding-pilot") $(if ($workspace) { $workspace.activePhaseId } else { "unavailable" })
-$checks += Add-Check "task-124-confirmed" ($null -ne $task124 -and $task124.status -eq "confirmed") $(if ($task124) { $task124.status } else { "unavailable" })
-$checks += Add-Check "gate-4-passed" ($null -ne $gate4 -and $gate4.status -eq "passed") $(if ($gate4) { $gate4.status } else { "unavailable" })
-$agentToken = $null
 
 $checks | Format-Table -AutoSize
-Write-Output "MANUAL: sign in as the Owner and confirm the Baley Pilot graph renders before #125."
-if ($failures.Count -gt 0) {
-  throw "Local Pilot preflight failed: $($failures -join ', ')"
-}
+Write-Output "MANUAL: sign in as the Owner, verify the Viewer graph, then make one tokenless Codex MCP read and inspect baley_mcp_diagnostics."
+if ($failures.Count -gt 0) { throw "Local Pilot preflight failed: $($failures -join ', ')" }
 Write-Output "Automatic Local Pilot preflight passed."

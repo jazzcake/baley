@@ -51,27 +51,8 @@ services:
       api:
         condition: service_healthy
 
-  mcp:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.mcp
-    restart: unless-stopped
-    environment:
-      BALEY_SERVER_URL: http://api:8080
-      BALEY_MCP_HTTP_ADDR: 0.0.0.0:8090
-      BALEY_MCP_GATEWAY_TOKEN: ${BALEY_MCP_GATEWAY_TOKEN:?Run scripts/sync-baley-mcp-http-token.ps1 before starting MCP.}
-      BALEY_MCP_CREDENTIAL_STORE: /var/lib/baley-mcp/credentials.json
-    ports:
-      - "127.0.0.1:8091:8090"
-    depends_on:
-      api:
-        condition: service_healthy
-    volumes:
-      - baley-mcp-state:/var/lib/baley-mcp
-
 volumes:
   baley-server-state:
-  baley-mcp-state:
 
 networks:
   local-dev:

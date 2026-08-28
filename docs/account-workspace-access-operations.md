@@ -102,8 +102,8 @@ changing another Workspace's global Account access.
 
 ## 5. Connect an Agent
 
-Register the Baley MCP loader once. Individual Workspaces do not need separate MCP
-registrations, environment files, or Codex threads:
+Register the tokenless Baley MCP loader once. Individual Workspaces do not need
+separate MCP registrations, gateway tokens, or Codex threads:
 
 ```toml
 [mcp_servers.baley]
@@ -123,8 +123,8 @@ require a new thread or schema reload.
 The granted identity has only the Operator capability catalog. Human-only Task
 confirmation, Gate passage, and policy approval remain unavailable to it. Raw
 tokens never enter chat, `config.toml`, command JSON, Task Records, browser
-storage, Git, or logs. `scripts/prepare-local-pilot-agent.ps1` remains only as a
-manual recovery/rotation tool; it is not the normal onboarding path.
+storage, Git, or logs. `scripts/prepare-local-pilot-agent.ps1` is retired for
+Codex access; use the tokenless migration diagnostics instead.
 
 ## 6. Approve a human-only Agent command
 
