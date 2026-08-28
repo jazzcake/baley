@@ -409,6 +409,10 @@ func (c *client) legacyRollbackEligible() (bool, time.Time) {
 	}
 	var marker legacyMigrationMarker
 	if json.Unmarshal(raw, &marker) != nil || marker.Version != 1 || !marker.ExpiresAt.After(time.Now().UTC()) {
+		// This is an encrypted legacy backup created by this process. Expiry is
+		// enforced by removal, not merely hidden by diagnostics.
+		_ = os.Remove(c.legacyBackupPath())
+		_ = os.Remove(c.legacyMarkerPath())
 		return false, time.Time{}
 	}
 	if _, err = os.Stat(c.legacyBackupPath()); err != nil {

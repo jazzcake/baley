@@ -961,6 +961,12 @@ func (c *client) workspaceContext(ctx context.Context, _ *mcp.CallToolRequest, i
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/context")
 }
 func (c *client) phaseTasks(ctx context.Context, _ *mcp.CallToolRequest, in phaseTasksInput) (*mcp.CallToolResult, any, error) {
+	if in.Cursor < 0 {
+		return nil, nil, errors.New("cursor must be a non-negative Task public ID")
+	}
+	if in.Limit < 0 {
+		return nil, nil, errors.New("limit must be between 1 and 100")
+	}
 	values := url.Values{}
 	if in.Cursor > 0 {
 		values.Set("cursor", fmt.Sprint(in.Cursor))

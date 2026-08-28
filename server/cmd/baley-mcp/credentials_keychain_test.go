@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type memorySecretStore struct {
@@ -155,5 +157,28 @@ func TestMigrateLegacyCredentialStoreRevalidatesAndDropsRevokedGateway(t *testin
 	}
 	if len(store.Workspaces) != 0 {
 		t.Fatalf("revoked gateway survived migration: %#v", store.Workspaces)
+	}
+}
+
+func TestExpiredLegacyRollbackIsRemoved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	c := &client{credentialStorePath: path}
+	if err := writePrivateFile(c.legacyBackupPath(), []byte(`{"version":4,"ciphertext":"encrypted"}`)); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := json.Marshal(legacyMigrationMarker{Version: 1, ExpiresAt: time.Now().UTC().Add(-time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = writePrivateFile(c.legacyMarkerPath(), marker); err != nil {
+		t.Fatal(err)
+	}
+	if eligible, _ := c.legacyRollbackEligible(); eligible {
+		t.Fatal("expired rollback remained eligible")
+	}
+	for _, candidate := range []string{c.legacyBackupPath(), c.legacyMarkerPath()} {
+		if _, err := os.Stat(candidate); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expired migration artifact remained at %s: %v", candidate, err)
+		}
 	}
 }

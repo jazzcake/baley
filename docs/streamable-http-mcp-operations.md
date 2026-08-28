@@ -39,6 +39,12 @@ On a Mac checkout, run:
 ./scripts/install-baley-mcp-macos.sh
 ```
 
+On Windows, run from the repository checkout:
+
+```powershell
+.\scripts\install-baley-mcp-windows.ps1
+```
+
 The equivalent CLI registration is:
 
 ```bash
@@ -71,6 +77,11 @@ value during that window. The rollback restores only the former local file and
 does not restore a revoked gateway or removed membership: the server still
 rejects its next renewal. After the window, enroll again through Owner approval
 instead of retaining legacy material.
+
+Earlier plaintext stores are migrated directly into the OS keychain but are
+never copied back to disk for rollback; preserving a plaintext backup would
+violate the tokenless storage boundary. Their safe rollback is a fresh Owner
+approval, not revival of the old disk secret.
 
 Use `baley_mcp_diagnostics` for redacted state only:
 

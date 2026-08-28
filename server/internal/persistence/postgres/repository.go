@@ -95,6 +95,136 @@ func (r *Repository) LoadSnapshot(ctx context.Context, wid string) (application.
 	return loadSnapshot(ctx, r.Pool, wid, false)
 }
 
+// WorkspaceContext reads only the first-read MCP projection. In particular it
+// never materializes Task titles, descriptions, graph edges, evidence, or
+// completed Phases merely to count work.
+func (r *Repository) WorkspaceContext(ctx context.Context, wid string) (application.WorkspaceContextProjection, error) {
+	result := application.WorkspaceContextProjection{FullGraphAvailable: true, Phases: []application.PhaseContextProjection{}}
+	err := r.Pool.QueryRow(ctx, "SELECT w.id,w.name,w.state,w.revision,(SELECT id FROM phases WHERE workspace_id=w.id AND state='active'),w.created_at FROM workspaces w WHERE id=$1", wid).
+		Scan(&result.Workspace.ID, &result.Workspace.Name, &result.Workspace.State, &result.Workspace.Revision, &result.Workspace.ActivePhaseID, &result.Workspace.ObservedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, &application.CommandError{Code: domain.CodeNotFound, Message: "workspace not found"}
+	}
+	if err != nil {
+		return result, err
+	}
+	lanes := []application.LaneTaskCountProjection{}
+	rows, err := r.Pool.Query(ctx, "SELECT id,name FROM lanes WHERE workspace_id=$1 ORDER BY name,id", wid)
+	if err != nil {
+		return result, err
+	}
+	for rows.Next() {
+		var lane application.LaneTaskCountProjection
+		if err = rows.Scan(&lane.LaneID, &lane.LaneName); err != nil {
+			rows.Close()
+			return result, err
+		}
+		lane.StatusCounts = map[string]int{}
+		lanes = append(lanes, lane)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return result, err
+	}
+	rows.Close()
+	rows, err = r.Pool.Query(ctx, "SELECT id,name,state,position FROM phases WHERE workspace_id=$1 AND state <> 'completed' ORDER BY position,id", wid)
+	if err != nil {
+		return result, err
+	}
+	phaseIndex := map[string]int{}
+	for rows.Next() {
+		phase := application.PhaseContextProjection{LaneCounts: make([]application.LaneTaskCountProjection, len(lanes))}
+		if err = rows.Scan(&phase.ID, &phase.Name, &phase.State, &phase.Position); err != nil {
+			rows.Close()
+			return result, err
+		}
+		copy(phase.LaneCounts, lanes)
+		for index := range phase.LaneCounts {
+			phase.LaneCounts[index].StatusCounts = map[string]int{}
+		}
+		phaseIndex[phase.ID] = len(result.Phases)
+		result.Phases = append(result.Phases, phase)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return result, err
+	}
+	rows.Close()
+	rows, err = r.Pool.Query(ctx, `SELECT t.phase_id,t.lane_id,t.status,count(*)
+		FROM tasks t JOIN phases p ON p.workspace_id=t.workspace_id AND p.id=t.phase_id
+		WHERE t.workspace_id=$1 AND p.state <> 'completed'
+		GROUP BY t.phase_id,t.lane_id,t.status`, wid)
+	if err != nil {
+		return result, err
+	}
+	for rows.Next() {
+		var phaseID, laneID, status string
+		var count int
+		if err = rows.Scan(&phaseID, &laneID, &status, &count); err != nil {
+			rows.Close()
+			return result, err
+		}
+		phasePosition, ok := phaseIndex[phaseID]
+		if !ok {
+			continue
+		}
+		for index := range result.Phases[phasePosition].LaneCounts {
+			if result.Phases[phasePosition].LaneCounts[index].LaneID == laneID {
+				result.Phases[phasePosition].LaneCounts[index].StatusCounts[status] = count
+				break
+			}
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return result, err
+	}
+	rows.Close()
+	return result, nil
+}
+
+// PhaseTasks returns exactly one explicitly selected non-completed Phase. The
+// query bounds both database work and response size to a 100-Task cursor page.
+func (r *Repository) PhaseTasks(ctx context.Context, wid, phaseID string, afterPublicID, limit int) ([]application.TaskProjection, int, bool, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	var state string
+	err := r.Pool.QueryRow(ctx, "SELECT state FROM phases WHERE workspace_id=$1 AND id=$2", wid, phaseID).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) || state == "completed" {
+		return nil, 0, false, &application.CommandError{Code: domain.CodeNotFound, Message: "non-completed phase not found"}
+	}
+	if err != nil {
+		return nil, 0, false, err
+	}
+	rows, err := r.Pool.Query(ctx, `SELECT id,public_id,lane_id,phase_id,COALESCE(parent_task_id,''),title,description,current_summary,next_action,status,blocker_reason,COALESCE(terminal_reason,''),COALESCE(implemented_assessment,''),updated_at,requested_acceptance_mode,effective_acceptance_mode,acceptance_policy_version,evidence_profile_id
+		FROM tasks WHERE workspace_id=$1 AND phase_id=$2 AND public_id>$3 ORDER BY public_id LIMIT $4`, wid, phaseID, afterPublicID, limit+1)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer rows.Close()
+	tasks := make([]application.TaskProjection, 0, limit+1)
+	for rows.Next() {
+		var task application.TaskProjection
+		if err = rows.Scan(&task.ID, &task.PublicID, &task.LaneID, &task.PhaseID, &task.ParentTaskID, &task.Title, &task.Description, &task.CurrentSummary, &task.NextAction, &task.Status, &task.BlockerReason, &task.TerminalReason, &task.ImplementedAssessment, &task.ObservedAt, &task.RequestedAcceptanceMode, &task.EffectiveAcceptanceMode, &task.AcceptancePolicyVersion, &task.EvidenceProfileID); err != nil {
+			return nil, 0, false, err
+		}
+		tasks = append(tasks, task)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	hasMore := len(tasks) > limit
+	if hasMore {
+		tasks = tasks[:limit]
+	}
+	nextCursor := 0
+	if hasMore && len(tasks) > 0 {
+		nextCursor = tasks[len(tasks)-1].PublicID
+	}
+	return tasks, nextCursor, hasMore, nil
+}
+
 func loadSnapshot(ctx context.Context, q querier, wid string, locked bool) (application.Snapshot, error) {
 	s := application.Snapshot{Phases: []application.PhaseProjection{}, Lanes: []application.LaneProjection{}, Tasks: []application.TaskProjection{}, BacklogItems: []application.BacklogItemProjection{}, Dependencies: []application.DependencyProjection{}, Gates: []application.GateProjection{}, Runs: []application.RunProjection{}, Repositories: []application.RepositoryProjection{}, Records: []application.TaskRecordProjection{}, Commits: []application.CommitReferenceProjection{}, GitObservations: []application.GitObservationProjection{}, EvidenceProfiles: []domain.EvidenceProfile{}, AcceptanceAssignments: []domain.TaskAcceptanceAssignment{}, AcceptanceEvidence: []domain.TaskAcceptanceEvidence{}, HumanActorIDs: map[string]bool{}, ActorIDs: map[string]bool{}}
 	lock := ""

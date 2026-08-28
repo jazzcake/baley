@@ -736,12 +736,12 @@ func (a *API) workspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.Workspace)
 }
 func (a *API) workspaceContext(w http.ResponseWriter, r *http.Request) {
-	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
+	context, err := a.Repo.WorkspaceContext(r.Context(), r.PathValue("workspaceId"))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, application.WorkspaceContext(s))
+	writeJSON(w, http.StatusOK, context)
 }
 func (a *API) graph(w http.ResponseWriter, r *http.Request) {
 	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
@@ -759,24 +759,9 @@ func (a *API) graph(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) phaseTasks(w http.ResponseWriter, r *http.Request) {
-	s, err := a.Repo.LoadSnapshot(r.Context(), r.PathValue("workspaceId"))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	phaseID := r.PathValue("phaseId")
-	found, completed := false, false
-	for _, phase := range s.Phases {
-		if phase.ID == phaseID {
-			found, completed = true, phase.State == "completed"
-			break
-		}
-	}
-	if !found || completed {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]string{"code": "not_found", "message": "active phase not found"}})
-		return
-	}
 	cursor := 0
+	var err error
 	if raw := r.URL.Query().Get("cursor"); raw != "" {
 		cursor, err = strconv.Atoi(raw)
 	}
@@ -789,7 +774,11 @@ func (a *API) phaseTasks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_limit", "message": "limit must be between 1 and 100"}})
 		return
 	}
-	tasks, nextCursor, hasMore := application.PhaseTasksPage(s, phaseID, cursor, limit)
+	tasks, nextCursor, hasMore, err := a.Repo.PhaseTasks(r.Context(), r.PathValue("workspaceId"), phaseID, cursor, limit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"phaseId": phaseID, "items": tasks, "nextCursor": nextCursor, "hasMore": hasMore})
 }
 
