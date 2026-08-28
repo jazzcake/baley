@@ -26,23 +26,23 @@ function Assert-Throws {
 New-Item -ItemType Directory -Path $resolvedTestRoot -Force | Out-Null
 try {
   $validPath = Join-Path $resolvedTestRoot "valid.env"
-  Write-BaleyMCPEnvironment -Path $validPath -ServerURL "http://127.0.0.1:8080" -AgentToken "test-token"
+  Write-BaleyMCPEnvironment -Path $validPath -ServerURL "http://127.0.0.1:8080" -CredentialStore ".tmp/baley-mcp/credentials.json"
   $valid = Read-BaleyMCPEnvironment -Path $validPath
-  if ($valid.BALEY_SERVER_URL -ne "http://127.0.0.1:8080" -or $valid.BALEY_AGENT_TOKEN -ne "test-token") {
+  if ($valid.BALEY_SERVER_URL -ne "http://127.0.0.1:8080" -or $valid.BALEY_MCP_CREDENTIAL_STORE -ne ".tmp/baley-mcp/credentials.json") {
     throw "Valid Baley MCP environment did not round-trip"
   }
 
   $unknownPath = Join-Path $resolvedTestRoot "unknown.env"
-  [IO.File]::WriteAllText($unknownPath, "BALEY_SERVER_URL=http://127.0.0.1:8080`nUNEXPECTED=value`nBALEY_AGENT_TOKEN=token`n")
+  [IO.File]::WriteAllText($unknownPath, "BALEY_SERVER_URL=http://127.0.0.1:8080`nUNEXPECTED=value`nBALEY_MCP_CREDENTIAL_STORE=.tmp/baley-mcp/credentials.json`n")
   Assert-Throws { Read-BaleyMCPEnvironment -Path $unknownPath } "unknown name"
 
   $duplicatePath = Join-Path $resolvedTestRoot "duplicate.env"
-  [IO.File]::WriteAllText($duplicatePath, "BALEY_SERVER_URL=http://127.0.0.1:8080`nBALEY_AGENT_TOKEN=one`nBALEY_AGENT_TOKEN=two`n")
+  [IO.File]::WriteAllText($duplicatePath, "BALEY_SERVER_URL=http://127.0.0.1:8080`nBALEY_MCP_CREDENTIAL_STORE=one`nBALEY_MCP_CREDENTIAL_STORE=two`n")
   Assert-Throws { Read-BaleyMCPEnvironment -Path $duplicatePath } "duplicate name"
 
   $missingPath = Join-Path $resolvedTestRoot "missing.env"
   [IO.File]::WriteAllText($missingPath, "BALEY_SERVER_URL=http://127.0.0.1:8080`n")
-  Assert-Throws { Read-BaleyMCPEnvironment -Path $missingPath } "missing token"
+  Assert-Throws { Read-BaleyMCPEnvironment -Path $missingPath } "missing credential-store path"
 } finally {
   if (Test-Path -LiteralPath $resolvedTestRoot) {
     Remove-Item -LiteralPath $resolvedTestRoot -Recurse -Force

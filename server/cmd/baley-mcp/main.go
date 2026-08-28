@@ -30,6 +30,10 @@ type client struct {
 	credentialStorePath string
 	agentActorID        string
 	connectionMu        sync.Mutex
+	// sessionTokens are deliberately process-local. Agent tokens are short-lived
+	// bearer credentials, so a restarted Desktop or CLI process must prove the
+	// keychain-held gateway registration is still valid before it gets another.
+	sessionTokens map[string]string
 }
 
 type workspaceInput struct {

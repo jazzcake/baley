@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -53,9 +54,11 @@ func TestKeychainStoreResumesGatewayWithoutGatewayToken(t *testing.T) {
 	const gatewaySecret = "registered-gateway-secret"
 	const agentToken = "resumed-agent-token"
 	keychain := &memorySecretStore{}
+	var resumes int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/mcp/gateway-sessions":
+			resumes++
 			if r.Method != http.MethodPost {
 				t.Fatalf("method=%s", r.Method)
 			}
@@ -83,11 +86,88 @@ func TestKeychainStoreResumesGatewayWithoutGatewayToken(t *testing.T) {
 	if strings.Contains(string(raw), gatewaySecret) || strings.Contains(string(raw), agentToken) || !strings.Contains(string(raw), "keyRef") {
 		t.Fatalf("credential file leaked secret or lacks key reference: %s", raw)
 	}
+	// Simulate a pre-fix keychain payload that contains a cached Agent token.
+	// A fresh process must discard it and renew through the gateway instead.
+	store, err := first.readCredentialStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Workspaces[workspaceID] = workspaceCredential{AgentToken: "persisted-agent-token", GatewaySecret: gatewaySecret}
+	payload, err := json.Marshal(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = keychain.Set(credentialKeychainService, store.KeyRef, base64.RawURLEncoding.EncodeToString(payload)); err != nil {
+		t.Fatal(err)
+	}
 
 	second := &client{base: server.URL, http: server.Client(), credentialStorePath: path, secretStore: keychain}
 	result, _, err := second.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("tokenless gateway resume failed: result=%#v err=%v", result, err)
+	}
+	if resumes != 1 {
+		t.Fatalf("fresh process resumed gateway %d times, want 1", resumes)
+	}
+	updated, err := second.readCredentialStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential := updated.Workspaces[workspaceID]; credential.AgentToken != "" {
+		t.Fatalf("Agent token survived keychain renewal: %#v", credential)
+	}
+}
+
+func TestRevokedGatewayInvalidatesCachedSessionAndRequiresReconnect(t *testing.T) {
+	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
+	const gatewaySecret = "registered-gateway-secret"
+	keychain := &memorySecretStore{}
+	var resumes, workspaceReads, connections int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/mcp/gateway-sessions":
+			resumes++
+			if resumes == 1 {
+				_, _ = w.Write([]byte(`{"agentToken":"issued-before-revoke"}`))
+				return
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":"mcp_gateway_reauthentication_required"}}`))
+		case "/v1/workspaces/" + workspaceID:
+			workspaceReads++
+			if r.Header.Get("Authorization") != "Bearer issued-before-revoke" {
+				t.Fatalf("unexpected Authorization header: %q", r.Header.Get("Authorization"))
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/v1/mcp/connections":
+			connections++
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"replacement","workspaceId":"` + workspaceID + `","status":"pending","connectionSecret":"new-connection-secret","approvalUrl":"https://viewer.example/connect"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	c := &client{base: server.URL, http: server.Client(), credentialStorePath: path, secretStore: keychain, agentActorID: "agent"}
+	if err := c.writeCredentialStore(context.Background(), &credentialStore{GatewayID: "device-1", Workspaces: map[string]workspaceCredential{workspaceID: {GatewaySecret: gatewaySecret}}}); err != nil {
+		t.Fatal(err)
+	}
+	result, _, err := c.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
+	if err != nil || result == nil || !result.IsError {
+		t.Fatalf("revoked gateway should require reconnection: result=%#v err=%v", result, err)
+	}
+	if resumes != 2 || workspaceReads != 1 || connections != 1 {
+		t.Fatalf("resume/read/connect=%d/%d/%d, want 2/1/1", resumes, workspaceReads, connections)
+	}
+	store, err := c.readCredentialStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.Workspaces[workspaceID]; exists {
+		t.Fatalf("revoked gateway survived local invalidation: %#v", store.Workspaces)
 	}
 }
 

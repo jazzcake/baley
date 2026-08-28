@@ -23,7 +23,8 @@ tokenless local stdio and OS-keychain-protected device secrets, with safe
 migration/rollback/diagnostics and immediate invalidation on logout, revoke,
 membership removal, or gateway replacement.
 
-Required proof: test a fresh process without `BALEY_MCP_GATEWAY_TOKEN`, verify
+Required proof: test a fresh process without the legacy gateway environment or
+any persisted Agent credential, verify
 the actual Codex MCP registration has no Authorization header or token env,
 run focused tests plus full Go/frontend/build verification, deploy, and smoke
 test the deployed route. Do not expose any secret. Do not weaken Task/Gate

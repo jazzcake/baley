@@ -289,8 +289,8 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsJSONSecret(raw, token) {
-		t.Fatal("Workspace token was not persisted")
+	if containsJSONSecret(raw, token) {
+		t.Fatal("Workspace token was persisted")
 	}
 	store, err := restarted.readCredentialStore(context.Background())
 	if err != nil {
@@ -337,6 +337,7 @@ func TestClientPreservesStoredCredentialForMissingWorkspaceResource(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
+	c.rememberSessionToken(workspaceID, token)
 
 	result, _, err := c.taskGet(context.Background(), nil, taskInput{WorkspaceID: workspaceID, TaskID: 999999})
 	if err != nil || result == nil || !result.IsError || connectionCreated {
@@ -346,8 +347,8 @@ func TestClientPreservesStoredCredentialForMissingWorkspaceResource(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential, ok := store.Workspaces[workspaceID]; !ok || credential.AgentToken != token {
-		t.Fatalf("valid Workspace credential was removed: %#v", store.Workspaces)
+	if _, ok := store.Workspaces[workspaceID]; ok {
+		t.Fatalf("token-only Workspace credential survived persistence: %#v", store.Workspaces)
 	}
 }
 func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t *testing.T) {
@@ -384,6 +385,7 @@ func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t 
 	}); err != nil {
 		t.Fatal(err)
 	}
+	c.rememberSessionToken(workspaceID, "stale-or-cross-workspace-token")
 
 	result, _, err := c.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
 	if err != nil || result == nil || !result.IsError || !connectionCreated {

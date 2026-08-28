@@ -17,9 +17,8 @@ if (![Uri]::IsWellFormedUriString($ServerURL, [UriKind]::Absolute) -or !$ServerU
 try {
   $env:BALEY_SERVER_URL = $ServerURL.TrimEnd("/")
   $env:BALEY_MCP_CREDENTIAL_STORE = $CredentialStore
-  # Do not read or pass BALEY_AGENT_TOKEN / BALEY_MCP_GATEWAY_TOKEN. The local
-  # binary obtains device-bound Workspace credentials from Windows Credential
-  # Manager after Owner approval.
+  # Clear inherited legacy credentials. The local binary obtains device-bound
+  # Workspace credentials from Windows Credential Manager after approval.
   Remove-Item Env:BALEY_AGENT_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:BALEY_MCP_GATEWAY_TOKEN -ErrorAction SilentlyContinue
   & go -C (Join-Path $repoRoot "server") run ./cmd/baley-mcp

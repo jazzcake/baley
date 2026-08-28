@@ -12,7 +12,7 @@ function Read-BaleyMCPEnvironment {
 
   $allowed = @{
     BALEY_SERVER_URL = $true
-    BALEY_AGENT_TOKEN = $true
+    BALEY_MCP_CREDENTIAL_STORE = $true
   }
   $values = @{}
   $lineNumber = 0
@@ -46,7 +46,7 @@ function Read-BaleyMCPEnvironment {
     $values[$name] = $value
   }
 
-  foreach ($required in @("BALEY_SERVER_URL", "BALEY_AGENT_TOKEN")) {
+  foreach ($required in @("BALEY_SERVER_URL", "BALEY_MCP_CREDENTIAL_STORE")) {
     if (!$values.ContainsKey($required)) {
       throw "Required Baley MCP environment name is missing: $required"
     }
@@ -64,10 +64,10 @@ function Write-BaleyMCPEnvironment {
     [Parameter(Mandatory)]
     [string]$ServerURL,
     [Parameter(Mandatory)]
-    [string]$AgentToken
+    [string]$CredentialStore
   )
 
-  foreach ($value in @($ServerURL, $AgentToken)) {
+  foreach ($value in @($ServerURL, $CredentialStore)) {
     if ([string]::IsNullOrWhiteSpace($value) -or $value.Contains("`r") -or $value.Contains("`n")) {
       throw "Baley MCP environment values must be non-empty single-line strings"
     }
@@ -80,7 +80,7 @@ function Write-BaleyMCPEnvironment {
   $parent = Split-Path -Parent $resolved
   New-Item -ItemType Directory -Path $parent -Force | Out-Null
   $temporary = "$resolved.$PID.tmp"
-  $content = "BALEY_SERVER_URL=$ServerURL`nBALEY_AGENT_TOKEN=$AgentToken`n"
+  $content = "BALEY_SERVER_URL=$ServerURL`nBALEY_MCP_CREDENTIAL_STORE=$CredentialStore`n"
   try {
     [IO.File]::WriteAllText($temporary, $content, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $temporary -Destination $resolved -Force
