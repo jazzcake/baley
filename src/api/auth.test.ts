@@ -3,6 +3,7 @@ import {
   attachExistingAccount,
   createWorkspace,
   disableMemberAccount,
+	  fetchOIDCProviders,
   login,
   logout,
   resetMemberPassword,
@@ -38,6 +39,13 @@ describe("credentialed account API", () => {
       loginId: "owner",
       password: "a sufficiently long password",
     });
+  });
+
+  it("discovers only server-configured OIDC providers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [{ id: "google", label: "Google" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(fetchOIDCProviders()).resolves.toEqual([{ id: "google", label: "Google" }]);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/v1/auth/oidc/providers");
   });
 
   it("binds cookie-authenticated mutations to the CSRF value", async () => {

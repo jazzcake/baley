@@ -93,3 +93,31 @@ func TestResolveApprovalOriginUsesConfiguredAllowedOrigin(t *testing.T) {
 		t.Fatal("expected an error for an approval origin outside the allowed origins")
 	}
 }
+
+func TestResolveOIDCProvidersUsesGoogleDefaultAndSecretSource(t *testing.T) {
+	t.Setenv("BALEY_OIDC_PROVIDERS", "")
+	t.Setenv("BALEY_GOOGLE_OIDC_CLIENT_ID", "google-client")
+	t.Setenv("BALEY_GOOGLE_OIDC_CLIENT_SECRET", "google-secret")
+	t.Setenv("BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE", "")
+	t.Setenv("BALEY_GOOGLE_OIDC_REDIRECT_URL", "https://baley.example/v1/auth/oidc/google/callback")
+	providers, err := resolveOIDCProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(providers) != 1 || providers[0].ID != "google" || providers[0].Issuer != "https://accounts.google.com" {
+		t.Fatalf("providers=%#v", providers)
+	}
+}
+
+func TestResolveOIDCProvidersRejectsSecretInJSONAndPostLoginOriginDrift(t *testing.T) {
+	t.Setenv("BALEY_GOOGLE_OIDC_CLIENT_ID", "")
+	t.Setenv("BALEY_GOOGLE_OIDC_CLIENT_SECRET", "")
+	t.Setenv("BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE", "")
+	t.Setenv("BALEY_OIDC_PROVIDERS", `[{"id":"internal","issuer":"https://id.example","clientId":"client","clientSecret":"secret","redirectURL":"https://baley.example/callback"}]`)
+	if _, err := resolveOIDCProviders(); err == nil {
+		t.Fatal("secret-bearing JSON was accepted")
+	}
+	if _, err := resolveOIDCPostLoginURL("https://other.example/workspaces", []string{"https://baley.example"}); err == nil {
+		t.Fatal("post-login URL outside viewer origins was accepted")
+	}
+}

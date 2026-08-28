@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -26,7 +27,7 @@ import (
 	"golang.org/x/term"
 )
 
-const expectedSchemaVersion int64 = 19
+const expectedSchemaVersion int64 = 20
 
 var (
 	buildVersion = "dev"
@@ -66,6 +67,7 @@ func main() {
 	var runtimeConfig runtimeConfig
 	var origins []string
 	var approvalOrigin string
+	var oidcPostLoginURL string
 	if os.Args[1] == "serve" {
 		runtimeConfig, err = resolveRuntimeConfig(environment, os.Getenv("BALEY_AUTH_MODE"), os.Getenv("BALEY_COOKIE_SECURE"))
 		if err != nil {
@@ -76,6 +78,10 @@ func main() {
 			log.Fatal(err)
 		}
 		approvalOrigin, err = resolveApprovalOrigin(os.Getenv("BALEY_MCP_APPROVAL_ORIGIN"), origins)
+		if err != nil {
+			log.Fatal(err)
+		}
+		oidcPostLoginURL, err = resolveOIDCPostLoginURL(os.Getenv("BALEY_OIDC_POST_LOGIN_URL"), origins)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -129,6 +135,21 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	providers, err := resolveOIDCProviders()
+	if err != nil {
+		log.Fatal(err)
+	}
+	var oidcService *authn.OIDCService
+	if len(providers) > 0 {
+		stateSecret, stateConfigured, stateErr := runtimeconfig.Load("BALEY_OIDC_STATE_SECRET")
+		if stateErr != nil || !stateConfigured {
+			log.Fatal("BALEY_OIDC_STATE_SECRET is required when OIDC is configured")
+		}
+		oidcService, err = authn.NewOIDCService(repo, authService, providers, stateSecret)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	addr := env("BALEY_HTTP_ADDR", "127.0.0.1:8080")
 	host, _, err := net.SplitHostPort(addr)
 	isLoopback := host == "127.0.0.1" || host == "localhost" || host == "::1"
@@ -155,7 +176,7 @@ func main() {
 		}
 	}()
 	api := &httpapi.API{
-		Service: service, Repo: repo, AllowedOrigins: origins, ApprovalOrigin: approvalOrigin, Auth: authService,
+		Service: service, Repo: repo, AllowedOrigins: origins, ApprovalOrigin: approvalOrigin, Auth: authService, OIDC: oidcService, OIDCPostLoginURL: oidcPostLoginURL,
 		AuthMode: runtimeConfig.AuthMode, CookieSecure: runtimeConfig.CookieSecure,
 		Build: httpapi.BuildInfo{Version: buildVersion, Commit: buildCommit, BuiltAt: buildTime, SchemaVersion: expectedSchemaVersion},
 		ReadyCheck: func(readyCtx context.Context) (int64, error) {
@@ -245,6 +266,74 @@ func resolveRuntimeConfig(environment, requestedAuthMode, requestedCookieSecure 
 		return runtimeConfig{}, errors.New("BALEY_COOKIE_SECURE=false is forbidden outside development and test environments")
 	}
 	return runtimeConfig{AuthMode: authMode, CookieSecure: cookieSecure}, nil
+}
+
+type oidcProviderEnvironment struct {
+	ID, Label, Issuer, ClientID, ClientSecretEnv, RedirectURL string
+	Scopes                                                    []string
+}
+
+// Google is the default provider when configured. BALEY_OIDC_PROVIDERS adds
+// standards-compliant internal providers (Keycloak, Entra ID, Okta, air-gapped
+// OIDC) without storing their client secrets in configuration JSON.
+func resolveOIDCProviders() ([]authn.OIDCProviderConfig, error) {
+	providers := []authn.OIDCProviderConfig{}
+	googleID := strings.TrimSpace(os.Getenv("BALEY_GOOGLE_OIDC_CLIENT_ID"))
+	googleSecret, googleConfigured, err := runtimeconfig.Load("BALEY_GOOGLE_OIDC_CLIENT_SECRET")
+	if err != nil {
+		return nil, err
+	}
+	googleRedirect := strings.TrimSpace(os.Getenv("BALEY_GOOGLE_OIDC_REDIRECT_URL"))
+	if googleID != "" || googleConfigured || googleRedirect != "" {
+		if googleID == "" || !googleConfigured || googleRedirect == "" {
+			return nil, errors.New("Google OIDC requires BALEY_GOOGLE_OIDC_CLIENT_ID, BALEY_GOOGLE_OIDC_CLIENT_SECRET(_FILE), and BALEY_GOOGLE_OIDC_REDIRECT_URL")
+		}
+		providers = append(providers, authn.OIDCProviderConfig{ID: "google", Label: "Google", Issuer: "https://accounts.google.com", ClientID: googleID, ClientSecret: googleSecret, RedirectURL: googleRedirect})
+	}
+	raw := strings.TrimSpace(os.Getenv("BALEY_OIDC_PROVIDERS"))
+	if raw == "" {
+		return providers, nil
+	}
+	var configured []oidcProviderEnvironment
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&configured); err != nil {
+		return nil, fmt.Errorf("BALEY_OIDC_PROVIDERS must be JSON: %w", err)
+	}
+	if decoder.More() {
+		return nil, errors.New("BALEY_OIDC_PROVIDERS must contain exactly one JSON value")
+	}
+	for _, value := range configured {
+		secretEnv := strings.TrimSpace(value.ClientSecretEnv)
+		if !strings.HasPrefix(secretEnv, "BALEY_OIDC_") || !strings.HasSuffix(secretEnv, "_CLIENT_SECRET") {
+			return nil, fmt.Errorf("OIDC provider %q must use a BALEY_OIDC_*_CLIENT_SECRET variable", value.ID)
+		}
+		secret, secretConfigured, secretErr := runtimeconfig.Load(secretEnv)
+		if secretErr != nil || !secretConfigured {
+			return nil, fmt.Errorf("OIDC provider %q client secret is not configured", value.ID)
+		}
+		providers = append(providers, authn.OIDCProviderConfig{ID: value.ID, Label: value.Label, Issuer: value.Issuer, ClientID: value.ClientID, ClientSecret: secret, RedirectURL: value.RedirectURL, Scopes: value.Scopes})
+	}
+	return providers, nil
+}
+
+func resolveOIDCPostLoginURL(raw string, origins []string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		if len(origins) == 0 {
+			return "", nil
+		}
+		return strings.TrimRight(origins[0], "/") + "/workspaces", nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("BALEY_OIDC_POST_LOGIN_URL must be an absolute URL without query or fragment")
+	}
+	for _, origin := range origins {
+		if strings.TrimRight(origin, "/") == parsed.Scheme+"://"+parsed.Host {
+			return parsed.String(), nil
+		}
+	}
+	return "", errors.New("BALEY_OIDC_POST_LOGIN_URL must use a configured viewer origin")
 }
 
 func isDevelopmentEnvironment(environment string) bool {

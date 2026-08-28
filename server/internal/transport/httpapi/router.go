@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -23,15 +24,17 @@ import (
 )
 
 type API struct {
-	Service        *application.Service
-	Repo           *postgres.Repository
-	AllowedOrigins []string
-	ApprovalOrigin string
-	Auth           *authn.Service
-	AuthMode       string
-	CookieSecure   bool
-	Build          BuildInfo
-	ReadyCheck     func(context.Context) (int64, error)
+	Service          *application.Service
+	Repo             *postgres.Repository
+	AllowedOrigins   []string
+	ApprovalOrigin   string
+	Auth             *authn.Service
+	OIDC             *authn.OIDCService
+	OIDCPostLoginURL string
+	AuthMode         string
+	CookieSecure     bool
+	Build            BuildInfo
+	ReadyCheck       func(context.Context) (int64, error)
 }
 
 type BuildInfo struct {
@@ -47,6 +50,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", a.readiness)
 	mux.HandleFunc("GET /versionz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, a.Build) })
 	mux.HandleFunc("POST /v1/auth/login", a.login)
+	mux.HandleFunc("GET /v1/auth/oidc/providers", a.oidcProviders)
+	mux.HandleFunc("GET /v1/auth/oidc/{providerId}/start", a.oidcStart)
+	mux.HandleFunc("POST /v1/auth/oidc/{providerId}/link", a.oidcLink)
+	mux.HandleFunc("GET /v1/auth/oidc/{providerId}/callback", a.oidcCallback)
 	mux.HandleFunc("GET /v1/auth/principal", a.authPrincipal)
 	mux.HandleFunc("GET /v1/auth/session", a.authSession)
 	mux.HandleFunc("POST /v1/auth/logout", a.logout)
@@ -86,6 +93,105 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/commands/preview", a.preview)
 	mux.HandleFunc("POST /v1/commands/execute", a.execute)
 	return a.observability(a.cors(a.authentication(mux)))
+}
+
+func (a *API) oidcProviders(w http.ResponseWriter, _ *http.Request) {
+	if a.AuthMode != "enforced" || a.OIDC == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"items": []any{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": a.OIDC.Providers()})
+}
+
+func (a *API) oidcStart(w http.ResponseWriter, r *http.Request) {
+	if a.AuthMode != "enforced" || a.OIDC == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]string{"code": "not_found", "message": "OIDC is not configured"}})
+		return
+	}
+	binding, _, err := oidcCookieSecret()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"code": "oidc_start_failed", "message": "could not start OIDC login"}})
+		return
+	}
+	url, err := a.OIDC.Start(r.Context(), r.PathValue("providerId"), binding, "login", "")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "oidc_start_failed", "message": "OIDC provider is unavailable"}})
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: a.oidcBindingCookieName(), Value: binding, Path: "/", HttpOnly: true, Secure: a.CookieSecure, SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	http.Redirect(w, r, url, http.StatusFound)
+}
+
+func (a *API) oidcLink(w http.ResponseWriter, r *http.Request) {
+	state, ok := authState(r)
+	if !ok || state.Principal.AccountID == "" || a.OIDC == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "unauthenticated", "message": "human session required"}})
+		return
+	}
+	binding, _, err := oidcCookieSecret()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	url, err := a.OIDC.Start(r.Context(), r.PathValue("providerId"), binding, "link", state.Principal.AccountID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "oidc_link_failed", "message": "OIDC provider is unavailable"}})
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: a.oidcBindingCookieName(), Value: binding, Path: "/", HttpOnly: true, Secure: a.CookieSecure, SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	writeJSON(w, http.StatusOK, map[string]string{"authorizationUrl": url})
+}
+
+func (a *API) oidcCallback(w http.ResponseWriter, r *http.Request) {
+	postLogin := a.oidcPostLoginURL(false)
+	if a.OIDC == nil || r.URL.Query().Get("error") != "" {
+		http.Redirect(w, r, a.oidcPostLoginURL(true), http.StatusSeeOther)
+		return
+	}
+	bindingCookie, err := r.Cookie(a.oidcBindingCookieName())
+	if err != nil {
+		http.Redirect(w, r, a.oidcPostLoginURL(true), http.StatusSeeOther)
+		return
+	}
+	result, _, err := a.OIDC.Complete(r.Context(), r.PathValue("providerId"), r.URL.Query().Get("state"), bindingCookie.Value, r.URL.Query().Get("code"))
+	http.SetCookie(w, &http.Cookie{Name: a.oidcBindingCookieName(), Path: "/", HttpOnly: true, Secure: a.CookieSecure, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	if err != nil {
+		log.Printf("OIDC callback rejected for provider %q: %v", r.PathValue("providerId"), err)
+		http.Redirect(w, r, a.oidcPostLoginURL(true), http.StatusSeeOther)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: a.sessionCookieName(), Value: result.SessionToken, Path: "/", HttpOnly: true, Secure: a.CookieSecure, SameSite: http.SameSiteLaxMode, Expires: result.ExpiresAt})
+	http.SetCookie(w, &http.Cookie{Name: a.csrfCookieName(), Value: result.CSRFToken, Path: "/", HttpOnly: false, Secure: a.CookieSecure, SameSite: http.SameSiteLaxMode, Expires: result.ExpiresAt})
+	http.Redirect(w, r, postLogin, http.StatusSeeOther)
+}
+
+func (a *API) oidcPostLoginURL(failed bool) string {
+	base := strings.TrimRight(a.OIDCPostLoginURL, "/")
+	if base == "" && len(a.AllowedOrigins) > 0 {
+		base = strings.TrimRight(a.AllowedOrigins[0], "/") + "/workspaces"
+	}
+	if base == "" {
+		base = "/workspaces"
+	}
+	if failed {
+		return base + "?oidc=failed"
+	}
+	return base
+}
+
+func (a *API) oidcBindingCookieName() string {
+	if a.CookieSecure {
+		return "__Host-baley_oidc_binding"
+	}
+	return "baley_oidc_binding"
+}
+func oidcCookieSecret() (string, []byte, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", nil, err
+	}
+	hash := sha256.Sum256(raw)
+	return base64.RawURLEncoding.EncodeToString(raw), hash[:], nil
 }
 
 func (a *API) readiness(w http.ResponseWriter, r *http.Request) {
@@ -526,7 +632,7 @@ func (a *API) authentication(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/versionz" || r.URL.Path == "/v1/auth/login" || strings.HasPrefix(r.URL.Path, "/v1/mcp/connections") {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/versionz" || r.URL.Path == "/v1/auth/login" || r.URL.Path == "/v1/auth/oidc/providers" || strings.HasSuffix(r.URL.Path, "/start") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasSuffix(r.URL.Path, "/callback") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasPrefix(r.URL.Path, "/v1/mcp/connections") {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -161,6 +161,16 @@ func (s *Service) Login(ctx context.Context, loginID, password, remoteAddress st
 			return LoginResult{}, err
 		}
 	}
+	return s.CreateSessionForAccount(ctx, account)
+}
+
+// CreateSessionForAccount issues the same bounded, CSRF-protected local
+// session for a password or OIDC-authenticated account. Authentication method
+// selection therefore cannot broaden human-only authorization capabilities.
+func (s *Service) CreateSessionForAccount(ctx context.Context, account AccountCredential) (LoginResult, error) {
+	if account.Status != "active" || account.AccountID == "" || account.ActorID == "" {
+		return LoginResult{}, ErrInvalidCredentials
+	}
 	sessionToken, sessionHash, err := randomSecret()
 	if err != nil {
 		return LoginResult{}, err

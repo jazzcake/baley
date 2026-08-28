@@ -2,19 +2,22 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, LayoutGrid, LogOut, Plus, Settings, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
-  attachExistingAccount,
+	attachExistingAccount,
+	beginOIDCLink,
   approveMCPConnection,
   createWorkspace,
   createWorkspaceMember,
   disableMemberAccount,
+	fetchOIDCProviders,
   fetchWorkspaceMembers,
   fetchMCPConnection,
   removeWorkspaceMember,
   resetMemberPassword,
   transferWorkspaceOwnership,
-  updateWorkspaceMember,
+	updateWorkspaceMember,
+	oidcLoginURL,
 } from "../api/auth";
-import type { MCPConnection } from "../api/auth";
+import type { MCPConnection, OIDCProvider } from "../api/auth";
 import { APIError } from "../api/http";
 import { traceViewer } from "../debug/viewer-trace";
 import type {
@@ -143,6 +146,20 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
   const passwordRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
+	const [oidcProviders, setOIDCProviders] = useState<OIDCProvider[]>([]);
+
+	useEffect(() => {
+		const controller = new AbortController();
+		void fetchOIDCProviders().then((items) => {
+			if (!controller.signal.aborted) setOIDCProviders(items);
+		}).catch(() => undefined);
+		return () => controller.abort();
+	}, []);
+
+	const startOIDC = (provider: OIDCProvider) => {
+		traceViewer("oidc-login:event", { providerId: provider.id, authState: "anonymous", calculatedTarget: "authorization-redirect" });
+		window.location.assign(oidcLoginURL(provider.id));
+	};
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -189,6 +206,11 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           {submitting ? "확인 중…" : "로그인"}
         </button>
       </form>
+		{oidcProviders.length > 0 && <div className="oidc-login-options" aria-label="OIDC login options">
+			{oidcProviders.map((provider) => <button key={provider.id} type="button" className="secondary-button" onClick={() => startOIDC(provider)}>
+				{provider.id === "google" ? "Google로 계속" : `${provider.label}로 계속`}
+			</button>)}
+		</div>}
     </section>
   </main>;
 }
@@ -320,11 +342,18 @@ export function WorkspaceAccessControls({
   const [memberAdminOpen, setMemberAdminOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountMenuError, setAccountMenuError] = useState<string>();
-  const [logoutBusy, setLogoutBusy] = useState(false);
+	const [logoutBusy, setLogoutBusy] = useState(false);
+	const [oidcProviders, setOIDCProviders] = useState<OIDCProvider[]>([]);
+	const [oidcLinkBusy, setOIDCLinkBusy] = useState(false);
   const accountMenuRootRef = useRef<HTMLDivElement>(null);
   const accountMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
-  const canAdmin = membership.capabilities.includes("workspace:admin") || membership.role === "owner";
+	const canAdmin = membership.capabilities.includes("workspace:admin") || membership.role === "owner";
+
+	useEffect(() => {
+		if (!accountMenuOpen) return;
+		void fetchOIDCProviders().then(setOIDCProviders).catch(() => setOIDCProviders([]));
+	}, [accountMenuOpen]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -419,6 +448,15 @@ export function WorkspaceAccessControls({
           closeAccountMenu();
           setMemberAdminOpen(true);
         }}><Settings size={16} />멤버 관리</button>}
+        {oidcProviders.map((provider) => <button key={provider.id} type="button" role="menuitem" tabIndex={-1} disabled={oidcLinkBusy} onClick={() => {
+          setOIDCLinkBusy(true);
+          setAccountMenuError(undefined);
+          traceViewer("oidc-link:event", { providerId: provider.id, accountId: account.id, workspaceId: membership.id, calculatedTarget: "authorization-redirect" });
+          void beginOIDCLink(provider.id, csrfToken).then(({ authorizationUrl }) => window.location.assign(authorizationUrl)).catch((reason: unknown) => {
+            setOIDCLinkBusy(false);
+            setAccountMenuError(reason instanceof Error ? reason.message : "Identity provider 연결을 시작하지 못했습니다.");
+          });
+        }}>{provider.id === "google" ? "Google 계정 연결" : `${provider.label} 연결`}</button>)}
         <div className="account-menu-separator" role="separator" />
         <button type="button" role="menuitem" tabIndex={-1} className="account-menu-logout" aria-disabled={logoutBusy} onClick={() => {
           if (logoutBusy) return;

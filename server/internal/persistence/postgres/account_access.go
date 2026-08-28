@@ -151,6 +151,132 @@ func (r *Repository) AccountCredentialByID(ctx context.Context, accountID string
 	return value, err
 }
 
+func (r *Repository) CreateOIDCFlow(ctx context.Context, value authn.OIDCFlow) error {
+	_, err := r.Pool.Exec(ctx, `INSERT INTO oidc_authorization_flows(
+		state_hash,provider_id,nonce_hash,binding_hash,verifier_ciphertext,intent,link_account_id,expires_at)
+		VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,'')::uuid,$8)`,
+		value.StateHash, value.ProviderID, value.NonceHash, value.BindingHash, value.VerifierCiphertext, value.Intent, value.LinkAccountID, value.ExpiresAt)
+	return err
+}
+
+func (r *Repository) ConsumeOIDCFlow(ctx context.Context, stateHash []byte, now time.Time) (authn.OIDCFlow, error) {
+	tx, err := r.Pool.Begin(ctx)
+	if err != nil {
+		return authn.OIDCFlow{}, err
+	}
+	defer tx.Rollback(ctx)
+	var value authn.OIDCFlow
+	var linkAccountID *string
+	err = tx.QueryRow(ctx, `SELECT state_hash,provider_id,nonce_hash,binding_hash,verifier_ciphertext,intent,link_account_id::text,expires_at
+		FROM oidc_authorization_flows WHERE state_hash=$1 AND consumed_at IS NULL AND expires_at>$2 FOR UPDATE`, stateHash, now).
+		Scan(&value.StateHash, &value.ProviderID, &value.NonceHash, &value.BindingHash, &value.VerifierCiphertext, &value.Intent, &linkAccountID, &value.ExpiresAt)
+	if err != nil {
+		return value, err
+	}
+	if linkAccountID != nil {
+		value.LinkAccountID = *linkAccountID
+	}
+	if _, err = tx.Exec(ctx, "UPDATE oidc_authorization_flows SET consumed_at=$1 WHERE state_hash=$2", now, stateHash); err != nil {
+		return value, err
+	}
+	if err = insertSecurityEvent(ctx, tx, "", "", "", "authentication.oidc_callback_consumed", "oidc_flow", base64.RawURLEncoding.EncodeToString(stateHash), map[string]any{"providerId": value.ProviderID, "intent": value.Intent}); err != nil {
+		return value, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return value, err
+	}
+	return value, nil
+}
+
+func (r *Repository) ExternalIdentity(ctx context.Context, issuer, subject string, now time.Time) (authn.ExternalIdentity, error) {
+	var value authn.ExternalIdentity
+	err := r.Pool.QueryRow(ctx, `UPDATE account_external_identities identity SET last_authenticated_at=$3
+		FROM accounts account WHERE identity.account_id=account.id AND identity.issuer=$1 AND identity.subject=$2
+		RETURNING account.id::text,account.actor_id,account.login_id,account.display_name,account.status`, issuer, subject, now).
+		Scan(&value.AccountID, &value.ActorID, &value.LoginID, &value.DisplayName, &value.Status)
+	return value, err
+}
+
+func (r *Repository) CreateExternalIdentityAccount(ctx context.Context, providerID, issuer, subject, displayName string, now time.Time) (authn.ExternalIdentity, error) {
+	accountID, err := randomUUIDString()
+	if err != nil {
+		return authn.ExternalIdentity{}, err
+	}
+	actorID, err := randomUUIDString()
+	if err != nil {
+		return authn.ExternalIdentity{}, err
+	}
+	loginID := "oidc:" + accountID
+	tx, err := r.Pool.Begin(ctx)
+	if err != nil {
+		return authn.ExternalIdentity{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, "INSERT INTO actors(id,display_name,actor_type) VALUES($1,$2,'human')", actorID, displayName); err == nil {
+		_, err = tx.Exec(ctx, `INSERT INTO accounts(id,actor_id,login_id,normalized_login_id,display_name)
+			VALUES($1,$2,$3,$3,$4)`, accountID, actorID, loginID, displayName)
+	}
+	if err == nil {
+		_, err = tx.Exec(ctx, `INSERT INTO account_external_identities(id,account_id,provider_id,issuer,subject,created_at,last_authenticated_at)
+		VALUES($1,$2,$3,$4,$5,$6,$6)`, newID(), accountID, providerID, issuer, subject, now)
+	}
+	if err == nil {
+		err = insertSecurityEvent(ctx, tx, "", accountID, actorID, "authentication.oidc_account_created", "external_identity", externalIdentityEntityID(issuer, subject), map[string]any{"providerId": providerID})
+	}
+	if err != nil {
+		return authn.ExternalIdentity{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return authn.ExternalIdentity{}, err
+	}
+	return authn.ExternalIdentity{AccountID: accountID, ActorID: actorID, LoginID: loginID, DisplayName: displayName, Status: "active"}, nil
+}
+
+func (r *Repository) LinkExternalIdentity(ctx context.Context, accountID, providerID, issuer, subject, displayName string, now time.Time) (authn.ExternalIdentity, error) {
+	tx, err := r.Pool.Begin(ctx)
+	if err != nil {
+		return authn.ExternalIdentity{}, err
+	}
+	defer tx.Rollback(ctx)
+	var value authn.ExternalIdentity
+	err = tx.QueryRow(ctx, `SELECT id::text,actor_id,login_id,display_name,status FROM accounts WHERE id=$1 FOR UPDATE`, accountID).
+		Scan(&value.AccountID, &value.ActorID, &value.LoginID, &value.DisplayName, &value.Status)
+	if err != nil || value.Status != "active" {
+		if err == nil {
+			err = errors.New("OIDC identity cannot be linked to a disabled account")
+		}
+		return authn.ExternalIdentity{}, err
+	}
+	var existing string
+	err = tx.QueryRow(ctx, "SELECT account_id::text FROM account_external_identities WHERE issuer=$1 AND subject=$2 FOR UPDATE", issuer, subject).Scan(&existing)
+	if err == nil && existing != accountID {
+		return authn.ExternalIdentity{}, errors.New("OIDC identity is linked to another account")
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return authn.ExternalIdentity{}, err
+	}
+	if existing == "" {
+		if _, err = tx.Exec(ctx, `INSERT INTO account_external_identities(id,account_id,provider_id,issuer,subject,created_at,last_authenticated_at)
+			VALUES($1,$2,$3,$4,$5,$6,$6)`, newID(), accountID, providerID, issuer, subject, now); err != nil {
+			return authn.ExternalIdentity{}, err
+		}
+	} else if _, err = tx.Exec(ctx, "UPDATE account_external_identities SET last_authenticated_at=$1 WHERE issuer=$2 AND subject=$3", now, issuer, subject); err != nil {
+		return authn.ExternalIdentity{}, err
+	}
+	if err = insertSecurityEvent(ctx, tx, "", accountID, value.ActorID, "authentication.oidc_identity_linked", "external_identity", externalIdentityEntityID(issuer, subject), map[string]any{"providerId": providerID}); err != nil {
+		return authn.ExternalIdentity{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return authn.ExternalIdentity{}, err
+	}
+	return value, nil
+}
+
+func externalIdentityEntityID(issuer, subject string) string {
+	digest := sha256.Sum256([]byte(issuer + "\x00" + subject))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
 func (r *Repository) LoginRateLimited(ctx context.Context, key []byte, now time.Time) (bool, error) {
 	var blocked *time.Time
 	err := r.Pool.QueryRow(ctx, "SELECT blocked_until FROM auth_login_limits WHERE key_hash=$1", key).Scan(&blocked)

@@ -40,6 +40,7 @@ export type MCPConnection = {
   status: "pending" | "approved";
   expiresAt: string;
 };
+export type OIDCProvider = { id: string; label: string };
 
 export function fetchSession(signal?: AbortSignal): Promise<AuthSession> {
   return requestJSON<SessionDTO>("/v1/auth/session", { signal });
@@ -50,6 +51,24 @@ export function login(loginId: string, password: string): Promise<AuthSession> {
     method: "POST",
     body: JSON.stringify({ loginId, password }),
   });
+}
+
+export async function fetchOIDCProviders(): Promise<OIDCProvider[]> {
+  const result = await requestJSON<{ items: OIDCProvider[] }>("/v1/auth/oidc/providers");
+  return result.items;
+}
+
+export function oidcLoginURL(providerId: string): string {
+  const base = (import.meta.env.VITE_BALEY_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
+  return `${base}/v1/auth/oidc/${encodeURIComponent(providerId)}/start`;
+}
+
+export function beginOIDCLink(providerId: string, csrfToken: string): Promise<{ authorizationUrl: string }> {
+  return requestJSON<{ authorizationUrl: string }>(
+    `/v1/auth/oidc/${encodeURIComponent(providerId)}/link`,
+    { method: "POST", body: "{}" },
+    csrfToken,
+  );
 }
 
 export function logout(csrfToken: string): Promise<void> {
