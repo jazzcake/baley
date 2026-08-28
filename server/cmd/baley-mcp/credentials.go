@@ -260,14 +260,14 @@ func (c *client) connectionRequest(req *http.Request, expected int, target any) 
 
 func connectionRequired(workspaceID, approvalURL string) *mcp.CallToolResult {
 	structured := map[string]any{
-		"code":        "workspace_connection_required",
+		"code":        "workspace_login_required",
 		"workspaceId": workspaceID,
 		"status":      "pending",
 		"approvalUrl": approvalURL,
-		"message":     "Open the approval URL as the Workspace Owner, approve Operator access, then retry this same request.",
+		"message":     "Open the connection URL while signed in to Baley. The local gateway will be linked automatically, then retry this request.",
 	}
 	return &mcp.CallToolResult{
-		Content:           []mcp.Content{&mcp.TextContent{Text: "Workspace Owner approval is required once. Open " + approvalURL + " and then retry the same request."}},
+		Content:           []mcp.Content{&mcp.TextContent{Text: "Sign in to Baley to link this local gateway automatically: " + approvalURL + ". Then retry the same request."}},
 		StructuredContent: structured,
 		IsError:           true,
 	}

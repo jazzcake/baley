@@ -783,7 +783,7 @@ func serveHTTP(c *client) {
 	}
 	// Workspace credentials are scoped to this local gateway identity and the
 	// target Workspace, not to an ephemeral MCP transport session. A new Codex
-	// chat or the HTTP session timeout must not require a new Owner approval.
+	// chat or the HTTP session timeout must not require a new gateway login.
 	streamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServer(c) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: 10 * time.Minute})
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", c.requireGatewayBearer(streamable))
@@ -861,7 +861,7 @@ func (c *client) call(ctx context.Context, method, path string, payload any) (*m
 		if res.StatusCode == http.StatusNotFound {
 			// A 404 is also the normal result for a missing Task, Record, or other
 			// Workspace resource. Do not turn those ordinary reads into another
-			// Owner approval. Validate the stored credential against the Workspace
+			// gateway login. Validate the stored credential against the Workspace
 			// root before treating a concealed Workspace read as a revoked token.
 			credentialRejected = !c.workspaceCredentialValid(ctx, workspaceID, token)
 		}

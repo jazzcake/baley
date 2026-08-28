@@ -410,6 +410,28 @@ func (a *API) requireOwner(r *http.Request) (authContext, bool) {
 	return state, err == nil && membership != nil && membership.Active && membership.Role == authz.RoleOwner
 }
 
+// requireMCPGatewayMember keeps device enrollment within the normal Operator
+// boundary. The signed-in member is bound to the gateway; no separate Owner
+// approval action is required, and the resulting Agent credential still has
+// only the ordinary Operator capabilities.
+func (a *API) requireMCPGatewayMember(r *http.Request) (authContext, bool) {
+	state, ok := authState(r)
+	if !ok || state.Principal.AccountID == "" {
+		return authContext{}, false
+	}
+	workspaceID := r.PathValue("workspaceId")
+	membership, err := a.Repo.Membership(r.Context(), workspaceID, state.Principal.ActorID)
+	if err != nil {
+		return authContext{}, false
+	}
+	decision := authz.Authorize(authz.AuthorizationInput{
+		Subject: state.Principal.Subject, Membership: membership,
+		WorkspaceID: workspaceID, EntityWorkspaceID: workspaceID,
+		Capability: authz.WorkspaceOperate,
+	})
+	return state, decision.Allowed
+}
+
 func (a *API) createMember(w http.ResponseWriter, r *http.Request) {
 	state, ok := a.requireOwner(r)
 	if !ok {

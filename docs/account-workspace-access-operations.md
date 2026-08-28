@@ -113,12 +113,13 @@ args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", 'D:\Project_AI\bale
 
 The human logs in, creates or selects a Workspace, and sends its Viewer URL to the
 project LLM. The LLM extracts the Workspace UUID and makes its first typed MCP
-read. For an unknown Workspace, Baley returns a short-lived approval URL. The
-logged-in Workspace Owner opens it and approves one Operator connection. Retrying
-the same MCP call completes the connection and stores the Workspace-scoped
-credential in the OS credential manager; the local file keeps only a key
-reference. The store is read at call time, so new Workspace connections do not
-require a new thread or schema reload.
+read. For a new local gateway, Baley returns a short-lived connection URL. A
+signed-in Operator opens that URL and Baley binds the gateway automatically—there
+is no approval button, token copy, or Owner-only hand-off. Retrying the same MCP
+call completes the connection and stores the Workspace-scoped credential in the
+OS credential manager; the local file keeps only a key reference. The store is
+read at call time, so new Workspace connections do not require a new thread or
+schema reload.
 
 The granted identity has only the Operator capability catalog. Human-only Task
 confirmation, Gate passage, and policy approval remain unavailable to it. Raw

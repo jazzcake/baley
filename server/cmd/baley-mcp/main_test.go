@@ -271,8 +271,8 @@ func TestClientConnectsWorkspaceOnceAndPersistsScopedCredential(t *testing.T) {
 		t.Fatalf("expected one-time connection request: result=%#v err=%v", result, err)
 	}
 	structured, ok := result.StructuredContent.(map[string]any)
-	if !ok || structured["code"] != "workspace_connection_required" || structured["approvalUrl"] == "" {
-		t.Fatalf("missing actionable approval result: %#v", result.StructuredContent)
+	if !ok || structured["code"] != "workspace_login_required" || structured["approvalUrl"] == "" {
+		t.Fatalf("missing actionable login result: %#v", result.StructuredContent)
 	}
 
 	// A new MCP process must resume the approval request from the local
@@ -390,8 +390,8 @@ func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t 
 		t.Fatalf("expected replacement Owner connection: result=%#v err=%v", result, err)
 	}
 	structured, ok := result.StructuredContent.(map[string]any)
-	if !ok || structured["code"] != "workspace_connection_required" {
-		t.Fatalf("404 did not become an Owner connection request: %#v", result.StructuredContent)
+	if !ok || structured["code"] != "workspace_login_required" {
+		t.Fatalf("404 did not become a login connection request: %#v", result.StructuredContent)
 	}
 	store, err := c.readCredentialStore(context.Background())
 	if err != nil {

@@ -42,6 +42,7 @@ export function MCPConnectionApproval({
   const [busy, setBusy] = useState(false);
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState<string>();
+  const activationStarted = useRef(false);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -66,6 +67,10 @@ export function MCPConnectionApproval({
           connectionId,
           dialogPresent: Boolean(document.querySelector("[data-mcp-connection-id]")),
         }));
+        if (next.status === "pending" && !activationStarted.current) {
+          activationStarted.current = true;
+          void approve(next.status);
+        }
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "연결 요청을 불러올 수 없습니다.");
@@ -74,15 +79,15 @@ export function MCPConnectionApproval({
     return () => controller.abort();
   }, [workspace.id, connectionId]);
 
-  const approve = async () => {
+  const approve = async (currentStatus = connection?.status) => {
     setBusy(true);
     setError(undefined);
     traceViewer("mcp-connect:approve", {
-      event: "click",
+      event: "authenticated-page-load",
       targetWorkspaceId: workspace.id,
       connectionId,
       calculatedTargetState: "approved",
-      currentState: connection?.status,
+      currentState: currentStatus,
     });
     try {
       await approveMCPConnection(workspace.id, connectionId, csrfToken);
@@ -107,7 +112,7 @@ export function MCPConnectionApproval({
         <p><strong>{workspace.name}</strong>에 Codex를 Operator로 연결합니다.</p>
         <p className="mcp-connect-scope">Task와 Backlog를 실행할 수 있지만, Task 확인이나 Gate 통과 같은 사람 전용 승인은 할 수 없습니다.</p>
         <dl><div><dt>권한</dt><dd>Operator</dd></div><div><dt>Agent</dt><dd><code>{connection.agentActorId}</code></dd></div></dl>
-        <button className="primary-button" type="button" disabled={busy} onClick={() => void approve()}>Operator 연결 승인</button>
+        <p role="status">{busy ? "Connecting local gateway…" : "Checking gateway connection…"}</p>
       </>}
       {approved && <div className="mcp-connect-success" role="status">
         <Check size={22} /><div><strong>연결되었습니다.</strong><p>LLM 세션으로 돌아가 같은 요청을 다시 실행하면 됩니다.</p></div>

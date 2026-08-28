@@ -11,8 +11,8 @@ import (
 	"github.com/jazzcake/baley/server/internal/persistence/postgres"
 )
 
-// Owner approval often involves crossing from an Agent surface to a signed-in
-// browser. Keep the one-time request long enough for that hand-off.
+// Gateway enrollment crosses from an Agent surface to a signed-in browser.
+// Keep the one-time request long enough for that authentication hand-off.
 const mcpConnectionTTL = 30 * time.Minute
 
 func connectionRandomID() (string, error) {
@@ -112,7 +112,7 @@ func (a *API) resumeMCPGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	issued, err := a.Repo.ResumeMCPGateway(r.Context(), input.WorkspaceID, input.GatewayID, input.GatewaySecret, time.Now().UTC())
 	if errors.Is(err, postgres.ErrMCPGatewayNotFound) || errors.Is(err, postgres.ErrMCPGatewaySecret) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "mcp_gateway_reauthentication_required", "message": "Gateway registration is unavailable; reconnect with Workspace Owner approval"}})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "mcp_gateway_reauthentication_required", "message": "Gateway registration is unavailable; reconnect while signed in to Baley"}})
 		return
 	}
 	if err != nil {
@@ -151,8 +151,8 @@ func (a *API) revokeMCPGateway(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) getMCPConnection(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.requireOwner(r); !ok {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Owner capability required"}})
+	if _, ok := a.requireMCPGatewayMember(r); !ok {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Operator capability required"}})
 		return
 	}
 	view, err := a.Repo.MCPConnection(r.Context(), r.PathValue("connectionId"), time.Now().UTC())
@@ -170,9 +170,9 @@ func (a *API) rejectMCPConnection(w http.ResponseWriter, r *http.Request) {
 	a.decideMCPConnection(w, r, false)
 }
 func (a *API) decideMCPConnection(w http.ResponseWriter, r *http.Request, approve bool) {
-	state, ok := a.requireOwner(r)
+	state, ok := a.requireMCPGatewayMember(r)
 	if !ok {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Owner capability required"}})
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Operator capability required"}})
 		return
 	}
 	var err error

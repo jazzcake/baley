@@ -56,7 +56,7 @@ codex mcp add baley \
 ```
 
 Restart Codex Desktop fully after changing its registration. The first request
-for an unregistered Workspace returns the normal Owner approval URL; retry the
+for an unregistered Workspace returns the normal signed-in gateway link; retry the
 same request after approval.
 
 ## Migration, rollback, and diagnostics
@@ -75,7 +75,7 @@ secret to disk. A 15-minute encrypted rollback copy is retained solely for a
 failed local migration; use `baley-mcp rollback-legacy` with the existing local
 value during that window. The rollback restores only the former local file and
 does not restore a revoked gateway or removed membership: the server still
-rejects its next renewal. After the window, enroll again through Owner approval
+rejects its next renewal. After the window, enroll again while signed in to Baley
 instead of retaining legacy material.
 
 Earlier plaintext stores are migrated directly into the OS keychain but are

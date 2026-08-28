@@ -22,8 +22,8 @@ baley-manage-work와 baley-adopt-project Skill을 사용하고 각 SKILL.md를 �
 Day Tripper repository 파일과 기존 dirty worktree는 변경하지 마세요.
 
 1. URL에서 Workspace UUID를 추출하고 Baley fresh read를 시도하세요.
-2. MCP가 workspace_connection_required와 approvalUrl을 반환하면 그 링크만 사용자에게
-   보여주고, Workspace Owner가 "Operator 연결 승인"을 누를 때까지 기다리세요.
+2. MCP가 workspace_login_required와 connection URL을 반환하면 그 링크만 사용자에게
+   보여주세요. 로그인된 Operator가 열면 local gateway가 자동 연결됩니다.
 3. 승인 뒤 같은 read를 다시 실행하세요. 별도 env 파일 생성, 토큰 복사, MCP 재등록,
    새 thread 요청은 하지 마세요.
 4. Workspace 이름, revision, active Phase, Lane, Task, Backlog, Gate를 보고하세요.

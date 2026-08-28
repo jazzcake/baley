@@ -173,16 +173,13 @@ describe("authenticated Workspace routing", () => {
     expect(await screen.findByRole("heading", { name: "로그인" })).toBeTruthy();
   });
 
-  it("lets the Owner approve a one-time Codex Operator connection", async () => {
+  it("automatically connects a signed-in Operator's local Codex gateway", async () => {
     window.history.replaceState({}, "", "/workspaces/w1/mcp-connect/connection-1");
     vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
 
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Codex Operator 연결" })).toBeTruthy();
-    expect(screen.getByText(/사람 전용 승인은 할 수 없습니다/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Operator 연결 승인" }));
-
     await waitFor(() => expect(approveMCPConnection).toHaveBeenCalledWith("w1", "connection-1", "csrf"));
     expect(await screen.findByText("연결되었습니다.")).toBeTruthy();
   });
