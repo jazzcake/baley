@@ -207,9 +207,11 @@ export function WorkspaceChooser({
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
-	const [createError, setCreateError] = useState<string>();
+  const [createError, setCreateError] = useState<string>();
 	const [logoutBusy, setLogoutBusy] = useState(false);
 	const [logoutError, setLogoutError] = useState<string>();
+	const [migrationProvider, setMigrationProvider] = useState<OIDCProvider>();
+	const [legacyMigrationOpen, setLegacyMigrationOpen] = useState(false);
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const createNameRef = useRef<HTMLInputElement>(null);
 
@@ -223,6 +225,12 @@ export function WorkspaceChooser({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [creating]);
+
+	useEffect(() => {
+		void fetchOIDCProviders().then((providers) => {
+			setMigrationProvider(providers.find((provider) => provider.id === "google") ?? providers[0]);
+		}).catch(() => setMigrationProvider(undefined));
+	}, []);
 
   const submitWorkspace = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -283,6 +291,10 @@ export function WorkspaceChooser({
             </span>
           </form>}
         </div>
+		{migrationProvider && <button type="button" className="workspace-chooser-legacy-migration" onClick={() => {
+			traceViewer("legacy-account-migration:event", { event: "open-from-workspace-chooser", accountId: account.id, calculatedTarget: "migration-dialog" });
+			setLegacyMigrationOpen(true);
+		}}>기존 Account 이전</button>}
         <button type="button" className="workspace-chooser-create-trigger workspace-chooser-logout" disabled={logoutBusy} onClick={() => {
           if (logoutBusy) return;
           setLogoutBusy(true);
@@ -295,6 +307,10 @@ export function WorkspaceChooser({
       </div>
     </header>
     {logoutError && <div className="form-error workspace-chooser-logout-error" role="alert">{logoutError}</div>}
+		{legacyMigrationOpen && migrationProvider && <LegacyAccountMigration
+			provider={migrationProvider}
+			onClose={() => setLegacyMigrationOpen(false)}
+		/>}
     {memberships.length === 0
       ? <section className="chooser-empty"><h2>소속된 Workspace가 없습니다</h2><p>Owner에게 참여 요청을 보내주세요.</p></section>
       : <ul className="workspace-card-grid">

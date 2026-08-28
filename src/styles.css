@@ -289,6 +289,9 @@ body { background: #f6f7fb; }
 .workspace-chooser-create-trigger:hover,.workspace-chooser-create-trigger[aria-expanded="true"] { background: #0060b9; }
 .workspace-chooser-create-trigger:focus-visible { outline: 3px solid rgba(0,115,234,.28); outline-offset: 3px; }
 .workspace-chooser-create-popover { top: calc(100% + 9px); right: 0; left: auto; z-index: 80; }
+.workspace-chooser-legacy-migration { min-height: 38px; padding: 0 13px; border: 1px solid #c5c7d0; border-radius: 7px; background: #fff; color: #454750; font-size: 11px; font-weight: 700; cursor: pointer; }
+.workspace-chooser-legacy-migration:hover { background: #f2f3f7; }
+.workspace-chooser-legacy-migration:focus-visible { outline: 3px solid rgba(0,115,234,.24); outline-offset: 3px; }
 .workspace-chooser-logout:disabled { cursor: wait; opacity: .62; }
 .workspace-chooser-logout-error { max-width: 1100px; margin: -14px auto 22px; }
 .workspace-card-grid { max-width: 1100px; display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 16px; margin: 0 auto; padding: 0; list-style: none; }
