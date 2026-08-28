@@ -9,7 +9,8 @@ import {
   createWorkspaceMember,
   disableMemberAccount,
 	fetchOIDCProviders,
-  fetchWorkspaceMembers,
+	fetchWorkspaceMembers,
+	login as verifyLegacyAccount,
   fetchMCPConnection,
   removeWorkspaceMember,
   resetMemberPassword,
@@ -336,10 +337,12 @@ export function WorkspaceAccessControls({
 	const [logoutBusy, setLogoutBusy] = useState(false);
 	const [oidcProviders, setOIDCProviders] = useState<OIDCProvider[]>([]);
 	const [oidcLinkBusy, setOIDCLinkBusy] = useState(false);
+	const [legacyMigrationOpen, setLegacyMigrationOpen] = useState(false);
   const accountMenuRootRef = useRef<HTMLDivElement>(null);
   const accountMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 	const canAdmin = membership.capabilities.includes("workspace:admin") || membership.role === "owner";
+	const migrationProvider = oidcProviders.find((provider) => provider.id === "google") ?? oidcProviders[0];
 
 	useEffect(() => {
 		if (!accountMenuOpen) return;
@@ -448,6 +451,10 @@ export function WorkspaceAccessControls({
             setAccountMenuError(reason instanceof Error ? reason.message : "Identity provider 연결을 시작하지 못했습니다.");
           });
         }}>{provider.id === "google" ? "Google 계정 연결" : `${provider.label} 연결`}</button>)}
+		{migrationProvider && <button type="button" role="menuitem" tabIndex={-1} onClick={() => {
+			closeAccountMenu();
+			setLegacyMigrationOpen(true);
+		}}>기존 Baley Account 권한 이전</button>}
         <div className="account-menu-separator" role="separator" />
         <button type="button" role="menuitem" tabIndex={-1} className="account-menu-logout" aria-disabled={logoutBusy} onClick={() => {
           if (logoutBusy) return;
@@ -473,6 +480,60 @@ export function WorkspaceAccessControls({
       onClose={() => setMemberAdminOpen(false)}
       onMembershipsChanged={onMembershipsChanged}
     />}
+		{legacyMigrationOpen && migrationProvider && <LegacyAccountMigration
+			provider={migrationProvider}
+			onClose={() => setLegacyMigrationOpen(false)}
+		/>}
+  </div>;
+}
+
+function LegacyAccountMigration({ provider, onClose }: { provider: OIDCProvider; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy) return;
+    const data = new FormData(event.currentTarget);
+    const loginID = String(data.get("loginId") ?? "");
+    const password = String(data.get("password") ?? "");
+    setBusy(true);
+    setError(undefined);
+    traceViewer("legacy-account-migration:event", {
+      event: "verify-and-link",
+      providerId: provider.id,
+      calculatedTarget: "authenticated-legacy-account-oidc-link",
+      renderedState: "migration-dialog",
+    });
+    void verifyLegacyAccount(loginID, password)
+      .then((session) => beginOIDCLink(provider.id, session.csrfToken))
+      .then(({ authorizationUrl }) => window.location.assign(authorizationUrl))
+      .catch(() => {
+        setBusy(false);
+        setError("기존 Account 정보를 확인하지 못했습니다. 다시 시도해주세요.");
+      });
+  };
+
+  return <div className="admin-overlay">
+    <section className="legacy-account-migration" role="dialog" aria-modal="true" aria-labelledby="legacy-account-migration-title">
+      <header>
+        <div><span>ACCOUNT MIGRATION</span><h2 id="legacy-account-migration-title">기존 Baley Account 권한 이전</h2></div>
+        <button className="icon-button" type="button" aria-label="권한 이전 닫기" onClick={onClose}><X size={18} /></button>
+      </header>
+      <p>기존 Account의 로그인 정보로 소유를 확인한 뒤, <strong>{provider.id === "google" ? "Google" : provider.label}</strong> identity를 그 Account에 연결합니다.</p>
+      <p className="legacy-account-migration-note">이 과정은 이메일을 비교하거나 저장하지 않으며, 기존 Workspace 역할과 권한을 그대로 유지합니다.</p>
+      <form onSubmit={submit}>
+        <label htmlFor="legacy-account-login-id">기존 Account ID</label>
+        <input id="legacy-account-login-id" name="loginId" autoComplete="username" required disabled={busy} />
+        <label htmlFor="legacy-account-password">기존 Account 암호</label>
+        <input id="legacy-account-password" name="password" type="password" autoComplete="current-password" required disabled={busy} />
+        {error && <div className="form-error" role="alert">{error}</div>}
+        <span className="legacy-account-migration-actions">
+          <button type="button" onClick={onClose} disabled={busy}>취소</button>
+          <button className="primary-button" type="submit" disabled={busy}>{busy ? "확인 중…" : "권한 이전 계속"}</button>
+        </span>
+      </form>
+    </section>
   </div>;
 }
 
