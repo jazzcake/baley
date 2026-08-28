@@ -70,12 +70,6 @@ Google variables.
   the established Account's memberships and roles. The transfer is permitted
   only when the source has no password, no active membership, and no other
   external identity; it revokes the source sessions and leaves an audit event.
-- When moving from a local-password Account, sign in with the OIDC identity,
-  then use **기존 Baley Account 권한 이전** from the Account menu. The legacy
-  password is used only to prove ownership for that one migration; after it
-  succeeds, the browser reauthenticates with the OIDC provider and the normal
-  `(issuer, subject)` linking rules perform the transfer. The public login
-  screen remains OIDC-only.
 - Logout revokes the active Baley session. Account disable, membership changes,
   and local-gateway revocation retain the #142 gateway/session invalidation
   behaviour. OIDC does not issue an Agent credential with human approval

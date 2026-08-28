@@ -14,7 +14,6 @@ import {
   fetchWorkspaceMembers,
   fetchWorkspaces,
 	fetchOIDCProviders,
-  login,
   logout,
   removeWorkspaceMember,
   resetMemberPassword,
@@ -32,7 +31,6 @@ vi.mock("./api/auth", () => ({
   fetchSession: vi.fn(),
   fetchWorkspaces: vi.fn(),
 	fetchOIDCProviders: vi.fn().mockResolvedValue([]),
-  login: vi.fn(),
   logout: vi.fn(),
   createWorkspace: vi.fn(),
   fetchWorkspaceMembers: vi.fn(),
@@ -360,20 +358,6 @@ describe("authenticated Workspace routing", () => {
 
     await waitFor(() => expect(logout).toHaveBeenCalledWith("csrf"));
     expect(await screen.findByRole("heading", { name: "로그인" })).toBeTruthy();
-  });
-
-  it("offers an authenticated one-time migration path for an existing Baley Account", async () => {
-    vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
-    vi.mocked(fetchOIDCProviders).mockResolvedValueOnce([{ id: "google", label: "Google" }]);
-    window.history.replaceState({}, "", "/workspaces/w1");
-    render(<App />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Pilot Owner 계정 메뉴" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "기존 Baley Account 권한 이전" }));
-
-    expect(await screen.findByRole("heading", { name: "기존 Baley Account 권한 이전" })).toBeTruthy();
-    expect(screen.getByLabelText("기존 Account ID")).toBeTruthy();
-    expect(screen.getByLabelText("기존 Account 암호")).toBeTruthy();
   });
 
   it("supports keyboard navigation and Escape in the Workspace menu", async () => {
