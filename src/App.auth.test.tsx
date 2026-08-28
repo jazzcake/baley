@@ -154,6 +154,16 @@ describe("authenticated Workspace routing", () => {
     expect(screen.queryByLabelText("암호")).toBeNull();
   });
 
+  it("offers configured internal OIDC providers alongside Google", async () => {
+    vi.mocked(fetchSession).mockRejectedValueOnce(new APIError("authentication required", 401, "unauthenticated"));
+    vi.mocked(fetchOIDCProviders).mockResolvedValueOnce([{ id: "internal", label: "Keycloak" }, { id: "google", label: "Google" }]);
+    window.history.replaceState({}, "", "/login");
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: /Google/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Keycloak/ })).toBeTruthy();
+  });
+
   it("lets a user log out from the Workspace chooser", async () => {
     window.history.replaceState({}, "", "/workspaces");
     render(<App />);

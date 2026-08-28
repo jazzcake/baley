@@ -150,9 +150,12 @@ export function LoginScreen() {
     return () => controller.abort();
   }, []);
 
-  const provider = oidcProviders?.find((item) => item.id === "google") ?? oidcProviders?.[0];
-  const startOIDC = () => {
-    if (!provider) return;
+  const providers = oidcProviders ? [...oidcProviders].sort((left, right) => {
+    if (left.id === "google") return -1;
+    if (right.id === "google") return 1;
+    return left.label.localeCompare(right.label);
+  }) : [];
+  const startOIDC = (provider: OIDCProvider) => {
     traceViewer("oidc-login:event", { providerId: provider.id, authState: "anonymous", calculatedTarget: "authorization-redirect" });
     window.location.assign(oidcLoginURL(provider.id));
   };
@@ -162,14 +165,14 @@ export function LoginScreen() {
       <div className="brand-mark auth-brand">B</div>
       <span className="auth-kicker">BALEY ACCOUNT</span>
       <h1 id="login-title">로그인</h1>
-      <p>Google 계정으로 안전하게 로그인하고, 권한이 있는 Workspace로 돌아가세요.</p>
+      <p>Google 또는 조직의 OIDC 계정으로 안전하게 로그인하고, 권한이 있는 Workspace로 돌아가세요.</p>
       {!oidcProviders && <p className="login-provider-status" role="status">로그인 제공자를 확인하는 중…</p>}
-      {provider && <button className="google-login-button" type="button" onClick={startOIDC}>
-        <span className="google-login-mark" aria-hidden="true">G</span>
+      {providers.map((provider) => <button className="google-login-button" type="button" key={provider.id} onClick={() => startOIDC(provider)}>
+        <span className="google-login-mark" aria-hidden="true">{provider.id === "google" ? "G" : provider.label.slice(0, 1)}</span>
         {provider.id === "google" ? "Google로 계속" : `${provider.label}로 계속`}
-      </button>}
+      </button>)}
       {oidcProviders?.length === 0 && <div className="form-error" role="alert">현재 사용할 수 있는 로그인 제공자가 없습니다.</div>}
-      <p className="login-security-note"><ShieldCheck size={15} aria-hidden="true" /> Google 인증은 Workspace 권한이나 사람 전용 승인 권한을 변경하지 않습니다.</p>
+      <p className="login-security-note"><ShieldCheck size={15} aria-hidden="true" /> OIDC 인증은 Workspace 권한이나 사람 전용 승인 권한을 변경하지 않습니다.</p>
     </section>
   </main>;
 }

@@ -38,4 +38,8 @@ func TestNormalizeOIDCProviderRequiresTLSIssuerAndRedirect(t *testing.T) {
 	if _, err := normalizeOIDCProvider(base); err == nil {
 		t.Fatal("invalid redirect accepted")
 	}
+	base.RedirectURL = "http://app.example/v1/auth/oidc/internal/callback"
+	if _, err := normalizeOIDCProvider(base); err == nil {
+		t.Fatal("HTTP redirect accepted")
+	}
 }

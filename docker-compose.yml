@@ -5,11 +5,15 @@ services:
       dockerfile: docker/Dockerfile.server
     restart: unless-stopped
     environment:
+      # The Pilot is reached through its Tailscale HTTPS endpoint. Keep the
+      # authentication runtime in production mode so auth and OIDC binding
+      # cookies cannot be sent over HTTP.
+      BALEY_ENV: production
       # Use the shared container's unique name rather than a generic network alias.
       BALEY_DATABASE_URL: postgres://baley_app:${BALEY_DB_PASSWORD}@local-dev-postgres:5432/baley?sslmode=disable
-      BALEY_VIEWER_ORIGINS: http://127.0.0.1:5174,http://jazzcake-home.tail87e929.ts.net,https://jazzcake-home.tail87e929.ts.net
+      BALEY_VIEWER_ORIGINS: https://jazzcake-home.tail87e929.ts.net
       BALEY_MCP_APPROVAL_ORIGIN: https://jazzcake-home.tail87e929.ts.net
-      BALEY_COOKIE_SECURE: "false"
+      BALEY_COOKIE_SECURE: "true"
       # OAuth client ID is public configuration. The client secret is mounted
       # read-only from the ignored local secret path; it is never a Compose
       # literal, source-controlled value, or Codex Authorization header.

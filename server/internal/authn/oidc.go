@@ -95,7 +95,10 @@ func normalizeOIDCProvider(value OIDCProviderConfig) (OIDCProviderConfig, error)
 		return value, fmt.Errorf("OIDC provider %q has an invalid issuer", value.ID)
 	}
 	redirect, err := url.Parse(value.RedirectURL)
-	if err != nil || redirect.Scheme == "" || redirect.Host == "" || redirect.RawQuery != "" || redirect.Fragment != "" {
+	// The callback carries the authorization code and state, so a network-facing
+	// redirect must not be permitted to use an unencrypted HTTP hop. Air-gapped
+	// deployments use their internal TLS endpoint and keep the same boundary.
+	if err != nil || redirect.Scheme != "https" || redirect.Host == "" || redirect.User != nil || redirect.RawQuery != "" || redirect.Fragment != "" {
 		return value, fmt.Errorf("OIDC provider %q has an invalid redirect URL", value.ID)
 	}
 	if value.Label == "" {
