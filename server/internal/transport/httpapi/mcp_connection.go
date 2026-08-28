@@ -40,13 +40,14 @@ func (a *API) createMCPConnection(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		WorkspaceID  string `json:"workspaceId"`
 		AgentActorID string `json:"agentActorId"`
+		GatewayID    string `json:"gatewayId"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
-	input.WorkspaceID, input.AgentActorID = strings.TrimSpace(input.WorkspaceID), strings.TrimSpace(input.AgentActorID)
-	if !isLowerUUID(input.WorkspaceID) || input.AgentActorID == "" {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]string{"code": "invalid_mcp_connection", "message": "Workspace UUID and Agent actor ID are required"}})
+	input.WorkspaceID, input.AgentActorID, input.GatewayID = strings.TrimSpace(input.WorkspaceID), strings.TrimSpace(input.AgentActorID), strings.TrimSpace(input.GatewayID)
+	if !isLowerUUID(input.WorkspaceID) || input.AgentActorID == "" || len(input.GatewayID) < 20 || len(input.GatewayID) > 256 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]string{"code": "invalid_mcp_connection", "message": "Workspace UUID, Agent actor ID, and local gateway identity are required"}})
 		return
 	}
 	id, err := connectionRandomID()
@@ -60,7 +61,7 @@ func (a *API) createMCPConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	view, err := a.Repo.CreateMCPConnection(r.Context(), id, input.WorkspaceID, input.AgentActorID, postgres.DigestSecret(secret), now, now.Add(mcpConnectionTTL))
+	view, err := a.Repo.CreateMCPConnection(r.Context(), id, input.WorkspaceID, input.AgentActorID, input.GatewayID, postgres.DigestSecret(secret), now, now.Add(mcpConnectionTTL))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -77,7 +78,7 @@ func (a *API) createMCPConnection(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) pollMCPConnection(w http.ResponseWriter, r *http.Request) {
 	secret := r.Header.Get("X-Baley-Connection-Secret")
-	view, token, err := a.Repo.PollMCPConnectionAndIssueAgentToken(r.Context(), r.PathValue("connectionId"), postgres.DigestSecret(secret), time.Now().UTC())
+	view, issued, gatewaySecret, err := a.Repo.PollMCPConnectionAndIssueAgentToken(r.Context(), r.PathValue("connectionId"), postgres.DigestSecret(secret), time.Now().UTC())
 	if errors.Is(err, postgres.ErrMCPConnectionNotFound) || errors.Is(err, postgres.ErrMCPConnectionSecret) || errors.Is(err, postgres.ErrMCPConnectionConsumed) {
 		mcpConnectionNotFound(w)
 		return
@@ -87,10 +88,66 @@ func (a *API) pollMCPConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := map[string]any{"id": view.ID, "workspaceId": view.WorkspaceID, "status": view.Status, "expiresAt": view.ExpiresAt}
-	if token != "" {
-		result["agentToken"] = token
+	if issued.Token != "" {
+		result["agentToken"] = issued.Token
+		result["gatewayId"] = view.GatewayID
+		result["gatewaySecret"] = gatewaySecret
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *API) resumeMCPGateway(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		WorkspaceID   string `json:"workspaceId"`
+		GatewayID     string `json:"gatewayId"`
+		GatewaySecret string `json:"gatewaySecret"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	input.WorkspaceID, input.GatewayID, input.GatewaySecret = strings.TrimSpace(input.WorkspaceID), strings.TrimSpace(input.GatewayID), strings.TrimSpace(input.GatewaySecret)
+	if !isLowerUUID(input.WorkspaceID) || len(input.GatewayID) < 20 || input.GatewaySecret == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]string{"code": "invalid_mcp_gateway", "message": "Workspace, gateway identity, and credential are required"}})
+		return
+	}
+	issued, err := a.Repo.ResumeMCPGateway(r.Context(), input.WorkspaceID, input.GatewayID, input.GatewaySecret, time.Now().UTC())
+	if errors.Is(err, postgres.ErrMCPGatewayNotFound) || errors.Is(err, postgres.ErrMCPGatewaySecret) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "mcp_gateway_reauthentication_required", "message": "Gateway registration is unavailable; reconnect with Workspace Owner approval"}})
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"workspaceId": input.WorkspaceID, "agentToken": issued.Token})
+}
+
+func (a *API) revokeMCPGateway(w http.ResponseWriter, r *http.Request) {
+	state, ok := a.requireOwner(r)
+	if !ok {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Owner capability required"}})
+		return
+	}
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	if strings.TrimSpace(input.Reason) == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]string{"code": "invalid_mcp_gateway", "message": "Revocation reason is required"}})
+		return
+	}
+	err := a.Repo.RevokeMCPGateway(r.Context(), r.PathValue("workspaceId"), r.PathValue("gatewayId"), state.Principal.ActorID, input.Reason, time.Now().UTC())
+	if errors.Is(err, postgres.ErrMCPGatewayNotFound) {
+		mcpConnectionNotFound(w)
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) getMCPConnection(w http.ResponseWriter, r *http.Request) {

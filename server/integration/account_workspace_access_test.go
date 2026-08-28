@@ -484,7 +484,7 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	inactive := false
 	for _, actorID := range []string{postgres.DemoHumanActorID, secondOwner.ActorID} {
 		go func(candidate string) {
-			outcomes <- ownerOutcome{err: repo.UpdateMember(ctx, postgres.DemoWorkspaceID, candidate, nil, &inactive)}
+			outcomes <- ownerOutcome{err: repo.UpdateMember(ctx, postgres.DemoWorkspaceID, candidate, postgres.DemoHumanActorID, nil, &inactive)}
 		}(actorID)
 	}
 	firstOwnerResult, secondOwnerResult := <-outcomes, <-outcomes
@@ -493,7 +493,7 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	}
 	active := true
 	for _, actorID := range []string{postgres.DemoHumanActorID, secondOwner.ActorID} {
-		if err = repo.UpdateMember(ctx, postgres.DemoWorkspaceID, actorID, nil, &active); err != nil {
+		if err = repo.UpdateMember(ctx, postgres.DemoWorkspaceID, actorID, postgres.DemoHumanActorID, nil, &active); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -23,13 +23,15 @@ import (
 )
 
 type workspaceCredential struct {
-	AgentToken  string    `json:"agentToken"`
-	ConnectedAt time.Time `json:"connectedAt"`
+	AgentToken    string    `json:"agentToken"`
+	GatewaySecret string    `json:"gatewaySecret,omitempty"`
+	ConnectedAt   time.Time `json:"connectedAt"`
 }
 
 type credentialStore struct {
 	Version            int                                   `json:"version"`
 	ServerURL          string                                `json:"serverUrl"`
+	GatewayID          string                                `json:"gatewayId,omitempty"`
 	Workspaces         map[string]workspaceCredential        `json:"workspaces"`
 	PendingConnections map[string]pendingWorkspaceConnection `json:"pendingConnections,omitempty"`
 }
@@ -64,6 +66,8 @@ type connectionResponse struct {
 	ConnectionSecret string    `json:"connectionSecret"`
 	ApprovalURL      string    `json:"approvalUrl"`
 	AgentToken       string    `json:"agentToken"`
+	GatewayID        string    `json:"gatewayId"`
+	GatewaySecret    string    `json:"gatewaySecret"`
 }
 
 func requestWorkspaceID(path string, payload any) string {
@@ -107,6 +111,25 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 	if credential, ok := store.Workspaces[workspaceID]; ok && credential.AgentToken != "" {
 		return credential.AgentToken, nil, nil
 	}
+	if credential, ok := store.Workspaces[workspaceID]; ok && credential.GatewaySecret != "" && store.GatewayID != "" {
+		response, resumeErr := c.resumeWorkspaceGateway(ctx, workspaceID, store.GatewayID, credential.GatewaySecret)
+		if resumeErr == nil && response.AgentToken != "" {
+			credential.AgentToken, credential.ConnectedAt = response.AgentToken, time.Now().UTC()
+			store.Workspaces[workspaceID] = credential
+			if err = c.writeCredentialStore(ctx, store); err != nil {
+				return "", nil, err
+			}
+			return credential.AgentToken, nil, nil
+		}
+		var statusError connectionHTTPStatusError
+		if resumeErr != nil && (!errors.As(resumeErr, &statusError) || statusError.StatusCode != http.StatusUnauthorized) {
+			return "", nil, resumeErr
+		}
+		delete(store.Workspaces, workspaceID)
+		if err = c.writeCredentialStore(ctx, store); err != nil {
+			return "", nil, err
+		}
+	}
 
 	if pending, ok := store.PendingConnections[workspaceID]; ok {
 		response, err := c.pollWorkspaceConnection(ctx, pending)
@@ -126,7 +149,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			// connection consumed. The response can therefore be either approved
 			// (before a repository implementation marks consumption) or consumed.
 			// The token itself is the authoritative successful hand-off.
-			store.Workspaces[workspaceID] = workspaceCredential{AgentToken: response.AgentToken, ConnectedAt: time.Now().UTC()}
+			store.Workspaces[workspaceID] = workspaceCredential{AgentToken: response.AgentToken, GatewaySecret: response.GatewaySecret, ConnectedAt: time.Now().UTC()}
 			delete(store.PendingConnections, workspaceID)
 			if err = c.writeCredentialStore(ctx, store); err != nil {
 				return "", nil, err
@@ -137,7 +160,13 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 		}
 	}
 
-	pending, err := c.createWorkspaceConnection(ctx, workspaceID)
+	if store.GatewayID == "" {
+		store.GatewayID, err = newGatewayID()
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	pending, err := c.createWorkspaceConnection(ctx, workspaceID, store.GatewayID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -148,8 +177,8 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 	return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
 }
 
-func (c *client) createWorkspaceConnection(ctx context.Context, workspaceID string) (pendingWorkspaceConnection, error) {
-	raw, err := json.Marshal(map[string]string{"workspaceId": workspaceID, "agentActorId": c.agentActorID})
+func (c *client) createWorkspaceConnection(ctx context.Context, workspaceID, gatewayID string) (pendingWorkspaceConnection, error) {
+	raw, err := json.Marshal(map[string]string{"workspaceId": workspaceID, "agentActorId": c.agentActorID, "gatewayId": gatewayID})
 	if err != nil {
 		return pendingWorkspaceConnection{}, err
 	}
@@ -166,6 +195,29 @@ func (c *client) createWorkspaceConnection(ctx context.Context, workspaceID stri
 		return pendingWorkspaceConnection{}, errors.New("Baley returned an incomplete Workspace connection request")
 	}
 	return pendingWorkspaceConnection{ID: response.ID, Secret: response.ConnectionSecret, ApprovalURL: response.ApprovalURL}, nil
+}
+
+func (c *client) resumeWorkspaceGateway(ctx context.Context, workspaceID, gatewayID, gatewaySecret string) (connectionResponse, error) {
+	raw, err := json.Marshal(map[string]string{"workspaceId": workspaceID, "gatewayId": gatewayID, "gatewaySecret": gatewaySecret})
+	if err != nil {
+		return connectionResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/v1/mcp/gateway-sessions", bytes.NewReader(raw))
+	if err != nil {
+		return connectionResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var response connectionResponse
+	err = c.connectionRequest(req, http.StatusOK, &response)
+	return response, err
+}
+
+func newGatewayID() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func (c *client) pollWorkspaceConnection(ctx context.Context, pending pendingWorkspaceConnection) (connectionResponse, error) {
@@ -221,7 +273,7 @@ func pendingStructured(result *mcp.CallToolResult) any {
 }
 
 func (c *client) readCredentialStore(ctx context.Context) (credentialStore, error) {
-	store := credentialStore{Version: 3, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
+	store := credentialStore{Version: 4, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
 	path := c.credentialStorePath
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -251,7 +303,7 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 	} else if err = json.Unmarshal(raw, &store); err != nil {
 		return store, errors.New("Baley credential store is invalid JSON")
 	}
-	store.Version = 3
+	store.Version = 4
 	store.ServerURL = c.base
 	if store.Workspaces == nil {
 		store.Workspaces = map[string]workspaceCredential{}
@@ -275,8 +327,13 @@ func (c *client) writeCredentialStore(ctx context.Context, store credentialStore
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create Baley credential directory: %w", err)
 	}
-	store.Version = 3
+	store.Version = 4
 	store.ServerURL = c.base
+	for _, credential := range store.Workspaces {
+		if credential.GatewaySecret != "" && c.gatewayToken == "" {
+			return errors.New("registered MCP gateway credential requires encrypted local storage")
+		}
+	}
 	raw, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return err
@@ -286,7 +343,7 @@ func (c *client) writeCredentialStore(ctx context.Context, store credentialStore
 		if encryptErr != nil {
 			return fmt.Errorf("encrypt Baley credential store: %w", encryptErr)
 		}
-		raw, err = json.MarshalIndent(credentialStoreDisk{Version: 3, ServerURL: c.base, Ciphertext: ciphertext}, "", "  ")
+		raw, err = json.MarshalIndent(credentialStoreDisk{Version: 4, ServerURL: c.base, Ciphertext: ciphertext}, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -360,7 +417,14 @@ func (c *client) removeWorkspaceCredential(ctx context.Context, workspaceID stri
 	if err != nil {
 		return err
 	}
-	delete(store.Workspaces, workspaceID)
+	if credential, ok := store.Workspaces[workspaceID]; ok {
+		if credential.GatewaySecret == "" {
+			delete(store.Workspaces, workspaceID)
+		} else {
+			credential.AgentToken = ""
+			store.Workspaces[workspaceID] = credential
+		}
+	}
 	delete(store.PendingConnections, workspaceID)
 	return c.writeCredentialStore(ctx, store)
 }

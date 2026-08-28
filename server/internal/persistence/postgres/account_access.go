@@ -304,7 +304,12 @@ func (r *Repository) AgentByTokenHash(ctx context.Context, hash []byte, now time
 		JOIN workspace_memberships membership
 		  ON membership.workspace_id=token.workspace_id AND membership.actor_id=token.actor_id
 		  AND membership.active AND membership.role='operator'
+		LEFT JOIN mcp_gateway_registrations gateway ON gateway.id=token.gateway_registration_id
+		LEFT JOIN workspace_memberships gateway_member ON gateway_member.workspace_id=gateway.workspace_id
+		  AND gateway_member.actor_id=gateway.account_actor_id AND gateway_member.active
+		LEFT JOIN accounts gateway_account ON gateway_account.actor_id=gateway.account_actor_id AND gateway_account.status='active'
 		WHERE token.token_hash=$1 AND token.revoked_at IS NULL
+		  AND (token.gateway_registration_id IS NULL OR (gateway.status='active' AND gateway.agent_actor_id=token.actor_id AND gateway_member.actor_id IS NOT NULL AND gateway_account.actor_id IS NOT NULL))
 		  AND (token.expires_at IS NULL OR token.expires_at>$2)`, hash, now).
 		Scan(&value.TokenID, &value.ActorID, &value.WorkspaceID, &value.CreatedByActorID, &raw)
 	if err != nil {
@@ -534,6 +539,9 @@ func (r *Repository) DisableMemberAccount(ctx context.Context, workspaceID, targ
 	if _, err = tx.Exec(ctx, "UPDATE account_sessions SET revoked_at=COALESCE(revoked_at,now()) WHERE account_id=$1", accountID); err != nil {
 		return err
 	}
+	if err = r.revokeMCPGatewaysForMemberTx(ctx, tx, workspaceID, targetActorID, disabledByActorID, "account_disabled", time.Now().UTC()); err != nil {
+		return err
+	}
 	if err = insertSecurityEvent(ctx, tx, workspaceID, accountID, disabledByActorID, "account.disabled", "account", accountID, map[string]any{"sessionsRevoked": true}); err != nil {
 		return err
 	}
@@ -586,7 +594,7 @@ func (r *Repository) AdminResetMemberPassword(ctx context.Context, workspaceID, 
 	return tx.Commit(ctx)
 }
 
-func (r *Repository) UpdateMember(ctx context.Context, workspaceID, actorID string, role *authz.Role, active *bool) error {
+func (r *Repository) UpdateMember(ctx context.Context, workspaceID, actorID, changedByActorID string, role *authz.Role, active *bool) error {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -626,11 +634,16 @@ func (r *Repository) UpdateMember(ctx context.Context, workspaceID, actorID stri
 	if !changed {
 		return errors.New("membership update requires role or active")
 	}
+	// Gateway credentials are derived from this human membership. Revoke them
+	// atomically with every role or active-state change.
+	if err = r.revokeMCPGatewaysForMemberTx(ctx, tx, workspaceID, actorID, changedByActorID, "membership_changed", time.Now().UTC()); err != nil {
+		return err
+	}
 	eventType := "workspace.member_updated"
 	if active != nil && !*active {
 		eventType = "workspace.member_deactivated"
 	}
-	if err = insertSecurityEvent(ctx, tx, workspaceID, "", "", eventType, "membership", actorID, map[string]any{"role": role, "active": active}); err != nil {
+	if err = insertSecurityEvent(ctx, tx, workspaceID, "", changedByActorID, eventType, "membership", actorID, map[string]any{"role": role, "active": active}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -663,6 +676,12 @@ func (r *Repository) TransferOwner(ctx context.Context, workspaceID, sourceActor
 		_, err = tx.Exec(ctx, "UPDATE workspace_memberships SET role=$1,updated_at=now() WHERE workspace_id=$2 AND actor_id=$3", previousOwnerRole, workspaceID, sourceActorID)
 	}
 	if err == nil {
+		err = r.revokeMCPGatewaysForMemberTx(ctx, tx, workspaceID, sourceActorID, sourceActorID, "membership_changed", time.Now().UTC())
+	}
+	if err == nil {
+		err = r.revokeMCPGatewaysForMemberTx(ctx, tx, workspaceID, targetActorID, sourceActorID, "membership_changed", time.Now().UTC())
+	}
+	if err == nil {
 		err = insertSecurityEvent(ctx, tx, workspaceID, "", sourceActorID, "workspace.owner_transferred", "membership", targetActorID, map[string]any{"previousOwnerActorId": sourceActorID, "previousOwnerRole": previousOwnerRole})
 	}
 	if err != nil {
@@ -682,7 +701,7 @@ func (r *Repository) IssueAgentToken(ctx context.Context, workspaceID, actorID, 
 		return AgentTokenResult{}, err
 	}
 	defer tx.Rollback(ctx)
-	result, err := r.issueAgentTokenTx(ctx, tx, workspaceID, actorID, name, createdByActorID, scopes, expiresAt)
+	result, err := r.issueAgentTokenTx(ctx, tx, workspaceID, actorID, name, createdByActorID, scopes, expiresAt, nil)
 	if err != nil {
 		return AgentTokenResult{}, err
 	}
@@ -692,7 +711,7 @@ func (r *Repository) IssueAgentToken(ctx context.Context, workspaceID, actorID, 
 	return result, nil
 }
 
-func (r *Repository) issueAgentTokenTx(ctx context.Context, tx pgx.Tx, workspaceID, actorID, name, createdByActorID string, scopes []authz.Capability, expiresAt *time.Time) (AgentTokenResult, error) {
+func (r *Repository) issueAgentTokenTx(ctx context.Context, tx pgx.Tx, workspaceID, actorID, name, createdByActorID string, scopes []authz.Capability, expiresAt *time.Time, gatewayRegistrationID *string) (AgentTokenResult, error) {
 	allowed := map[authz.Capability]bool{}
 	for _, capability := range authz.DefaultCatalog.Roles[authz.RoleOperator] {
 		allowed[capability] = true
@@ -728,8 +747,8 @@ func (r *Repository) issueAgentTokenTx(ctx context.Context, tx pgx.Tx, workspace
 		workspaceID, actorID, createdByActorID); err != nil {
 		return AgentTokenResult{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO agent_tokens(id,workspace_id,actor_id,name,token_prefix,token_hash,scopes,created_by_actor_id,expires_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, workspaceID, actorID, strings.TrimSpace(name), prefix, hash, rawScopes, createdByActorID, expiresAt); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO agent_tokens(id,workspace_id,actor_id,name,token_prefix,token_hash,scopes,created_by_actor_id,expires_at,gateway_registration_id)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, workspaceID, actorID, strings.TrimSpace(name), prefix, hash, rawScopes, createdByActorID, expiresAt, gatewayRegistrationID); err != nil {
 		return AgentTokenResult{}, err
 	}
 	if err = insertSecurityEvent(ctx, tx, workspaceID, "", createdByActorID, "agent_token.issued", "agent_token", id, map[string]any{"agentActorId": actorID, "name": strings.TrimSpace(name), "scopes": scopes, "expiresAt": expiresAt}); err != nil {

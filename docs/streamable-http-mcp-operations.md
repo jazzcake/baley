@@ -14,6 +14,16 @@ Codex sends `Authorization: Bearer <gateway token>` on every MCP request. This l
 
 The gateway token is generated and synchronized by `scripts/sync-baley-mcp-http-token.ps1`. Codex supports a Streamable HTTP URL plus an environment-variable name, not a dotenv file, so the script copies it into the current and per-user `BALEY_MCP_GATEWAY_TOKEN` environment. Treat that user environment value as a local secret. The legacy `.env.baley-mcp.local` Agent token remains for the stdio rollback path only.
 
+After the one-time Owner-approved enrollment, the API registers the local gateway
+with that active Workspace member. It stores only a hash of a separate gateway
+credential; the local encrypted store retains the credential. A new MCP transport
+session can renew its Workspace-scoped Agent token through this registration without
+another approval. Every renewal validates the gateway, its Workspace, the registered
+member's active Account/membership, and the Agent binding. Member role/removal,
+gateway replacement, explicit revoke, or suspected compromise immediately revoke all
+derived Agent tokens and require a new approval. This does not grant human-only
+Task or Gate capabilities.
+
 ## Start and register Codex
 
 ```powershell

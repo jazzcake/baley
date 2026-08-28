@@ -16,15 +16,15 @@ var (
 )
 
 type MCPConnectionRequest struct {
-	ID, WorkspaceID, AgentActorID, Status, ApprovedByActorID string
-	SecretHash                                               []byte
-	CreatedAt, ExpiresAt                                     time.Time
-	ApprovedAt, RejectedAt, ConsumedAt                       *time.Time
+	ID, WorkspaceID, AgentActorID, GatewayID, Status, ApprovedByActorID string
+	SecretHash                                                          []byte
+	CreatedAt, ExpiresAt                                                time.Time
+	ApprovedAt, RejectedAt, ConsumedAt                                  *time.Time
 }
 
-func (r *Repository) CreateMCPConnection(ctx context.Context, id, workspaceID, agentActorID string, secretHash []byte, now, expiresAt time.Time) (MCPConnectionRequest, error) {
-	request := MCPConnectionRequest{ID: id, WorkspaceID: workspaceID, AgentActorID: agentActorID, SecretHash: secretHash, Status: "pending", CreatedAt: now, ExpiresAt: expiresAt}
-	_, err := r.Pool.Exec(ctx, `INSERT INTO mcp_connection_requests(id,workspace_id,agent_actor_id,secret_hash,status,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, request.ID, request.WorkspaceID, request.AgentActorID, request.SecretHash, request.Status, request.CreatedAt, request.ExpiresAt)
+func (r *Repository) CreateMCPConnection(ctx context.Context, id, workspaceID, agentActorID, gatewayID string, secretHash []byte, now, expiresAt time.Time) (MCPConnectionRequest, error) {
+	request := MCPConnectionRequest{ID: id, WorkspaceID: workspaceID, AgentActorID: agentActorID, GatewayID: gatewayID, SecretHash: secretHash, Status: "pending", CreatedAt: now, ExpiresAt: expiresAt}
+	_, err := r.Pool.Exec(ctx, `INSERT INTO mcp_connection_requests(id,workspace_id,agent_actor_id,gateway_id,secret_hash,status,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, request.ID, request.WorkspaceID, request.AgentActorID, request.GatewayID, request.SecretHash, request.Status, request.CreatedAt, request.ExpiresAt)
 	return request, err
 }
 
@@ -84,54 +84,58 @@ func (r *Repository) setMCPConnectionDecision(ctx context.Context, id, workspace
 	return request, nil
 }
 
-func (r *Repository) PollMCPConnectionAndIssueAgentToken(ctx context.Context, id string, secretHash []byte, now time.Time) (MCPConnectionRequest, string, error) {
+func (r *Repository) PollMCPConnectionAndIssueAgentToken(ctx context.Context, id string, secretHash []byte, now time.Time) (MCPConnectionRequest, AgentTokenResult, string, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
-		return MCPConnectionRequest{}, "", err
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 	}
 	defer tx.Rollback(ctx)
 	if _, err = tx.Exec(ctx, "DELETE FROM mcp_connection_requests WHERE expires_at <= $1", now); err != nil {
-		return MCPConnectionRequest{}, "", err
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 	}
 	request, err := scanMCPConnection(tx.QueryRow(ctx, mcpConnectionSelect+" WHERE id=$1 FOR UPDATE", id))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return MCPConnectionRequest{}, "", ErrMCPConnectionNotFound
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", ErrMCPConnectionNotFound
 	}
 	if err != nil {
-		return MCPConnectionRequest{}, "", err
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 	}
 	if subtle.ConstantTimeCompare(secretHash, request.SecretHash) != 1 {
-		return MCPConnectionRequest{}, "", ErrMCPConnectionSecret
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", ErrMCPConnectionSecret
 	}
 	if request.Status == "consumed" {
-		return MCPConnectionRequest{}, "", ErrMCPConnectionConsumed
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", ErrMCPConnectionConsumed
 	}
 	if request.Status != "approved" {
 		if err = tx.Commit(ctx); err != nil {
-			return MCPConnectionRequest{}, "", err
+			return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 		}
-		return request, "", nil
+		return request, AgentTokenResult{}, "", nil
 	}
-	issued, err := r.issueAgentTokenTx(ctx, tx, request.WorkspaceID, request.AgentActorID, "mcp-connect-"+request.ID, request.ApprovedByActorID, nil, nil)
+	registration, gatewaySecret, err := r.enrollMCPGatewayTx(ctx, tx, request.WorkspaceID, request.ApprovedByActorID, request.AgentActorID, request.GatewayID, now)
 	if err != nil {
-		return MCPConnectionRequest{}, "", err
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
+	}
+	issued, err := r.issueAgentTokenTx(ctx, tx, request.WorkspaceID, request.AgentActorID, "mcp-connect-"+request.ID, request.ApprovedByActorID, nil, nil, &registration.ID)
+	if err != nil {
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 	}
 	if _, err = tx.Exec(ctx, "UPDATE mcp_connection_requests SET status='consumed',consumed_at=$1 WHERE id=$2", now, id); err != nil {
-		return MCPConnectionRequest{}, "", err
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 	}
 	request.Status, request.ConsumedAt = "consumed", &now
 	if err = tx.Commit(ctx); err != nil {
-		return MCPConnectionRequest{}, "", err
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 	}
-	return request, issued.Token, nil
+	return request, issued, gatewaySecret, nil
 }
 
-const mcpConnectionSelect = `SELECT id,workspace_id,agent_actor_id,secret_hash,status,COALESCE(approved_by_actor_id,''),created_at,expires_at,approved_at,rejected_at,consumed_at FROM mcp_connection_requests`
+const mcpConnectionSelect = `SELECT id,workspace_id,agent_actor_id,gateway_id,secret_hash,status,COALESCE(approved_by_actor_id,''),created_at,expires_at,approved_at,rejected_at,consumed_at FROM mcp_connection_requests`
 
 type mcpRow interface{ Scan(...any) error }
 
 func scanMCPConnection(row mcpRow) (MCPConnectionRequest, error) {
 	var v MCPConnectionRequest
-	err := row.Scan(&v.ID, &v.WorkspaceID, &v.AgentActorID, &v.SecretHash, &v.Status, &v.ApprovedByActorID, &v.CreatedAt, &v.ExpiresAt, &v.ApprovedAt, &v.RejectedAt, &v.ConsumedAt)
+	err := row.Scan(&v.ID, &v.WorkspaceID, &v.AgentActorID, &v.GatewayID, &v.SecretHash, &v.Status, &v.ApprovedByActorID, &v.CreatedAt, &v.ExpiresAt, &v.ApprovedAt, &v.RejectedAt, &v.ConsumedAt)
 	return v, err
 }

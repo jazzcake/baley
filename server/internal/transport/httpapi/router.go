@@ -53,6 +53,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/auth/password", a.changePassword)
 	mux.HandleFunc("POST /v1/mcp/connections", a.createMCPConnection)
 	mux.HandleFunc("GET /v1/mcp/connections/{connectionId}", a.pollMCPConnection)
+	mux.HandleFunc("POST /v1/mcp/gateway-sessions", a.resumeMCPGateway)
 	mux.HandleFunc("GET /v1/workspaces", a.workspaces)
 	mux.HandleFunc("POST /v1/workspaces", a.createWorkspace)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/members", a.members)
@@ -68,6 +69,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}", a.getMCPConnection)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}/approve", a.approveMCPConnection)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}/reject", a.rejectMCPConnection)
+	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/mcp-gateways/{gatewayId}", a.revokeMCPGateway)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}", a.workspace)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/graph", a.graph)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/tasks/{publicId}", a.task)
@@ -406,7 +408,8 @@ func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) updateMember(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.requireOwner(r); !ok {
+	state, ok := a.requireOwner(r)
+	if !ok {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Owner capability required"}})
 		return
 	}
@@ -417,7 +420,7 @@ func (a *API) updateMember(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	if err := a.Repo.UpdateMember(r.Context(), r.PathValue("workspaceId"), r.PathValue("actorId"), input.Role, input.Active); err != nil {
+	if err := a.Repo.UpdateMember(r.Context(), r.PathValue("workspaceId"), r.PathValue("actorId"), state.Principal.ActorID, input.Role, input.Active); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{"code": "member_update_failed", "message": err.Error()}})
 		return
 	}
@@ -440,12 +443,13 @@ func (a *API) updateMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) removeMember(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.requireOwner(r); !ok {
+	state, ok := a.requireOwner(r)
+	if !ok {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Owner capability required"}})
 		return
 	}
 	active := false
-	if err := a.Repo.UpdateMember(r.Context(), r.PathValue("workspaceId"), r.PathValue("actorId"), nil, &active); err != nil {
+	if err := a.Repo.UpdateMember(r.Context(), r.PathValue("workspaceId"), r.PathValue("actorId"), state.Principal.ActorID, nil, &active); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{"code": "member_remove_failed", "message": err.Error()}})
 		return
 	}
