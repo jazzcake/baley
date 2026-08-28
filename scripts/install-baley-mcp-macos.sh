@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installs a per-user, loopback-only Baley MCP gateway for macOS. The gateway
-# calls the central Baley API only through the Tailnet Viewer /api proxy.
+# Installs Baley as a tokenless stdio MCP server. The binary contacts the
+# Tailnet HTTPS API directly; device and Workspace credentials are placed in
+# the macOS Keychain, never in Codex configuration or an environment token.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 api_url="${BALEY_SERVER_URL:-https://jazzcake-home.tail87e929.ts.net/api}"
 state_dir="${XDG_STATE_HOME:-$HOME/Library/Application Support}/baley-mcp"
 bin_dir="${HOME}/.local/bin"
 binary="${bin_dir}/baley-mcp"
-token_file="${state_dir}/gateway-token"
-cli_env_file="${state_dir}/codex-cli-env.sh"
 credentials_file="${state_dir}/credentials.json"
-plist="${HOME}/Library/LaunchAgents/com.baley.mcp.plist"
-label="com.baley.mcp"
+legacy_plist="${HOME}/Library/LaunchAgents/com.baley.mcp.plist"
 
-for command in go codex launchctl openssl; do
+for command in go codex launchctl; do
   command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
 done
 
@@ -23,52 +21,29 @@ case "$api_url" in
   https://jazzcake-home.tail87e929.ts.net/api|https://jazzcake-home.tail87e929.ts.net/api/)
     ;;
   *)
-    echo "BALEY_SERVER_URL must be the approved Tailnet API URL" >&2
+    echo "BALEY_SERVER_URL must be the approved Tailnet HTTPS API URL" >&2
     exit 1
     ;;
 esac
 
-mkdir -p "$state_dir" "$bin_dir" "${HOME}/Library/LaunchAgents"
+mkdir -p "$state_dir" "$bin_dir"
 chmod 700 "$state_dir"
-if [[ ! -f "$token_file" ]]; then
-  umask 077
-  openssl rand -base64 32 | tr -d '=+/\n' > "$token_file"
-fi
-chmod 600 "$token_file"
-gateway_token="$(<"$token_file")"
-printf 'export BALEY_MCP_GATEWAY_TOKEN=%q\n' "$gateway_token" > "$cli_env_file"
-chmod 600 "$cli_env_file"
-
 go -C "${repo_root}/server" build -o "$binary" ./cmd/baley-mcp
 
-cat > "$plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>${label}</string>
-  <key>ProgramArguments</key><array><string>${binary}</string><string>serve-http</string></array>
-  <key>EnvironmentVariables</key><dict>
-    <key>BALEY_SERVER_URL</key><string>${api_url%/}</string>
-    <key>BALEY_MCP_GATEWAY_TOKEN</key><string>${gateway_token}</string>
-    <key>BALEY_MCP_CREDENTIAL_STORE</key><string>${credentials_file}</string>
-    <key>BALEY_MCP_HTTP_ADDR</key><string>127.0.0.1:8091</string>
-  </dict>
-  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>${state_dir}/gateway.log</string>
-  <key>StandardErrorPath</key><string>${state_dir}/gateway.log</string>
-</dict></plist>
-PLIST
-chmod 600 "$plist"
-
-launchctl bootout "gui/${UID}" "$plist" >/dev/null 2>&1 || true
-launchctl bootstrap "gui/${UID}" "$plist"
-launchctl kickstart -k "gui/${UID}/${label}"
-launchctl setenv BALEY_MCP_GATEWAY_TOKEN "$gateway_token"
+# Stop the retired HTTP gateway if it exists. Its files are deliberately left
+# in place so a one-time legacy-store migration can still be diagnosed; the
+# installer neither prints nor exports its former gateway token.
+if [[ -f "$legacy_plist" ]]; then
+  launchctl bootout "gui/${UID}" "$legacy_plist" >/dev/null 2>&1 || true
+fi
 
 codex mcp remove baley >/dev/null 2>&1 || true
-codex mcp add baley --url http://127.0.0.1:8091/mcp --bearer-token-env-var BALEY_MCP_GATEWAY_TOKEN
+codex mcp add baley \
+  --env "BALEY_SERVER_URL=${api_url%/}" \
+  --env "BALEY_MCP_CREDENTIAL_STORE=${credentials_file}" \
+  -- "$binary"
 
-echo "Baley MCP is running locally at http://127.0.0.1:8091/mcp"
-echo "For Codex Desktop: quit it fully and reopen it."
-echo "For Codex CLI in this terminal: source \"${cli_env_file}\""
-echo "Do not print, copy, or share the gateway token."
+echo "Baley MCP is registered as tokenless stdio."
+echo "Codex Desktop: fully quit and reopen it. Codex CLI: start a new session."
+echo "The first Workspace request may ask its Owner for approval; later sessions resume through the macOS Keychain."
+echo "Run 'codex mcp get baley' or the baley_mcp_diagnostics tool for redacted diagnostics."

@@ -1,36 +1,31 @@
 [CmdletBinding()]
 param(
-  [string]$EnvironmentFile,
+  [string]$ServerURL = "https://jazzcake-home.tail87e929.ts.net/api",
   [string]$CredentialStore
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($EnvironmentFile)) {
-  $EnvironmentFile = Join-Path $repoRoot ".env.baley-mcp.local"
-}
 if ([string]::IsNullOrWhiteSpace($CredentialStore)) {
   $CredentialStore = Join-Path $repoRoot ".tmp\baley-mcp\credentials.json"
 }
-
-$serverURL = "http://127.0.0.1:8080"
-$agentToken = ""
-if (Test-Path -LiteralPath $EnvironmentFile) {
-  . (Join-Path $PSScriptRoot "baley-mcp-env.ps1")
-  $values = Read-BaleyMCPEnvironment -Path $EnvironmentFile
-  $serverURL = $values.BALEY_SERVER_URL
-  $agentToken = $values.BALEY_AGENT_TOKEN
+if (![Uri]::IsWellFormedUriString($ServerURL, [UriKind]::Absolute) -or !$ServerURL.StartsWith("https://", [StringComparison]::OrdinalIgnoreCase)) {
+  throw "BALEY_SERVER_URL must be an approved HTTPS URL for tokenless stdio"
 }
+
 try {
-  $env:BALEY_SERVER_URL = $serverURL
-  $env:BALEY_AGENT_TOKEN = $agentToken
+  $env:BALEY_SERVER_URL = $ServerURL.TrimEnd("/")
   $env:BALEY_MCP_CREDENTIAL_STORE = $CredentialStore
-  $values = $null
+  # Do not read or pass BALEY_AGENT_TOKEN / BALEY_MCP_GATEWAY_TOKEN. The local
+  # binary obtains device-bound Workspace credentials from Windows Credential
+  # Manager after Owner approval.
+  Remove-Item Env:BALEY_AGENT_TOKEN -ErrorAction SilentlyContinue
+  Remove-Item Env:BALEY_MCP_GATEWAY_TOKEN -ErrorAction SilentlyContinue
   & go -C (Join-Path $repoRoot "server") run ./cmd/baley-mcp
   exit $LASTEXITCODE
 } finally {
-  $env:BALEY_AGENT_TOKEN = $null
-  $env:BALEY_MCP_CREDENTIAL_STORE = $null
-  $values = $null
+  Remove-Item Env:BALEY_AGENT_TOKEN -ErrorAction SilentlyContinue
+  Remove-Item Env:BALEY_MCP_GATEWAY_TOKEN -ErrorAction SilentlyContinue
+  Remove-Item Env:BALEY_MCP_CREDENTIAL_STORE -ErrorAction SilentlyContinue
 }
