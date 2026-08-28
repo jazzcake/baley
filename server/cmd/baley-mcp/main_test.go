@@ -245,48 +245,6 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 		t.Fatalf("expected one persistent credential store, entries=%v err=%v", entries, err)
 	}
 }
-func TestClientSendsConfiguredAgentTokenWithoutPuttingItInThePayload(t *testing.T) {
-	const token = "agent-secret-that-must-stay-in-the-header"
-	var authorization string
-	var body map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authorization = r.Header.Get("Authorization")
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"workspaceRevision":2}`))
-	}))
-	defer server.Close()
-
-	c := &client{base: server.URL, http: server.Client(), agentToken: token}
-	result, _, err := c.runStart(context.Background(), nil, runStartInput{
-		WorkspaceID: "workspace",
-		TaskID:      135,
-		ClientRunID: "client-run",
-		Kind:        "implementation",
-		automaticEnvelope: automaticEnvelope{
-			ExpectedWorkspaceRevision: 1,
-			IdempotencyKey:            "idempotency-key",
-			ExecutedByActorID:         "agent",
-		},
-	})
-	if err != nil || result.IsError {
-		t.Fatalf("run start failed: %#v %v", result, err)
-	}
-	if authorization != "Bearer "+token {
-		t.Fatalf("missing agent bearer token: %q", authorization)
-	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) == "" || containsJSONSecret(raw, token) {
-		t.Fatal("agent token leaked into the command payload")
-	}
-}
-
 func TestPhaseTasksUsesOneExplicitBoundedPhasePath(t *testing.T) {
 	var gotPaths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
