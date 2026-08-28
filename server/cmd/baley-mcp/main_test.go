@@ -79,6 +79,62 @@ func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
 	}
 }
 
+func TestPhaseTasksAdvertisesBoundedPaginationSchema(t *testing.T) {
+	ctx := context.Background()
+	server := newMCPServer(&client{})
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "schema-test", Version: "test"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+
+	listed, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	for _, tool := range listed.Tools {
+		if tool.Name == "baley_phase_tasks" {
+			schema, _ = tool.InputSchema.(map[string]any)
+			break
+		}
+	}
+	if schema == nil {
+		t.Fatal("baley_phase_tasks schema was not advertised")
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties=%#v", schema["properties"])
+	}
+	limit, ok := properties["limit"].(map[string]any)
+	if !ok {
+		t.Fatalf("limit schema=%#v", properties["limit"])
+	}
+	if got, want := limit["minimum"], float64(1); got != want {
+		t.Errorf("limit minimum=%v, want %v", got, want)
+	}
+	if got, want := limit["maximum"], float64(100); got != want {
+		t.Errorf("limit maximum=%v, want %v", got, want)
+	}
+	if got, want := limit["default"], float64(50); got != want {
+		t.Errorf("limit default=%v, want %v", got, want)
+	}
+	cursor, ok := properties["cursor"].(map[string]any)
+	if !ok || cursor["minimum"] != float64(0) {
+		t.Errorf("cursor schema=%#v, want non-negative integer", cursor)
+	}
+	required, ok := schema["required"].([]any)
+	if !ok || len(required) != 2 || required[0] != "workspaceId" || required[1] != "phaseId" {
+		t.Errorf("schema required=%#v, want workspaceId and phaseId", schema["required"])
+	}
+}
+
 func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t *testing.T) {
 	const gatewayToken = "local-gateway-token"
 	const workspaceToken = "workspace-agent-token"
@@ -189,6 +245,76 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 		t.Fatalf("expected one persistent credential store, entries=%v err=%v", entries, err)
 	}
 }
+func TestClientSendsConfiguredAgentTokenWithoutPuttingItInThePayload(t *testing.T) {
+	const token = "agent-secret-that-must-stay-in-the-header"
+	var authorization string
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workspaceRevision":2}`))
+	}))
+	defer server.Close()
+
+	c := &client{base: server.URL, http: server.Client(), agentToken: token}
+	result, _, err := c.runStart(context.Background(), nil, runStartInput{
+		WorkspaceID: "workspace",
+		TaskID:      135,
+		ClientRunID: "client-run",
+		Kind:        "implementation",
+		automaticEnvelope: automaticEnvelope{
+			ExpectedWorkspaceRevision: 1,
+			IdempotencyKey:            "idempotency-key",
+			ExecutedByActorID:         "agent",
+		},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("run start failed: %#v %v", result, err)
+	}
+	if authorization != "Bearer "+token {
+		t.Fatalf("missing agent bearer token: %q", authorization)
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) == "" || containsJSONSecret(raw, token) {
+		t.Fatal("agent token leaked into the command payload")
+	}
+}
+
+func TestPhaseTasksUsesOneExplicitBoundedPhasePath(t *testing.T) {
+	var gotPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"phaseId":"active","items":[],"nextCursor":0,"hasMore":false}`))
+	}))
+	defer server.Close()
+	c := &client{base: server.URL, http: server.Client()}
+	result, _, err := c.phaseTasks(context.Background(), nil, phaseTasksInput{WorkspaceID: "workspace", PhaseID: "active", Cursor: 25, Limit: 1})
+	if err != nil || result.IsError || len(gotPaths) != 1 || gotPaths[0] != "/v1/workspaces/workspace/phases/active/tasks?cursor=25&limit=1" {
+		t.Fatalf("minimum page result=%#v err=%v paths=%q", result, err, gotPaths)
+	}
+	result, _, err = c.phaseTasks(context.Background(), nil, phaseTasksInput{WorkspaceID: "workspace", PhaseID: "active", Cursor: 25, Limit: 100})
+	if err != nil || result.IsError || len(gotPaths) != 2 || gotPaths[1] != "/v1/workspaces/workspace/phases/active/tasks?cursor=25&limit=100" {
+		t.Fatalf("maximum page result=%#v err=%v paths=%q", result, err, gotPaths)
+	}
+	result, _, err = c.phaseTasks(context.Background(), nil, phaseTasksInput{WorkspaceID: "workspace", PhaseID: "active"})
+	if err != nil || result.IsError || len(gotPaths) != 3 || gotPaths[2] != "/v1/workspaces/workspace/phases/active/tasks" {
+		t.Fatalf("default bounded page result=%#v err=%v paths=%q", result, err, gotPaths)
+	}
+	for _, input := range []phaseTasksInput{{WorkspaceID: "workspace", PhaseID: "active", Cursor: -1}, {WorkspaceID: "workspace", PhaseID: "active", Limit: -1}, {WorkspaceID: "workspace", PhaseID: "active", Limit: 101}} {
+		if _, _, err := c.phaseTasks(context.Background(), nil, input); err == nil {
+			t.Fatalf("invalid Phase page input accepted: %#v", input)
+		}
+	}
+}
+
 func TestClientRenewsWorkspaceCredentialInFreshProcessWithoutPersistingToken(t *testing.T) {
 	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
 	const enrolledToken = "workspace-scoped-agent-token"

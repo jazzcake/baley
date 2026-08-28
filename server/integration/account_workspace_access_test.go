@@ -146,11 +146,17 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if invalidOriginResponse.Code != http.StatusForbidden {
 		t.Fatalf("invalid login Origin status=%d", invalidOriginResponse.Code)
 	}
-	unauthenticated := httptest.NewRequest(http.MethodGet, "/v1/workspaces/"+postgres.DemoWorkspaceID+"/graph", nil)
-	unauthenticatedResponse := httptest.NewRecorder()
-	handler.ServeHTTP(unauthenticatedResponse, unauthenticated)
-	if unauthenticatedResponse.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated graph status=%d", unauthenticatedResponse.Code)
+	for _, path := range []string{
+		"/v1/workspaces/" + postgres.DemoWorkspaceID + "/graph",
+		"/v1/workspaces/" + postgres.DemoWorkspaceID + "/context",
+		"/v1/workspaces/" + postgres.DemoWorkspaceID + "/phases/multi-user-operations/tasks",
+	} {
+		unauthenticated := httptest.NewRequest(http.MethodGet, path, nil)
+		unauthenticatedResponse := httptest.NewRecorder()
+		handler.ServeHTTP(unauthenticatedResponse, unauthenticated)
+		if unauthenticatedResponse.Code != http.StatusUnauthorized {
+			t.Fatalf("unauthenticated read %s status=%d", path, unauthenticatedResponse.Code)
+		}
 	}
 	for attempt := 0; attempt < 6; attempt++ {
 		body, _ := json.Marshal(map[string]string{
@@ -253,12 +259,14 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if _, err = repo.Pool.Exec(ctx, "INSERT INTO workspaces(id,name,state,revision) VALUES('20000000-0000-4000-8000-000000000134','Other Workspace','draft',1)"); err != nil {
 		t.Fatal(err)
 	}
-	crossWorkspace := httptest.NewRequest(http.MethodGet, "/v1/workspaces/20000000-0000-4000-8000-000000000134/graph", nil)
-	crossWorkspace.AddCookie(sessionCookie)
-	crossResponse := httptest.NewRecorder()
-	handler.ServeHTTP(crossResponse, crossWorkspace)
-	if crossResponse.Code != http.StatusNotFound {
-		t.Fatalf("cross-Workspace status=%d", crossResponse.Code)
+	for _, suffix := range []string{"/graph", "/context", "/phases/foreign/tasks"} {
+		crossWorkspace := httptest.NewRequest(http.MethodGet, "/v1/workspaces/20000000-0000-4000-8000-000000000134"+suffix, nil)
+		crossWorkspace.AddCookie(sessionCookie)
+		crossResponse := httptest.NewRecorder()
+		handler.ServeHTTP(crossResponse, crossWorkspace)
+		if crossResponse.Code != http.StatusNotFound {
+			t.Fatalf("cross-Workspace read %s status=%d", suffix, crossResponse.Code)
+		}
 	}
 	crossWorkspaceCommand, _ := json.Marshal(map[string]any{
 		"name":      "phase.create",
@@ -313,6 +321,13 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	handler.ServeHTTP(agentCrossResponse, agentCrossRequest)
 	if agentCrossResponse.Code != http.StatusNotFound {
 		t.Fatalf("Agent cross-Workspace command status=%d body=%s", agentCrossResponse.Code, agentCrossResponse.Body.String())
+	}
+	agentContextRequest := httptest.NewRequest(http.MethodGet, "/v1/workspaces/20000000-0000-4000-8000-000000000134/context", nil)
+	agentContextRequest.Header.Set("Authorization", "Bearer "+token.Token)
+	agentContextResponse := httptest.NewRecorder()
+	handler.ServeHTTP(agentContextResponse, agentContextRequest)
+	if agentContextResponse.Code != http.StatusNotFound {
+		t.Fatalf("Agent cross-Workspace compact context status=%d body=%s", agentContextResponse.Code, agentContextResponse.Body.String())
 	}
 	if err = repo.Pool.QueryRow(ctx, "SELECT count(*) FROM mutation_attempts WHERE workspace_id='20000000-0000-4000-8000-000000000134'").Scan(&foreignAttemptCount); err != nil || foreignAttemptCount != 0 {
 		t.Fatalf("Agent polluted foreign Workspace mutation audit: count=%d err=%v", foreignAttemptCount, err)

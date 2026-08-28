@@ -634,6 +634,26 @@ func readOnlyTool(name, description string) *mcp.Tool {
 	}
 }
 
+// phaseTasksTool makes the compact-context pagination boundary visible to MCP
+// clients as well as enforcing it in phaseTasks. Keep this explicit rather
+// than relying on a prose-only struct tag: clients can reject impossible page
+// requests before invoking the tool.
+func phaseTasksTool() *mcp.Tool {
+	tool := readOnlyTool("baley_phase_tasks", "List one explicitly selected non-completed Phase's Tasks with a bounded cursor page")
+	tool.InputSchema = json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"workspaceId":{"type":"string","description":"Baley workspace ID"},
+			"phaseId":{"type":"string","description":"Non-completed Phase ID to expand explicitly"},
+			"cursor":{"type":"integer","minimum":0,"description":"Task public-ID cursor returned by a prior page"},
+			"limit":{"type":"integer","minimum":1,"maximum":100,"default":50,"description":"Page size from 1 to 100; default 50"}
+		},
+		"required":["workspaceId","phaseId"],
+		"additionalProperties":false
+	}`)
+	return tool
+}
+
 func operatorTool(name, description string) *mcp.Tool {
 	return &mcp.Tool{
 		Name:        name,
@@ -694,7 +714,7 @@ func newMCPServer(c *client) *mcp.Server {
 	mcp.AddTool(server, readOnlyTool("baley_mcp_diagnostics", "Report tokenless credential-store, keychain, and local transport safety without exposing secrets"), c.diagnostics)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_context", "Read compact non-completed Phase and Lane status counts; expand a named Phase only when Task detail is needed"), c.workspaceContext)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_graph", "Read the current Workspace graph"), c.workspaceGraph)
-	mcp.AddTool(server, readOnlyTool("baley_phase_tasks", "List one explicitly selected non-completed Phase's Tasks with a bounded cursor page"), c.phaseTasks)
+	mcp.AddTool(server, phaseTasksTool(), c.phaseTasks)
 	mcp.AddTool(server, readOnlyTool("baley_task_get", "Read one Task by public ID"), c.taskGet)
 	mcp.AddTool(server, readOnlyTool("baley_task_acceptance_get", "Read a Task acceptance binding, policy/profile, assignments, and typed evidence"), c.taskAcceptanceGet)
 	mcp.AddTool(server, readOnlyTool("baley_lane_brief", "Build a read-only active-Run-first lane recovery brief with evidence mismatch classification"), c.laneBrief)
@@ -966,7 +986,7 @@ func (c *client) phaseTasks(ctx context.Context, _ *mcp.CallToolRequest, in phas
 	if in.Cursor < 0 {
 		return nil, nil, errors.New("cursor must be a non-negative Task public ID")
 	}
-	if in.Limit < 0 {
+	if in.Limit < 0 || in.Limit > 100 {
 		return nil, nil, errors.New("limit must be between 1 and 100")
 	}
 	values := url.Values{}
