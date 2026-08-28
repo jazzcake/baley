@@ -4,7 +4,7 @@ record_id: "370fe5a6-f2a0-4e14-94b3-8d0925e50b91"
 task_id: 151
 task_key: "workspace-mcp-context"
 record_type: completion-report
-run_id: null
+run_id: "82f24ddf-f911-4a7e-b727-a0fcd607fa57"
 created_at: "2026-08-28T12:00:00Z"
 created_by: "codex"
 supersedes: null
@@ -58,7 +58,7 @@ Production activation did not occur: the configured Lucy host is reachable with
 non-interactive sudo, but has no `/srv/baley`, release directory, or Baley
 systemd units. Its one-time host provisioning requires the Owner-controlled
 database, migration, and lease-secret files before the documented activation
-script can safely run. In addition, the Baley MCP credential expired while
-registering the review-response Record, so this response and completion Record
-still need live registration/commit attachment after the signed-in link is
-renewed. #151 is therefore **not yet reportable as implemented or confirmed**.
+script can safely run. The review-response Record has since been registered;
+this completion record and all record commit/blob attachments are being closed
+out under the current completion-reporting Run. #151 is therefore **not yet
+reportable as implemented or confirmed** until production activation is verified.

@@ -240,12 +240,16 @@ func TestPhaseTasksUsesOneExplicitBoundedPhasePath(t *testing.T) {
 	}))
 	defer server.Close()
 	c := &client{base: server.URL, http: server.Client()}
-	result, _, err := c.phaseTasks(context.Background(), nil, phaseTasksInput{WorkspaceID: "workspace", PhaseID: "active", Cursor: 25, Limit: 100})
-	if err != nil || result.IsError || len(gotPaths) != 1 || gotPaths[0] != "/v1/workspaces/workspace/phases/active/tasks?cursor=25&limit=100" {
-		t.Fatalf("result=%#v err=%v paths=%q", result, err, gotPaths)
+	result, _, err := c.phaseTasks(context.Background(), nil, phaseTasksInput{WorkspaceID: "workspace", PhaseID: "active", Cursor: 25, Limit: 1})
+	if err != nil || result.IsError || len(gotPaths) != 1 || gotPaths[0] != "/v1/workspaces/workspace/phases/active/tasks?cursor=25&limit=1" {
+		t.Fatalf("minimum page result=%#v err=%v paths=%q", result, err, gotPaths)
+	}
+	result, _, err = c.phaseTasks(context.Background(), nil, phaseTasksInput{WorkspaceID: "workspace", PhaseID: "active", Cursor: 25, Limit: 100})
+	if err != nil || result.IsError || len(gotPaths) != 2 || gotPaths[1] != "/v1/workspaces/workspace/phases/active/tasks?cursor=25&limit=100" {
+		t.Fatalf("maximum page result=%#v err=%v paths=%q", result, err, gotPaths)
 	}
 	result, _, err = c.phaseTasks(context.Background(), nil, phaseTasksInput{WorkspaceID: "workspace", PhaseID: "active"})
-	if err != nil || result.IsError || len(gotPaths) != 2 || gotPaths[1] != "/v1/workspaces/workspace/phases/active/tasks" {
+	if err != nil || result.IsError || len(gotPaths) != 3 || gotPaths[2] != "/v1/workspaces/workspace/phases/active/tasks" {
 		t.Fatalf("default bounded page result=%#v err=%v paths=%q", result, err, gotPaths)
 	}
 	for _, input := range []phaseTasksInput{{WorkspaceID: "workspace", PhaseID: "active", Cursor: -1}, {WorkspaceID: "workspace", PhaseID: "active", Limit: -1}, {WorkspaceID: "workspace", PhaseID: "active", Limit: 101}} {
