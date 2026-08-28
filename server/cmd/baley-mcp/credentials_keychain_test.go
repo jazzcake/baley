@@ -53,12 +53,14 @@ func TestKeychainStoreResumesGatewayWithoutGatewayToken(t *testing.T) {
 	const gatewaySecret = "registered-gateway-secret"
 	const agentToken = "resumed-agent-token"
 	keychain := &memorySecretStore{}
+	var renewals int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/mcp/gateway-sessions":
 			if r.Method != http.MethodPost {
 				t.Fatalf("method=%s", r.Method)
 			}
+			renewals++
 			_, _ = w.Write([]byte(`{"agentToken":"` + agentToken + `"}`))
 		case "/v1/workspaces/" + workspaceID:
 			if r.Header.Get("Authorization") != "Bearer "+agentToken {
@@ -89,6 +91,16 @@ func TestKeychainStoreResumesGatewayWithoutGatewayToken(t *testing.T) {
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("tokenless gateway resume failed: result=%#v err=%v", result, err)
 	}
+	third := &client{base: server.URL, http: server.Client(), credentialStorePath: path, secretStore: keychain}
+	result, _, err = third.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
+	if err != nil || result == nil || result.IsError || renewals != 2 {
+		t.Fatalf("fresh keychain-backed process did not renew a new Agent credential: result=%#v err=%v renewals=%d", result, err, renewals)
+	}
+	for _, value := range keychain.values {
+		if strings.Contains(value, agentToken) || strings.Contains(value, `"agentToken"`) {
+			t.Fatalf("keychain payload persisted an Agent credential: %s", value)
+		}
+	}
 }
 
 func TestLegacyTokenStoreMigratesToKeychainAndForcesGatewayRenewal(t *testing.T) {
@@ -97,7 +109,12 @@ func TestLegacyTokenStoreMigratesToKeychainAndForcesGatewayRenewal(t *testing.T)
 	const gatewaySecret = "registered-gateway-secret"
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	legacy := &client{base: "https://baley.example/api", gatewayToken: legacyToken, credentialStorePath: path}
-	if err := legacy.writeCredentialStore(context.Background(), &credentialStore{ServerURL: legacy.base, GatewayID: "device-1", Workspaces: map[string]workspaceCredential{workspaceID: {AgentToken: "old-agent-token", GatewaySecret: gatewaySecret}}}); err != nil {
+	legacyPayload := []byte(`{"version":5,"serverUrl":"` + legacy.base + `","gatewayId":"device-1","workspaces":{"` + workspaceID + `":{"agentToken":"old-agent-token","gatewaySecret":"` + gatewaySecret + `"}}}`)
+	ciphertext, err := legacy.encryptCredentialStore(legacyPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = writePrivateFile(path, []byte(`{"version":4,"serverUrl":"`+legacy.base+`","ciphertext":"`+ciphertext+`"}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,8 +125,8 @@ func TestLegacyTokenStoreMigratesToKeychainAndForcesGatewayRenewal(t *testing.T)
 		t.Fatal(err)
 	}
 	credential := store.Workspaces[workspaceID]
-	if credential.GatewaySecret != gatewaySecret || credential.AgentToken != "" {
-		t.Fatalf("migration did not preserve gateway secret and clear stale Agent token: %#v", credential)
+	if credential.GatewaySecret != gatewaySecret {
+		t.Fatalf("migration did not preserve gateway secret: %#v", credential)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -120,6 +137,11 @@ func TestLegacyTokenStoreMigratesToKeychainAndForcesGatewayRenewal(t *testing.T)
 	}
 	if len(keychain.values) != 1 {
 		t.Fatalf("keychain entries=%d, want 1", len(keychain.values))
+	}
+	for _, value := range keychain.values {
+		if strings.Contains(value, "old-agent-token") || strings.Contains(value, `"agentToken"`) {
+			t.Fatalf("migration retained a persisted Agent credential: %s", value)
+		}
 	}
 	if eligible, _ := migrated.legacyRollbackEligible(); !eligible {
 		t.Fatal("legacy rollback was not available immediately after migration")
