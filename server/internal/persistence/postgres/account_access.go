@@ -412,7 +412,37 @@ func (r *Repository) RevokeSession(ctx context.Context, id string, now time.Time
 		return err
 	}
 	if _, err = tx.Exec(ctx, "UPDATE account_sessions SET revoked_at=COALESCE(revoked_at,$1) WHERE id=$2", now, id); err == nil {
-		err = insertSecurityEvent(ctx, tx, "", accountID, actorID, "authentication.logged_out", "session", id, map[string]any{})
+		// A browser logout ends the Account's device trust as well. Registered
+		// gateway credentials are derived from that human membership, so leave no
+		// still-running MCP process authorized after logout.
+		rows, queryErr := tx.Query(ctx, `SELECT workspace_id
+			FROM mcp_gateway_registrations
+			WHERE account_actor_id=$1 AND status='active' FOR UPDATE`, actorID)
+		if queryErr != nil {
+			err = queryErr
+		} else {
+			workspaceIDs := map[string]struct{}{}
+			for rows.Next() {
+				var workspaceID string
+				if scanErr := rows.Scan(&workspaceID); scanErr != nil {
+					err = scanErr
+					break
+				}
+				workspaceIDs[workspaceID] = struct{}{}
+			}
+			if err == nil {
+				err = rows.Err()
+			}
+			rows.Close()
+			for workspaceID := range workspaceIDs {
+				if err = r.revokeMCPGatewaysForMemberTx(ctx, tx, workspaceID, actorID, actorID, "logout", now); err != nil {
+					break
+				}
+			}
+		}
+		if err == nil {
+			err = insertSecurityEvent(ctx, tx, "", accountID, actorID, "authentication.logged_out", "session", id, map[string]any{})
+		}
 	}
 	if err != nil {
 		return err

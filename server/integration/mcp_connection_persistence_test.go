@@ -33,6 +33,17 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if err = repo.SeedDemo(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// This persistence scenario exercises account-bound gateway enrollment.
+	// The generic demo seed intentionally stays pre-account for older scenarios,
+	// so make the required Owner/Operator memberships explicit here.
+	if _, err = repo.Pool.Exec(ctx, `INSERT INTO accounts(id,actor_id,login_id,normalized_login_id,display_name,status)
+		VALUES ('00000000-0000-4000-8000-000000000010',$1,'demo-owner','demo-owner','Demo Owner','active')`, postgres.DemoHumanActorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.Pool.Exec(ctx, `INSERT INTO workspace_memberships(workspace_id,actor_id,role,active,created_by_actor_id)
+		VALUES ($1,$2,'owner',true,$2),($1,$3,'operator',true,$2)`, postgres.DemoWorkspaceID, postgres.DemoHumanActorID, postgres.DemoAgentActorID); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	secret := "restart-safe-secret"
 	if _, err = repo.CreateMCPConnection(ctx, "restart-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-restart-safe-identity", postgres.DigestSecret(secret), now, now.Add(time.Hour)); err != nil {
@@ -73,6 +84,12 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	}
 	if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(resumed.Token), now.Add(4*time.Minute)); err != nil {
 		t.Fatalf("resumed gateway credential was not accepted: %v", err)
+	}
+	// Codex runs one stdio MCP process per client session. A second process
+	// renewing through the same device gateway must not invalidate the first
+	// process and force it into a new browser approval flow.
+	if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(issued.Token), now.Add(4*time.Minute)); err != nil {
+		t.Fatalf("gateway renewal invalidated an existing live MCP session: %v", err)
 	}
 	// A reapproved local gateway ID replaces the old registration generation.
 	// No credential from the copied/old gateway store may survive that replacement.
@@ -119,6 +136,31 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 		t.Fatalf("removed Agent membership restored itself through gateway resume: %v", err)
 	}
 
+	if _, err = restarted.CreateMCPConnection(ctx, "logout-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-logout", postgres.DigestSecret("logout-secret"), now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = restarted.ApproveMCPConnection(ctx, "logout-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(11*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	_, logoutToken, logoutGatewaySecret, err := restarted.PollMCPConnectionAndIssueAgentToken(ctx, "logout-request", postgres.DigestSecret("logout-secret"), now.Add(12*time.Minute))
+	if err != nil || logoutToken.Token == "" || logoutGatewaySecret == "" {
+		t.Fatalf("logout gateway enrollment failed: %#v %v", logoutToken, err)
+	}
+	if _, err = restarted.Pool.Exec(ctx, `INSERT INTO account_sessions(id,account_id,token_hash,csrf_token_hash,created_at,last_seen_at,idle_expires_at,absolute_expires_at)
+		VALUES ('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000010',
+		decode(repeat('01',32),'hex'),decode(repeat('02',32),'hex'),$1,$1,$2,$2)`, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err = restarted.RevokeSession(ctx, "00000000-0000-4000-8000-000000000011", now.Add(13*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(logoutToken.Token), now.Add(13*time.Minute)); err == nil {
+		t.Fatal("logout left its gateway Agent credential valid")
+	}
+	if _, err = restarted.ResumeMCPGateway(ctx, postgres.DemoWorkspaceID, "gateway-logout", logoutGatewaySecret, now.Add(13*time.Minute)); !errors.Is(err, postgres.ErrMCPGatewayNotFound) {
+		t.Fatalf("logout gateway resumed: %v", err)
+	}
+
 	if _, err = restarted.CreateMCPConnection(ctx, "rejected-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-rejected-identity", postgres.DigestSecret("reject-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +171,7 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 		t.Fatalf("rejected request poll=%#v issued=%#v err=%v", rejected, issued, err)
 	}
 
-	if _, err = restarted.CreateMCPConnection(ctx, "expired-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-expired-identity", postgres.DigestSecret("expired-secret"), now, now.Add(-time.Minute)); err != nil {
+	if _, err = restarted.CreateMCPConnection(ctx, "expired-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-expired-identity", postgres.DigestSecret("expired-secret"), now.Add(-2*time.Minute), now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = restarted.MCPConnection(ctx, "expired-request", now); !errors.Is(err, postgres.ErrMCPConnectionNotFound) {

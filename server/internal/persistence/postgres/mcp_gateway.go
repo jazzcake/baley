@@ -40,6 +40,15 @@ func (r *Repository) enrollMCPGatewayTx(ctx context.Context, tx pgx.Tx, workspac
 	if err != nil || !active {
 		return MCPGatewayRegistration{}, "", ErrMCPGatewayNotFound
 	}
+	// Serialize replacement with ResumeMCPGateway.  Without this lock, a resume
+	// can issue a token after the replacement revokes old tokens but before the
+	// registration's secret is rotated, leaving an old-secret token usable.
+	var existingRegistrationID string
+	err = tx.QueryRow(ctx, `SELECT id FROM mcp_gateway_registrations
+		WHERE workspace_id=$1 AND gateway_id=$2 FOR UPDATE`, workspaceID, gatewayID).Scan(&existingRegistrationID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return MCPGatewayRegistration{}, "", err
+	}
 	secret, secretHash, err := randomOpaqueSecret()
 	if err != nil {
 		return MCPGatewayRegistration{}, "", err
@@ -107,9 +116,13 @@ func (r *Repository) ResumeMCPGateway(ctx context.Context, workspaceID, gatewayI
 	if subtle.ConstantTimeCompare(DigestSecret(secret), registration.SecretHash) != 1 {
 		return AgentTokenResult{}, ErrMCPGatewaySecret
 	}
-	if _, err = tx.Exec(ctx, "UPDATE agent_tokens SET revoked_at=$1 WHERE gateway_registration_id=$2 AND revoked_at IS NULL", now, registration.ID); err != nil {
-		return AgentTokenResult{}, err
-	}
+	// A local gateway secret is device-scoped, while Codex starts one stdio MCP
+	// process per client session.  Renewing a session must therefore not revoke
+	// tokens held by the other live processes on the same registered device:
+	// doing so makes their next request look like a lost gateway credential and
+	// incorrectly sends the user back through browser approval.  Gateway
+	// replacement, explicit revocation, logout, membership changes, and archive
+	// still revoke every token associated with this registration.
 	issuanceID, err := randomUUIDString()
 	if err != nil {
 		return AgentTokenResult{}, err
