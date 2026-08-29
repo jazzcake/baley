@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachExistingAccount,
@@ -431,10 +431,38 @@ describe("authenticated Workspace routing", () => {
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByLabelText("Workspace name");
+    expect(screen.queryByRole("menu", { name: "Workspace One Workspace commands" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(input));
     fireEvent.change(input, { target: { value: "Renamed Workspace" } });
     fireEvent.submit(input.closest("form")!);
 
     await waitFor(() => expect(renameWorkspace).toHaveBeenCalledWith("w1", "Renamed Workspace", "csrf"));
+  });
+
+  it("clears the chooser immediately after archive revokes the current session", async () => {
+    window.history.replaceState({}, "", "/workspaces");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace One Workspace commands" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    const dialog = screen.getByRole("dialog", { name: "Archive Workspace One" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Archive" }));
+
+    await waitFor(() => expect(archiveWorkspace).toHaveBeenCalledWith("w1", "csrf"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Workspace One Workspace commands" })).toBeNull());
+  });
+
+  it("returns focus to a card's command trigger when an archive prompt closes with Escape", async () => {
+    window.history.replaceState({}, "", "/workspaces");
+    render(<App />);
+    const trigger = await screen.findByRole("button", { name: "Workspace One Workspace commands" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    expect(screen.getByRole("dialog", { name: "Archive Workspace One" })).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Archive Workspace One" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
   it("supports account menu keyboard navigation and outside-click dismissal", async () => {

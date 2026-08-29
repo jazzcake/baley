@@ -207,12 +207,14 @@ export function WorkspaceChooser({
 	csrfToken,
 	onLogout,
 	onMembershipsChanged,
+	onSessionExpired,
 }: {
 	account: Account;
 	memberships: WorkspaceMembership[];
 	csrfToken: string;
 	onLogout: () => Promise<void>;
 	onMembershipsChanged: () => Promise<void>;
+	onSessionExpired: () => void;
 }) {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
@@ -311,12 +313,12 @@ export function WorkspaceChooser({
     {activeMemberships.length === 0
       ? <section className="chooser-empty"><h2>소속된 Workspace가 없습니다</h2><p>Owner에게 참여 요청을 보내주세요.</p></section>
       : <ul className="workspace-card-grid">
-        {activeMemberships.map((membership) => <WorkspaceCard key={membership.id} membership={membership} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} />)}
+        {activeMemberships.map((membership) => <WorkspaceCard key={membership.id} membership={membership} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} onSessionExpired={onSessionExpired} />)}
       </ul>}
     {archivedOwnerMemberships.length > 0 && <section className="workspace-archived-restore" aria-label="Archived Workspaces">
       <h2>ARCHIVED WORKSPACES</h2>
       <ul className="workspace-card-grid">
-        {archivedOwnerMemberships.map((workspace) => <WorkspaceCard key={workspace.id} membership={workspace} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} />)}
+        {archivedOwnerMemberships.map((workspace) => <WorkspaceCard key={workspace.id} membership={workspace} csrfToken={csrfToken} onMembershipsChanged={onMembershipsChanged} onSessionExpired={onSessionExpired} />)}
       </ul>
     </section>}
   </main>;
@@ -326,10 +328,12 @@ function WorkspaceCard({
   membership,
   csrfToken,
   onMembershipsChanged,
+  onSessionExpired,
 }: {
   membership: WorkspaceMembership;
   csrfToken: string;
   onMembershipsChanged: () => Promise<void>;
+  onSessionExpired: () => void;
 }) {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -338,6 +342,8 @@ function WorkspaceCard({
   const [error, setError] = useState<string>();
   const rootRef = useRef<HTMLLIElement>(null);
   const renameRef = useRef<HTMLInputElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const archiveCancelRef = useRef<HTMLButtonElement>(null);
   const canManage = membership.role === "owner";
 
   useEffect(() => {
@@ -351,7 +357,9 @@ function WorkspaceCard({
       if (!rootRef.current?.contains(event.target as Node)) setMenuOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+      window.setTimeout(() => menuTriggerRef.current?.focus(), 0);
     };
     document.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
@@ -363,7 +371,9 @@ function WorkspaceCard({
   }, [menuOpen, membership.id, mode]);
 
   useEffect(() => {
-    if (menuOpen && mode === "rename") window.setTimeout(() => renameRef.current?.focus(), 0);
+    if (!menuOpen) return;
+    const focusTarget = mode === "rename" ? renameRef.current : mode === "archive" ? archiveCancelRef.current : undefined;
+    if (focusTarget) window.setTimeout(() => focusTarget?.focus(), 0);
   }, [menuOpen, mode]);
 
   const openMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -416,9 +426,9 @@ function WorkspaceCard({
     try {
       traceViewer("workspace-card-menu:event", { event: "archive-confirm", targetWorkspaceId: membership.id });
       await archiveWorkspace(membership.id, csrfToken);
-      // Archiving revokes this Account session; the normal authenticated route
-      // refresh returns the user to login.
-      navigate("/workspaces", { replace: true });
+      // The archive endpoint revokes this Account session. Clear local auth
+      // immediately so the chooser cannot keep showing stale active cards.
+      onSessionExpired();
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -448,23 +458,23 @@ function WorkspaceCard({
       <strong>{membership.name}</strong>
       <small>{membership.state === "archived" ? "Archived Workspace" : roleLabel(membership)}</small>
     </button>
-    {canManage && <button type="button" className="workspace-card-more" aria-label={`${membership.name} Workspace commands`} aria-haspopup="menu" aria-expanded={menuOpen} onClick={openMenu}><Ellipsis size={18} aria-hidden="true" /></button>}
-    {menuOpen && <span className="workspace-card-action-menu" role="menu" aria-label={`${membership.name} Workspace commands`}>
-      {mode === "actions" && (membership.state === "active"
+    {canManage && <button ref={menuTriggerRef} type="button" className="workspace-card-more" aria-label={`${membership.name} Workspace commands`} aria-haspopup="menu" aria-expanded={menuOpen && mode === "actions"} onClick={openMenu}><Ellipsis size={18} aria-hidden="true" /></button>}
+    {menuOpen && mode === "actions" && <div className="workspace-card-action-menu" role="menu" aria-label={`${membership.name} Workspace commands`}>
+      {membership.state === "active"
         ? <><button type="button" role="menuitem" onClick={() => setMode("rename")}><Pencil size={14} />Rename</button><button type="button" role="menuitem" className="workspace-context-archive" onClick={() => setMode("archive")}><Archive size={14} />Archive</button></>
-        : <button type="button" role="menuitem" disabled={busy} onClick={() => void restore()}><RotateCcw size={14} />{busy ? "Restoring…" : "Restore"}</button>)}
-      {mode === "rename" && <form onSubmit={rename}>
-        <label htmlFor={`workspace-rename-${membership.id}`}>Workspace name</label>
-        <input ref={renameRef} id={`workspace-rename-${membership.id}`} defaultValue={membership.name} maxLength={120} required />
-        {error && <span className="form-error" role="alert">{error}</span>}
-        <span className="workspace-create-actions"><button type="button" onClick={() => { setMode("actions"); setError(undefined); }}>Cancel</button><button type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button></span>
-      </form>}
-      {mode === "archive" && <section className="workspace-card-archive-confirm" role="dialog" aria-label={`Archive ${membership.name}`}>
-        <strong>Archive this Workspace?</strong><p>Tasks and records stay preserved. Members must log in and reconnect MCP before restoration.</p>
-        {error && <span className="form-error" role="alert">{error}</span>}
-        <span className="workspace-create-actions"><button type="button" onClick={() => { setMode("actions"); setError(undefined); }}>Cancel</button><button type="button" className="workspace-archive-confirm-button" disabled={busy} onClick={() => void archive()}>{busy ? "Archiving…" : "Archive"}</button></span>
-      </section>}
-    </span>}
+        : <button type="button" role="menuitem" disabled={busy} onClick={() => void restore()}><RotateCcw size={14} />{busy ? "Restoring…" : "Restore"}</button>}
+    </div>}
+    {menuOpen && mode === "rename" && <form className="workspace-card-action-popover" onSubmit={rename}>
+      <label htmlFor={`workspace-rename-${membership.id}`}>Workspace name</label>
+      <input ref={renameRef} id={`workspace-rename-${membership.id}`} defaultValue={membership.name} maxLength={120} required />
+      {error && <span className="form-error" role="alert">{error}</span>}
+      <span className="workspace-create-actions"><button type="button" onClick={() => { setMode("actions"); setError(undefined); menuTriggerRef.current?.focus(); }}>Cancel</button><button type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button></span>
+    </form>}
+    {menuOpen && mode === "archive" && <section className="workspace-card-action-popover workspace-card-archive-confirm" role="dialog" aria-label={`Archive ${membership.name}`}>
+      <strong>Archive this Workspace?</strong><p>Tasks and records stay preserved. Members must log in and reconnect MCP before restoration.</p>
+      {error && <span className="form-error" role="alert">{error}</span>}
+      <span className="workspace-create-actions"><button ref={archiveCancelRef} type="button" onClick={() => { setMode("actions"); setError(undefined); menuTriggerRef.current?.focus(); }}>Cancel</button><button type="button" className="workspace-archive-confirm-button" disabled={busy} onClick={() => void archive()}>{busy ? "Archiving…" : "Archive"}</button></span>
+    </section>}
   </li>;
 }
 

@@ -91,6 +91,7 @@ function AppRoutes() {
       csrfToken={auth.state.csrfToken}
 		onLogout={auth.logout}
       onMembershipsChanged={auth.refreshWorkspaces}
+      onSessionExpired={auth.expireSession}
     />} />
     <Route path="/workspaces/:workspaceId/*" element={<WorkspaceRoute />} />
     <Route path="*" element={<Navigate to={auth.state.memberships.length === 1 ? `/workspaces/${encodeURIComponent(auth.state.memberships[0]!.id)}` : "/workspaces"} replace />} />
