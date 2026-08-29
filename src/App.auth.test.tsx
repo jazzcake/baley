@@ -191,7 +191,8 @@ describe("authenticated Workspace routing", () => {
     window.history.replaceState({}, "", "/workspaces");
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Workspace One/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace One Workspace commands" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Restore" }));
     await waitFor(() => expect(restoreWorkspace).toHaveBeenCalledWith("w1", "csrf"));
   });
 
@@ -421,15 +422,12 @@ describe("authenticated Workspace routing", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("opens Owner Workspace commands without selecting the Workspace and submits rename", async () => {
-    vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
-    window.history.replaceState({}, "", "/workspaces/w1");
+  it("opens Owner Workspace commands from its card and submits rename", async () => {
+    window.history.replaceState({}, "", "/workspaces");
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Workspace One Workspace 전환" }));
-    fireEvent.click(screen.getByRole("button", { name: "Workspace One Workspace commands" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace One Workspace commands" }));
     expect(screen.getByRole("menu", { name: "Workspace One Workspace commands" })).toBeTruthy();
-    expect(document.querySelector("[data-workspace-id='w1']")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByLabelText("Workspace name");
