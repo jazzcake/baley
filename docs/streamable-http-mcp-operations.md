@@ -46,6 +46,14 @@ On Windows, run from the repository checkout:
 .\scripts\install-baley-mcp-windows.ps1
 ```
 
+The installers build a stripped (`-trimpath -ldflags "-s -w"`) release binary
+in a Git-revisioned path so an upgrade never tries to overwrite an executable
+held open by an active stdio session.
+`baley-mcp` remains one tokenless stdio process per Codex session by design;
+use `scripts\measure-baley-mcp-windows.ps1` to distinguish on-disk binary size
+from the running processes' private and working-set memory. The diagnostic
+also reports per-session aggregates for a comparable idle/active snapshot.
+
 The equivalent CLI registration is:
 
 ```bash

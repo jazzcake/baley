@@ -9,7 +9,16 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 api_url="${BALEY_SERVER_URL:-https://jazzcake-home.tail87e929.ts.net/api}"
 state_dir="${XDG_STATE_HOME:-$HOME/Library/Application Support}/baley-mcp"
 bin_dir="${HOME}/.local/bin"
-binary="${bin_dir}/baley-mcp"
+if [[ -n "$(git -C "${repo_root}" status --porcelain)" ]]; then
+  echo "Commit or stash Baley MCP source changes before creating a release install" >&2
+  exit 1
+fi
+release_id="$(git -C "${repo_root}" rev-parse --short=12 HEAD)"
+if [ -z "${release_id}" ]; then
+  echo "Unable to determine the Baley MCP release ID" >&2
+  exit 1
+fi
+binary="${bin_dir}/baley-mcp-releases/${release_id}/baley-mcp"
 credentials_file="${state_dir}/credentials.json"
 legacy_plist="${HOME}/Library/LaunchAgents/com.baley.mcp.plist"
 
@@ -26,9 +35,14 @@ case "$api_url" in
     ;;
 esac
 
-mkdir -p "$state_dir" "$bin_dir"
+mkdir -p "$state_dir" "$(dirname "$binary")"
 chmod 700 "$state_dir"
-go -C "${repo_root}/server" build -o "$binary" ./cmd/baley-mcp
+# Desktop/CLI starts this binary per stdio session. Keep the source path and
+# debug tables out of the release artifact without changing its keychain or
+# tokenless transport behavior.
+if [ ! -f "$binary" ]; then
+  go -C "${repo_root}/server" build -trimpath -ldflags="-s -w" -o "$binary" ./cmd/baley-mcp
+fi
 
 # Stop the retired HTTP gateway if it exists. Its files are deliberately left
 # in place so a one-time legacy-store migration can still be diagnosed; the
@@ -37,7 +51,8 @@ if [[ -f "$legacy_plist" ]]; then
   launchctl bootout "gui/${UID}" "$legacy_plist" >/dev/null 2>&1 || true
 fi
 
-codex mcp remove baley >/dev/null 2>&1 || true
+# `codex mcp add` replaces the named registration atomically, preserving the
+# prior configuration if registration of this release fails.
 codex mcp add baley \
   --env "BALEY_SERVER_URL=${api_url%/}" \
   --env "BALEY_MCP_CREDENTIAL_STORE=${credentials_file}" \
