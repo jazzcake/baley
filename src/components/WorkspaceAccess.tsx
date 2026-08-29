@@ -1,18 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, LayoutGrid, LogOut, Plus, Settings, ShieldCheck, X } from "lucide-react";
+import { Archive, Check, ChevronDown, Ellipsis, LayoutGrid, LogOut, Pencil, Plus, RotateCcw, Settings, ShieldCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
 	attachExistingAccount,
+	archiveWorkspace,
 	beginOIDCLink,
   approveMCPConnection,
   createWorkspace,
-  createWorkspaceMember,
+	createWorkspaceMember,
   disableMemberAccount,
 	fetchOIDCProviders,
 	fetchWorkspaceMembers,
+	fetchWorkspaces,
   fetchMCPConnection,
   removeWorkspaceMember,
-  resetMemberPassword,
+	resetMemberPassword,
+	renameWorkspace,
+	restoreWorkspace,
   transferWorkspaceOwnership,
 	updateWorkspaceMember,
 	oidcLoginURL,
@@ -217,8 +221,12 @@ export function WorkspaceChooser({
   const [createError, setCreateError] = useState<string>();
 	const [logoutBusy, setLogoutBusy] = useState(false);
 	const [logoutError, setLogoutError] = useState<string>();
+  const [restoreBusyWorkspaceId, setRestoreBusyWorkspaceId] = useState<string>();
+  const [restoreError, setRestoreError] = useState<string>();
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const createNameRef = useRef<HTMLInputElement>(null);
+  const activeMemberships = memberships.filter((item) => item.state === "active");
+  const archivedOwnerMemberships = memberships.filter((item) => item.state === "archived" && item.role === "owner");
 
   useEffect(() => {
     if (!creating) return;
@@ -251,6 +259,26 @@ export function WorkspaceChooser({
       setCreateError(errorMessage(reason));
     } finally {
       setCreateBusy(false);
+    }
+  };
+
+  const restoreArchivedWorkspace = async (workspace: WorkspaceMembership) => {
+    if (restoreBusyWorkspaceId) return;
+    setRestoreBusyWorkspaceId(workspace.id);
+    setRestoreError(undefined);
+    try {
+      traceViewer("workspace-menu-action:event", {
+        source: "workspace-chooser",
+        action: "restore",
+        targetWorkspaceId: workspace.id,
+      });
+      const restored = await restoreWorkspace(workspace.id, csrfToken);
+      await onMembershipsChanged();
+      navigate(`/workspaces/${encodeURIComponent(restored.id)}`);
+    } catch (reason) {
+      setRestoreError(errorMessage(reason));
+    } finally {
+      setRestoreBusyWorkspaceId(undefined);
     }
   };
 
@@ -303,10 +331,10 @@ export function WorkspaceChooser({
       </div>
     </header>
     {logoutError && <div className="form-error workspace-chooser-logout-error" role="alert">{logoutError}</div>}
-    {memberships.length === 0
+    {activeMemberships.length === 0
       ? <section className="chooser-empty"><h2>소속된 Workspace가 없습니다</h2><p>Owner에게 참여 요청을 보내주세요.</p></section>
       : <ul className="workspace-card-grid">
-        {memberships.map((membership) => <li key={membership.id}>
+        {activeMemberships.map((membership) => <li key={membership.id}>
           <button type="button" onClick={() => {
             traceViewer("workspace-select:event", {
               event: "chooser-click",
@@ -322,6 +350,19 @@ export function WorkspaceChooser({
           </button>
         </li>)}
       </ul>}
+    {archivedOwnerMemberships.length > 0 && <section className="workspace-archived-restore" aria-label="Archived Workspaces">
+      <h2>ARCHIVED WORKSPACES</h2>
+      {restoreError && <span className="form-error" role="alert">{restoreError}</span>}
+      <ul className="workspace-card-grid">
+        {archivedOwnerMemberships.map((workspace) => <li key={workspace.id}>
+          <button type="button" disabled={Boolean(restoreBusyWorkspaceId)} onClick={() => void restoreArchivedWorkspace(workspace)}>
+            <span>ARCHIVED · OWNER</span>
+            <strong>{workspace.name}</strong>
+            <small>{restoreBusyWorkspaceId === workspace.id ? "Restoring…" : "Restore Workspace"}</small>
+          </button>
+        </li>)}
+      </ul>
+    </section>}
   </main>;
 }
 
@@ -503,10 +544,19 @@ export function WorkspaceContextSwitcher({
   const [creating, setCreating] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string>();
+  const [archivedMemberships, setArchivedMemberships] = useState<WorkspaceMembership[]>([]);
+  const [actionWorkspace, setActionWorkspace] = useState<WorkspaceMembership>();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string>();
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState<string>();
   const rootRef = useRef<HTMLSpanElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLSpanElement>(null);
   const createNameRef = useRef<HTMLInputElement>(null);
+  const renameNameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!creating) return;
@@ -523,6 +573,9 @@ export function WorkspaceContextSwitcher({
 
   useEffect(() => {
     if (!open) return;
+    void fetchWorkspaces(undefined, true).then((items) => {
+      setArchivedMemberships(items.filter((item) => item.state === "archived"));
+    }).catch(() => setArchivedMemberships([]));
     traceViewer("workspace-menu:state-committed", {
       calculatedOpenState: true,
       currentWorkspaceId: membership.id,
@@ -538,11 +591,15 @@ export function WorkspaceContextSwitcher({
       menuRef.current?.querySelector<HTMLButtonElement>("[role='menuitemradio']")?.focus();
     }, 0);
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    if (!rootRef.current?.contains(event.target as Node)) {
+      setOpen(false);
+      setActionWorkspace(undefined);
+    }
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setOpen(false);
+      setActionWorkspace(undefined);
       triggerRef.current?.focus();
     };
     document.addEventListener("pointerdown", onPointerDown);
@@ -554,6 +611,11 @@ export function WorkspaceContextSwitcher({
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [membership.id, memberships.length, open]);
+
+  useEffect(() => {
+    if (!renameOpen) return;
+    window.setTimeout(() => renameNameRef.current?.focus(), 0);
+  }, [renameOpen]);
 
   const selectWorkspace = (targetWorkspaceId: string) => {
     const targetPath = `/workspaces/${encodeURIComponent(targetWorkspaceId)}`;
@@ -589,6 +651,73 @@ export function WorkspaceContextSwitcher({
       setCreateError(errorMessage(reason));
     } finally {
       setCreateBusy(false);
+    }
+  };
+
+  const refreshArchived = async () => {
+    const items = await fetchWorkspaces(undefined, true);
+    setArchivedMemberships(items.filter((item) => item.state === "archived"));
+  };
+
+  const submitRename = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const target = actionWorkspace;
+    const name = renameNameRef.current?.value.trim() ?? "";
+    if (!target || !name || renameBusy) return;
+    setRenameBusy(true);
+    setRenameError(undefined);
+    try {
+      traceViewer("workspace-menu-action:event", { action: "rename", targetWorkspaceId: target.id, calculatedName: name });
+      await renameWorkspace(target.id, name, csrfToken);
+      await onMembershipsChanged();
+      await refreshArchived();
+      setRenameOpen(false);
+      setActionWorkspace(undefined);
+    } catch (reason) {
+      setRenameError(errorMessage(reason));
+    } finally {
+      setRenameBusy(false);
+    }
+  };
+
+  const archiveTarget = async () => {
+    const target = actionWorkspace;
+    if (!target || archiveBusy) return;
+    setArchiveBusy(true);
+    setArchiveError(undefined);
+    try {
+      traceViewer("workspace-menu-action:event", { action: "archive", targetWorkspaceId: target.id, currentWorkspaceId: membership.id });
+      await archiveWorkspace(target.id, csrfToken);
+      // Archiving revokes every member's Account session. The current page's
+      // normal polling will receive 401 and return the user to login.
+      setArchiveConfirmOpen(false);
+      setActionWorkspace(undefined);
+      setOpen(false);
+      navigate("/workspaces", { replace: target.id === membership.id });
+    } catch (reason) {
+      setArchiveError(errorMessage(reason));
+    } finally {
+      setArchiveBusy(false);
+    }
+  };
+
+  const restoreTarget = async () => {
+    const target = actionWorkspace;
+    if (!target || archiveBusy) return;
+    setArchiveBusy(true);
+    setArchiveError(undefined);
+    try {
+      traceViewer("workspace-menu-action:event", { action: "restore", targetWorkspaceId: target.id });
+      const restored = await restoreWorkspace(target.id, csrfToken);
+      await onMembershipsChanged();
+      await refreshArchived();
+      setActionWorkspace(undefined);
+      setOpen(false);
+      navigate(`/workspaces/${encodeURIComponent(restored.id)}`);
+    } catch (reason) {
+      setArchiveError(errorMessage(reason));
+    } finally {
+      setArchiveBusy(false);
     }
   };
 
@@ -628,20 +757,52 @@ export function WorkspaceContextSwitcher({
       onKeyDown={moveMenuFocus}
     >
       <span className="workspace-context-menu-label" role="presentation">WORKSPACES</span>
-      {memberships.map((item, index) => <button
-        type="button"
-        role="menuitemradio"
-        aria-checked={item.id === membership.id}
-        tabIndex={index === 0 ? 0 : -1}
-        key={item.id}
-        onClick={() => selectWorkspace(item.id)}
-      >
-        <span>
-          <strong>{item.name}</strong>
-          <small>{roleLabel(item)}</small>
-        </span>
-        {item.id === membership.id && <Check size={16} aria-label="현재 Workspace" />}
-      </button>)}
+      {memberships.filter((item) => item.state === "active").map((item, index) => <span className="workspace-context-row" key={item.id}>
+        <button
+          type="button"
+          role="menuitemradio"
+          aria-checked={item.id === membership.id}
+          tabIndex={index === 0 ? 0 : -1}
+          onClick={() => selectWorkspace(item.id)}
+        >
+          <span>
+            <strong>{item.name}</strong>
+            <small>{roleLabel(item)}</small>
+          </span>
+          {item.id === membership.id && <Check size={16} aria-label="현재 Workspace" />}
+        </button>
+        {item.role === "owner" && <button
+          type="button"
+          className="workspace-context-more"
+          aria-label={`${item.name} Workspace commands`}
+          aria-haspopup="menu"
+          aria-expanded={actionWorkspace?.id === item.id}
+          onClick={(event) => {
+            event.stopPropagation();
+            const next = actionWorkspace?.id === item.id ? undefined : item;
+            traceViewer("workspace-menu-action:event", { action: "overflow", targetWorkspaceId: item.id, calculatedOpenState: Boolean(next) });
+            setActionWorkspace(next);
+            setRenameOpen(false);
+            setArchiveConfirmOpen(false);
+            setRenameError(undefined);
+            setArchiveError(undefined);
+          }}
+        ><Ellipsis size={17} aria-hidden="true" /></button>}
+      </span>)}
+      {archivedMemberships.length > 0 && <>
+        <span className="workspace-context-menu-separator" role="separator" />
+        <span className="workspace-context-menu-label" role="presentation">ARCHIVED</span>
+        {archivedMemberships.map((item) => <span className="workspace-context-row" key={item.id}>
+          <span className="workspace-context-archived-row"><span><strong>{item.name}</strong><small>Archived · Owner</small></span></span>
+          <button type="button" className="workspace-context-more" aria-label={`${item.name} Workspace commands`} aria-haspopup="menu" aria-expanded={actionWorkspace?.id === item.id} onClick={() => {
+            traceViewer("workspace-menu-action:event", { action: "overflow", targetWorkspaceId: item.id, calculatedOpenState: actionWorkspace?.id !== item.id });
+            setActionWorkspace(actionWorkspace?.id === item.id ? undefined : item);
+            setRenameOpen(false);
+            setArchiveConfirmOpen(false);
+            setArchiveError(undefined);
+          }}><Ellipsis size={17} aria-hidden="true" /></button>
+        </span>)}
+      </>}
       <span className="workspace-context-menu-separator" role="separator" />
       <button
         type="button"
@@ -665,6 +826,20 @@ export function WorkspaceContextSwitcher({
         <span><strong><Plus size={14} aria-hidden="true" /> 새 Workspace</strong><small>Owner로 생성</small></span>
       </button>
     </span>}
+    {actionWorkspace && open && <span className="workspace-context-action-menu" role="menu" aria-label={`${actionWorkspace.name} Workspace commands`}>
+      {actionWorkspace.state === "active" && <button type="button" role="menuitem" onClick={() => {
+        setRenameOpen(true);
+        setArchiveConfirmOpen(false);
+        setRenameError(undefined);
+      }}><Pencil size={14} />Rename</button>}
+      {actionWorkspace.state === "active"
+        ? <button type="button" role="menuitem" className="workspace-context-archive" onClick={() => {
+          setArchiveConfirmOpen(true);
+          setRenameOpen(false);
+          setArchiveError(undefined);
+        }}><Archive size={14} />Archive</button>
+        : <button type="button" role="menuitem" onClick={() => void restoreTarget()} disabled={archiveBusy}><RotateCcw size={14} />{archiveBusy ? "Restoring…" : "Restore"}</button>}
+    </span>}
     {creating && <form className="workspace-create-popover" onSubmit={submitWorkspace}>
       <label htmlFor="workspace-create-name">Workspace 이름</label>
       <input ref={createNameRef} id="workspace-create-name" maxLength={120} required />
@@ -678,6 +853,24 @@ export function WorkspaceContextSwitcher({
         <button type="submit" disabled={createBusy}>{createBusy ? "생성 중…" : "생성"}</button>
       </span>
     </form>}
+    {renameOpen && actionWorkspace && <form className="workspace-create-popover workspace-context-action-popover" onSubmit={submitRename}>
+      <label htmlFor="workspace-rename-name">Workspace name</label>
+      <input ref={renameNameRef} id="workspace-rename-name" defaultValue={actionWorkspace.name} maxLength={120} required />
+      {renameError && <span className="form-error" role="alert">{renameError}</span>}
+      <span className="workspace-create-actions">
+        <button type="button" onClick={() => { setRenameOpen(false); setRenameError(undefined); }}>Cancel</button>
+        <button type="submit" disabled={renameBusy}>{renameBusy ? "Saving…" : "Save"}</button>
+      </span>
+    </form>}
+    {archiveConfirmOpen && actionWorkspace && <section className="workspace-create-popover workspace-context-action-popover workspace-archive-confirm" role="dialog" aria-label={`Archive ${actionWorkspace.name}`}>
+      <strong>Archive this Workspace?</strong>
+      <p>Tasks and records stay preserved. Members must log in and reconnect MCP before any restore.</p>
+      {archiveError && <span className="form-error" role="alert">{archiveError}</span>}
+      <span className="workspace-create-actions">
+        <button type="button" onClick={() => { setArchiveConfirmOpen(false); setArchiveError(undefined); }}>Cancel</button>
+        <button type="button" className="workspace-archive-confirm-button" disabled={archiveBusy} onClick={() => void archiveTarget()}>{archiveBusy ? "Archiving…" : "Archive"}</button>
+      </span>
+    </section>}
   </span>;
 }
 

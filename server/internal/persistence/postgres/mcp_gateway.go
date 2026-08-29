@@ -33,6 +33,7 @@ func (r *Repository) enrollMCPGatewayTx(ctx context.Context, tx pgx.Tx, workspac
 	var active bool
 	err := tx.QueryRow(ctx, `SELECT membership.active AND account.status='active'
 		FROM workspace_memberships membership
+		JOIN workspaces workspace ON workspace.id=membership.workspace_id AND workspace.state='active'
 		JOIN accounts account ON account.actor_id=membership.actor_id
 		JOIN actors actor ON actor.id=membership.actor_id AND actor.actor_type='human'
 		WHERE membership.workspace_id=$1 AND membership.actor_id=$2 FOR UPDATE`, workspaceID, accountActorID).Scan(&active)
@@ -91,6 +92,7 @@ func (r *Repository) ResumeMCPGateway(ctx context.Context, workspaceID, gatewayI
 	err = tx.QueryRow(ctx, `SELECT registration.id,registration.workspace_id,registration.account_actor_id,registration.agent_actor_id,
 		registration.gateway_id,registration.gateway_secret_hash,registration.status,registration.generation,registration.created_at,registration.revoked_at
 		FROM mcp_gateway_registrations registration
+		JOIN workspaces workspace ON workspace.id=registration.workspace_id AND workspace.state='active'
 		JOIN workspace_memberships membership ON membership.workspace_id=registration.workspace_id
 		  AND membership.actor_id=registration.account_actor_id AND membership.active
 		JOIN accounts account ON account.actor_id=registration.account_actor_id AND account.status='active'

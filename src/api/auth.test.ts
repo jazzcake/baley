@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   attachExistingAccount,
+  archiveWorkspace,
   createWorkspace,
   disableMemberAccount,
 	  fetchOIDCProviders,
   login,
   logout,
+  renameWorkspace,
   resetMemberPassword,
+  restoreWorkspace,
   updateWorkspaceMember,
 } from "./auth";
 
@@ -91,6 +94,29 @@ describe("credentialed account API", () => {
       workspaceId: workspace.id,
       name: workspace.name,
     });
+  });
+
+  it("uses distinct CSRF-bound endpoints for rename, archive, and restore", async () => {
+    const workspace = { id: "workspace", name: "Renamed", state: "active", revision: 2, role: "owner", relationship: "owner", capabilities: [] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(workspace))
+      .mockResolvedValueOnce(jsonResponse({ ...workspace, state: "archived" }))
+      .mockResolvedValueOnce(jsonResponse(workspace));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renameWorkspace("workspace", "Renamed", "csrf");
+    await archiveWorkspace("workspace", "csrf");
+    await restoreWorkspace("workspace", "csrf");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      expect.stringContaining("/v1/workspaces/workspace"),
+      expect.stringContaining("/v1/workspaces/workspace/archive"),
+      expect.stringContaining("/v1/workspaces/workspace/restore"),
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => (init as RequestInit).method)).toEqual(["PATCH", "POST", "POST"]);
+    for (const [, init] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
+      expect((init.headers as Headers).get("X-Baley-CSRF")).toBe("csrf");
+    }
   });
 
   it("uses distinct admin endpoints for attach, account disable, and password reset", async () => {

@@ -36,6 +36,12 @@ type CreatedMember struct {
 	AccountID, ActorID string
 }
 
+var (
+	ErrWorkspaceNotFound    = errors.New("workspace not found")
+	ErrWorkspaceNotActive   = errors.New("workspace is not active")
+	ErrWorkspaceNotArchived = errors.New("workspace is not archived")
+)
+
 func (r *Repository) CreateOwnedWorkspace(ctx context.Context, workspaceID, name, creatorActorID string) (WorkspaceAccess, error) {
 	workspaceID, name, creatorActorID = strings.TrimSpace(workspaceID), strings.TrimSpace(name), strings.TrimSpace(creatorActorID)
 	if workspaceID == "" || name == "" || len([]rune(name)) > 120 || creatorActorID == "" {
@@ -455,6 +461,7 @@ func (r *Repository) AgentByTokenHash(ctx context.Context, hash []byte, now time
 	var raw []byte
 	err := r.Pool.QueryRow(ctx, `SELECT token.id::text,token.actor_id,token.workspace_id,token.created_by_actor_id,token.scopes
 		FROM agent_tokens token
+		JOIN workspaces workspace ON workspace.id=token.workspace_id AND workspace.state='active'
 		JOIN actors actor ON actor.id=token.actor_id AND actor.actor_type='agent'
 		JOIN workspace_memberships membership
 		  ON membership.workspace_id=token.workspace_id AND membership.actor_id=token.actor_id
@@ -485,7 +492,10 @@ func (r *Repository) AgentByTokenHash(ctx context.Context, hash []byte, now time
 func (r *Repository) Membership(ctx context.Context, workspaceID, actorID string) (*authz.Membership, error) {
 	value := &authz.Membership{ActorID: actorID, WorkspaceID: workspaceID}
 	var role string
-	err := r.Pool.QueryRow(ctx, "SELECT role,active FROM workspace_memberships WHERE workspace_id=$1 AND actor_id=$2", workspaceID, actorID).Scan(&role, &value.Active)
+	err := r.Pool.QueryRow(ctx, `SELECT membership.role,membership.active
+		FROM workspace_memberships membership
+		JOIN workspaces workspace ON workspace.id=membership.workspace_id AND workspace.state='active'
+		WHERE membership.workspace_id=$1 AND membership.actor_id=$2`, workspaceID, actorID).Scan(&role, &value.Active)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -493,13 +503,36 @@ func (r *Repository) Membership(ctx context.Context, workspaceID, actorID string
 	return value, err
 }
 
-func (r *Repository) ListAccountWorkspaces(ctx context.Context, accountID string) ([]WorkspaceAccess, error) {
+// LifecycleMembership is deliberately limited to the archive/restore routes.
+// All ordinary authorization continues to use Membership, which exposes active
+// Workspaces only.
+func (r *Repository) LifecycleMembership(ctx context.Context, workspaceID, actorID string) (*authz.Membership, error) {
+	value := &authz.Membership{ActorID: actorID, WorkspaceID: workspaceID}
+	var role string
+	err := r.Pool.QueryRow(ctx, `SELECT membership.role,membership.active
+		FROM workspace_memberships membership
+		JOIN workspaces workspace ON workspace.id=membership.workspace_id AND workspace.state IN ('active','archived')
+		WHERE membership.workspace_id=$1 AND membership.actor_id=$2`, workspaceID, actorID).Scan(&role, &value.Active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	value.Role = authz.Role(role)
+	return value, err
+}
+
+func (r *Repository) ListAccountWorkspaces(ctx context.Context, accountID string, includeArchived bool) ([]WorkspaceAccess, error) {
+	stateFilter := "workspace.state='active'"
+	if includeArchived {
+		// An archived Workspace remains discoverable only to its Owner so a
+		// revoked session can re-authenticate and perform an explicit restore.
+		stateFilter = "(workspace.state='active' OR (workspace.state='archived' AND membership.role='owner'))"
+	}
 	rows, err := r.Pool.Query(ctx, `SELECT workspace.id,workspace.name,workspace.state,workspace.revision,membership.role
 		FROM accounts account
 		JOIN workspace_memberships membership ON membership.actor_id=account.actor_id AND membership.active
 		JOIN workspaces workspace ON workspace.id=membership.workspace_id
-		WHERE account.id=$1 AND account.status='active'
-		ORDER BY lower(workspace.name),workspace.id`, accountID)
+		WHERE account.id=$1 AND account.status='active' AND `+stateFilter+`
+		ORDER BY CASE workspace.state WHEN 'active' THEN 0 ELSE 1 END,lower(workspace.name),workspace.id`, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -517,6 +550,136 @@ func (r *Repository) ListAccountWorkspaces(ctx context.Context, accountID string
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func workspaceName(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || len([]rune(value)) > 120 {
+		return "", errors.New("workspace name must be between 1 and 120 characters")
+	}
+	return value, nil
+}
+
+func (r *Repository) RenameOwnedWorkspace(ctx context.Context, workspaceID, actorID, name string, now time.Time) (WorkspaceAccess, error) {
+	name, err := workspaceName(name)
+	if err != nil {
+		return WorkspaceAccess{}, err
+	}
+	tx, err := r.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return WorkspaceAccess{}, err
+	}
+	defer tx.Rollback(ctx)
+	value, err := r.ownedWorkspaceTx(ctx, tx, workspaceID, actorID, "active")
+	if err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if _, err = tx.Exec(ctx, "UPDATE workspaces SET name=$1,revision=revision+1 WHERE id=$2", name, workspaceID); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if err = insertSecurityEvent(ctx, tx, workspaceID, "", actorID, "workspace.renamed", "workspace", workspaceID, map[string]any{"previousName": value.Name, "name": name}); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if err = tx.QueryRow(ctx, "SELECT name,revision FROM workspaces WHERE id=$1", workspaceID).Scan(&value.Name, &value.Revision); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	return value, nil
+}
+
+func (r *Repository) ArchiveOwnedWorkspace(ctx context.Context, workspaceID, actorID string, now time.Time) (WorkspaceAccess, error) {
+	tx, err := r.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return WorkspaceAccess{}, err
+	}
+	defer tx.Rollback(ctx)
+	value, err := r.ownedWorkspaceTx(ctx, tx, workspaceID, actorID, "active")
+	if err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if _, err = tx.Exec(ctx, "UPDATE agent_tokens SET revoked_at=$1 WHERE workspace_id=$2 AND revoked_at IS NULL", now, workspaceID); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE mcp_gateway_registrations
+		SET status='revoked',revoked_at=$1,revoked_by_actor_id=$2,revoke_reason='workspace_archived'
+		WHERE workspace_id=$3 AND status='active'`, now, actorID, workspaceID); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE mcp_connection_requests
+		SET status='rejected',rejected_at=$1,approved_by_actor_id=$2
+		WHERE workspace_id=$3 AND status='pending'`, now, actorID, workspaceID); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE account_sessions session SET revoked_at=COALESCE(session.revoked_at,$1)
+		FROM accounts account JOIN workspace_memberships membership ON membership.actor_id=account.actor_id
+		WHERE session.account_id=account.id AND membership.workspace_id=$2 AND membership.active`, now, workspaceID); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if _, err = tx.Exec(ctx, "UPDATE workspaces SET state='archived',revision=revision+1 WHERE id=$1", workspaceID); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if err = insertSecurityEvent(ctx, tx, workspaceID, "", actorID, "workspace.archived", "workspace", workspaceID, map[string]any{"sessionsRevoked": true, "gatewayReenrollmentRequired": true}); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if err = tx.QueryRow(ctx, "SELECT state,revision FROM workspaces WHERE id=$1", workspaceID).Scan(&value.State, &value.Revision); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	return value, nil
+}
+
+func (r *Repository) RestoreOwnedWorkspace(ctx context.Context, workspaceID, actorID string, now time.Time) (WorkspaceAccess, error) {
+	tx, err := r.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return WorkspaceAccess{}, err
+	}
+	defer tx.Rollback(ctx)
+	value, err := r.ownedWorkspaceTx(ctx, tx, workspaceID, actorID, "archived")
+	if err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if _, err = tx.Exec(ctx, "UPDATE workspaces SET state='active',revision=revision+1 WHERE id=$1", workspaceID); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if err = insertSecurityEvent(ctx, tx, workspaceID, "", actorID, "workspace.restored", "workspace", workspaceID, map[string]any{"freshLoginRequired": true, "gatewayReenrollmentRequired": true}); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if err = tx.QueryRow(ctx, "SELECT state,revision FROM workspaces WHERE id=$1", workspaceID).Scan(&value.State, &value.Revision); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return WorkspaceAccess{}, err
+	}
+	return value, nil
+}
+
+func (r *Repository) ownedWorkspaceTx(ctx context.Context, tx pgx.Tx, workspaceID, actorID, requiredState string) (WorkspaceAccess, error) {
+	var value WorkspaceAccess
+	err := tx.QueryRow(ctx, `SELECT workspace.id,workspace.name,workspace.state,workspace.revision,membership.role
+		FROM workspaces workspace
+		JOIN workspace_memberships membership ON membership.workspace_id=workspace.id
+		JOIN accounts account ON account.actor_id=membership.actor_id AND account.status='active'
+		JOIN actors actor ON actor.id=membership.actor_id AND actor.actor_type='human'
+		WHERE workspace.id=$1 AND membership.actor_id=$2 AND membership.active AND membership.role='owner'
+		FOR UPDATE OF workspace,membership`, workspaceID, actorID).Scan(&value.ID, &value.Name, &value.State, &value.Revision, &value.Role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WorkspaceAccess{}, ErrWorkspaceNotFound
+	}
+	if err != nil {
+		return WorkspaceAccess{}, err
+	}
+	if value.State != requiredState {
+		if requiredState == "active" {
+			return WorkspaceAccess{}, ErrWorkspaceNotActive
+		}
+		return WorkspaceAccess{}, ErrWorkspaceNotArchived
+	}
+	value.Capabilities, err = authz.ResolveRole(authz.RoleOwner, authz.ActorHuman, authz.HumanSession)
+	return value, err
 }
 
 func (r *Repository) ListMembers(ctx context.Context, workspaceID string) ([]MemberAccess, error) {

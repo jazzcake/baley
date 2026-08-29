@@ -645,7 +645,8 @@ func (r *Repository) BacklogList(ctx context.Context, wid, laneID, status string
 	return out, rows.Err()
 }
 func (r *Repository) WorkspaceIDs(ctx context.Context) ([]string, error) {
-	rows, err := r.Pool.Query(ctx, "SELECT id FROM workspaces ORDER BY id")
+	// Archived Workspaces retain their history but are outside operational sweeps.
+	rows, err := r.Pool.Query(ctx, "SELECT id FROM workspaces WHERE state='active' ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -1384,7 +1385,10 @@ func normalizeEventWrite(event application.EventWrite, plan application.Mutation
 func membershipFromQuerier(ctx context.Context, q querier, workspaceID, actorID string) (*authz.Membership, error) {
 	value := &authz.Membership{ActorID: actorID, WorkspaceID: workspaceID}
 	var role string
-	err := q.QueryRow(ctx, "SELECT role,active FROM workspace_memberships WHERE workspace_id=$1 AND actor_id=$2", workspaceID, actorID).Scan(&role, &value.Active)
+	err := q.QueryRow(ctx, `SELECT membership.role,membership.active
+		FROM workspace_memberships membership
+		JOIN workspaces workspace ON workspace.id=membership.workspace_id AND workspace.state='active'
+		WHERE membership.workspace_id=$1 AND membership.actor_id=$2`, workspaceID, actorID).Scan(&role, &value.Active)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

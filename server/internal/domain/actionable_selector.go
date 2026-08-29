@@ -287,6 +287,9 @@ func validateWorkspacePhaseTopology(workspace Workspace, phases []Phase) []Diagn
 				return []Diagnostic{{Code: CodeInvalidStateTransition, EntityID: phase.ID}}
 			}
 		}
+	case WorkspaceArchived:
+		// Archive intentionally preserves the existing Phase/Task topology while
+		// removing it from all actionable selection and transport paths.
 	}
 	return nil
 }

@@ -28,7 +28,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     session: Awaited<ReturnType<typeof fetchSession>>,
     signal?: AbortSignal,
   ) => {
-    const memberships = await fetchWorkspaces(signal);
+    // Include an owner's archived Workspaces so the final archived Workspace
+    // remains recoverable from the chooser after the session is renewed.
+    const memberships = await fetchWorkspaces(signal, true);
     setState({
       status: "authenticated",
       mode: "enforced",
@@ -114,7 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshWorkspaces = useCallback(async () => {
     if (state.status !== "authenticated") return;
     if (state.mode === "legacy") return;
-    const memberships = await fetchWorkspaces();
+    const memberships = await fetchWorkspaces(undefined, true);
     setState((current) => current.status === "authenticated"
       ? { ...current, memberships }
       : current);

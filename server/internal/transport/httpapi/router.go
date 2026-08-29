@@ -63,6 +63,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/mcp/gateway-sessions", a.resumeMCPGateway)
 	mux.HandleFunc("GET /v1/workspaces", a.workspaces)
 	mux.HandleFunc("POST /v1/workspaces", a.createWorkspace)
+	mux.HandleFunc("PATCH /v1/workspaces/{workspaceId}", a.renameWorkspace)
+	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/archive", a.archiveWorkspace)
+	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/restore", a.restoreWorkspace)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/members", a.members)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/members", a.createMember)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/memberships", a.addExistingMember)
@@ -313,7 +316,7 @@ func (a *API) workspaces(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "unauthenticated", "message": "human session required"}})
 		return
 	}
-	values, err := a.Repo.ListAccountWorkspaces(r.Context(), state.Principal.AccountID)
+	values, err := a.Repo.ListAccountWorkspaces(r.Context(), state.Principal.AccountID, r.URL.Query().Get("includeArchived") == "true")
 	if err != nil {
 		writeError(w, err)
 		return
@@ -362,6 +365,74 @@ func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *API) renameWorkspace(w http.ResponseWriter, r *http.Request) {
+	state, ok := a.requireOwner(r)
+	if !ok {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Owner capability required"}})
+		return
+	}
+	var input struct {
+		Name string `json:"name"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	value, err := a.Repo.RenameOwnedWorkspace(r.Context(), r.PathValue("workspaceId"), state.Principal.ActorID, input.Name, time.Now().UTC())
+	if err != nil {
+		writeWorkspaceLifecycleError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, workspaceAccessJSON(value))
+}
+
+func (a *API) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
+	state, ok := a.requireOwner(r)
+	if !ok {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Owner capability required"}})
+		return
+	}
+	value, err := a.Repo.ArchiveOwnedWorkspace(r.Context(), r.PathValue("workspaceId"), state.Principal.ActorID, time.Now().UTC())
+	if err != nil {
+		writeWorkspaceLifecycleError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, workspaceAccessJSON(value))
+}
+
+func (a *API) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
+	state, ok := a.requireLifecycleOwner(r)
+	if !ok {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Owner capability required"}})
+		return
+	}
+	value, err := a.Repo.RestoreOwnedWorkspace(r.Context(), r.PathValue("workspaceId"), state.Principal.ActorID, time.Now().UTC())
+	if err != nil {
+		writeWorkspaceLifecycleError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, workspaceAccessJSON(value))
+}
+
+func workspaceAccessJSON(value postgres.WorkspaceAccess) map[string]any {
+	relationship := "participant"
+	if value.Role == string(authz.RoleOwner) {
+		relationship = "owner"
+	}
+	return map[string]any{"id": value.ID, "name": value.Name, "state": value.State, "revision": value.Revision, "role": value.Role, "relationship": relationship, "capabilities": value.Capabilities}
+}
+
+func writeWorkspaceLifecycleError(w http.ResponseWriter, err error) {
+	if errors.Is(err, postgres.ErrWorkspaceNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]string{"code": "not_found", "message": "workspace not found"}})
+		return
+	}
+	if errors.Is(err, postgres.ErrWorkspaceNotActive) || errors.Is(err, postgres.ErrWorkspaceNotArchived) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{"code": "workspace_lifecycle_conflict", "message": err.Error()}})
+		return
+	}
+	writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]string{"code": "invalid_workspace", "message": err.Error()}})
+}
+
 func isLowerUUID(value string) bool {
 	if len(value) != 36 || value != strings.ToLower(value) {
 		return false
@@ -407,6 +478,15 @@ func (a *API) requireOwner(r *http.Request) (authContext, bool) {
 		return authContext{}, false
 	}
 	membership, err := a.Repo.Membership(r.Context(), r.PathValue("workspaceId"), state.Principal.ActorID)
+	return state, err == nil && membership != nil && membership.Active && membership.Role == authz.RoleOwner
+}
+
+func (a *API) requireLifecycleOwner(r *http.Request) (authContext, bool) {
+	state, ok := authState(r)
+	if !ok || state.Principal.AccountID == "" || state.Principal.Subject.Kind != authz.ActorHuman {
+		return authContext{}, false
+	}
+	membership, err := a.Repo.LifecycleMembership(r.Context(), r.PathValue("workspaceId"), state.Principal.ActorID)
 	return state, err == nil && membership != nil && membership.Active && membership.Role == authz.RoleOwner
 }
 
@@ -697,6 +777,9 @@ func (a *API) authentication(next http.Handler) http.Handler {
 		}
 		if workspaceID := pathWorkspaceID(r.URL.Path); workspaceID != "" {
 			membership, membershipErr := a.Repo.Membership(r.Context(), workspaceID, state.Principal.ActorID)
+			if isWorkspaceLifecycleRoute(r) {
+				membership, membershipErr = a.Repo.LifecycleMembership(r.Context(), workspaceID, state.Principal.ActorID)
+			}
 			decision := authz.Authorize(authz.AuthorizationInput{
 				Subject: state.Principal.Subject, Membership: membership, WorkspaceID: workspaceID,
 				EntityWorkspaceID: workspaceID, Capability: authz.WorkspaceRead,
@@ -708,6 +791,10 @@ func (a *API) authentication(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, state)))
 	})
+}
+
+func isWorkspaceLifecycleRoute(r *http.Request) bool {
+	return r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/archive") || strings.HasSuffix(r.URL.Path, "/restore"))
 }
 
 func pathWorkspaceID(path string) string {

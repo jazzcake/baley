@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachExistingAccount,
+  archiveWorkspace,
   approveMCPConnection,
   createWorkspace,
   createWorkspaceMember,
@@ -15,8 +16,10 @@ import {
   fetchWorkspaces,
 	fetchOIDCProviders,
   logout,
+  renameWorkspace,
   removeWorkspaceMember,
   resetMemberPassword,
+  restoreWorkspace,
   transferWorkspaceOwnership,
   updateWorkspaceMember,
 } from "./api/auth";
@@ -39,6 +42,9 @@ vi.mock("./api/auth", () => ({
   removeWorkspaceMember: vi.fn(),
   transferWorkspaceOwnership: vi.fn(),
   attachExistingAccount: vi.fn(),
+	archiveWorkspace: vi.fn(),
+	renameWorkspace: vi.fn(),
+	restoreWorkspace: vi.fn(),
 	beginOIDCLink: vi.fn(),
   fetchMCPConnection: vi.fn(),
   approveMCPConnection: vi.fn(),
@@ -97,6 +103,9 @@ describe("authenticated Workspace routing", () => {
       relationship: "owner",
       capabilities: ["workspace:read", "workspace:admin"],
     });
+    vi.mocked(renameWorkspace).mockResolvedValue({ id: "w1", name: "Renamed Workspace", state: "active", revision: 2, role: "owner", relationship: "owner", capabilities: ["workspace:read", "workspace:admin"] });
+    vi.mocked(archiveWorkspace).mockResolvedValue({ id: "w1", name: "Workspace One", state: "archived", revision: 2, role: "owner", relationship: "owner", capabilities: ["workspace:read", "workspace:admin"] });
+    vi.mocked(restoreWorkspace).mockResolvedValue({ id: "w1", name: "Workspace One", state: "active", revision: 3, role: "owner", relationship: "owner", capabilities: ["workspace:read", "workspace:admin"] });
     vi.mocked(fetchWorkspaceMembers).mockResolvedValue([]);
     vi.mocked(createWorkspaceMember).mockResolvedValue({
       actorId: "new", displayName: "New", role: "operator", relationship: "participant", active: true,
@@ -171,6 +180,19 @@ describe("authenticated Workspace routing", () => {
     fireEvent.click(logoutButton);
     await waitFor(() => expect(logout).toHaveBeenCalledWith("csrf"));
     expect(await screen.findByRole("heading", { name: "로그인" })).toBeTruthy();
+  });
+
+  it("keeps an owner's final archived Workspace recoverable from the chooser", async () => {
+    vi.mocked(fetchWorkspaces).mockResolvedValueOnce([{
+      id: "w1", name: "Workspace One", state: "archived", revision: 2,
+      role: "owner", relationship: "owner", capabilities: ["workspace:read", "workspace:admin"],
+    }]);
+    vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
+    window.history.replaceState({}, "", "/workspaces");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Workspace One/ }));
+    await waitFor(() => expect(restoreWorkspace).toHaveBeenCalledWith("w1", "csrf"));
   });
 
   it("automatically connects a signed-in Operator's local Codex gateway", async () => {
@@ -397,6 +419,24 @@ describe("authenticated Workspace routing", () => {
 
     await waitFor(() => expect(screen.queryByRole("menu", { name: "Workspace 전환" })).toBeNull());
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("opens Owner Workspace commands without selecting the Workspace and submits rename", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
+    window.history.replaceState({}, "", "/workspaces/w1");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace One Workspace 전환" }));
+    fireEvent.click(screen.getByRole("button", { name: "Workspace One Workspace commands" }));
+    expect(screen.getByRole("menu", { name: "Workspace One Workspace commands" })).toBeTruthy();
+    expect(document.querySelector("[data-workspace-id='w1']")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const input = screen.getByLabelText("Workspace name");
+    fireEvent.change(input, { target: { value: "Renamed Workspace" } });
+    fireEvent.submit(input.closest("form")!);
+
+    await waitFor(() => expect(renameWorkspace).toHaveBeenCalledWith("w1", "Renamed Workspace", "csrf"));
   });
 
   it("supports account menu keyboard navigation and outside-click dismissal", async () => {

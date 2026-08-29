@@ -17,12 +17,13 @@ type PhaseState string
 type WorkspaceState string
 
 const (
-	WorkspaceDraft  WorkspaceState = "draft"
-	WorkspaceActive WorkspaceState = "active"
-	WorkspaceClosed WorkspaceState = "closed"
+	WorkspaceDraft    WorkspaceState = "draft"
+	WorkspaceActive   WorkspaceState = "active"
+	WorkspaceClosed   WorkspaceState = "closed"
+	WorkspaceArchived WorkspaceState = "archived"
 )
 
-var WorkspaceStates = []WorkspaceState{WorkspaceDraft, WorkspaceActive, WorkspaceClosed}
+var WorkspaceStates = []WorkspaceState{WorkspaceDraft, WorkspaceActive, WorkspaceClosed, WorkspaceArchived}
 
 const (
 	PhasePlanned   PhaseState = "planned"

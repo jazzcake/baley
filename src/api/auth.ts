@@ -75,9 +75,34 @@ export function logout(csrfToken: string): Promise<void> {
   return requestJSON<void>("/v1/auth/logout", { method: "POST" }, csrfToken);
 }
 
-export async function fetchWorkspaces(signal?: AbortSignal): Promise<WorkspaceMembership[]> {
-  const result = await requestJSON<{ items: WorkspaceMembership[] }>("/v1/workspaces", { signal });
+export async function fetchWorkspaces(signal?: AbortSignal, includeArchived = false): Promise<WorkspaceMembership[]> {
+  const suffix = includeArchived ? "?includeArchived=true" : "";
+  const result = await requestJSON<{ items: WorkspaceMembership[] }>(`/v1/workspaces${suffix}`, { signal });
   return result.items;
+}
+
+export function renameWorkspace(workspaceId: string, name: string, csrfToken: string): Promise<WorkspaceMembership> {
+  return requestJSON<WorkspaceMembership>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}`,
+    { method: "PATCH", body: JSON.stringify({ name }) },
+    csrfToken,
+  );
+}
+
+export function archiveWorkspace(workspaceId: string, csrfToken: string): Promise<WorkspaceMembership> {
+  return requestJSON<WorkspaceMembership>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/archive`,
+    { method: "POST", body: "{}" },
+    csrfToken,
+  );
+}
+
+export function restoreWorkspace(workspaceId: string, csrfToken: string): Promise<WorkspaceMembership> {
+  return requestJSON<WorkspaceMembership>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/restore`,
+    { method: "POST", body: "{}" },
+    csrfToken,
+  );
 }
 
 export function createWorkspace(
