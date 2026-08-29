@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Background, Panel, ReactFlow, ViewportPortal, useStore, useStoreApi, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ChevronRight, Copy, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, RotateCcw } from "lucide-react";
@@ -176,6 +176,7 @@ function WorkspaceViewer({
   const phaseFocusRequestIdRef = useRef(0);
   const pendingPhaseFocusRef = useRef<PhaseFocusRequest>();
   const initialPhaseFocusWorkspaceRef = useRef<string>();
+  const selectedTaskPhaseRef = useRef<{ taskId?: string; phaseId?: string }>({});
   const workspaceIDCopyTimerRef = useRef<number>();
 
   const copyWorkspaceID = async () => {
@@ -464,13 +465,13 @@ function WorkspaceViewer({
     return [...dependencies, ...gateEdges];
   }, [graph, visible, connected, laneFocus, selectedId, presentation, focusedLaneId, dependencyProjection]);
 
-  const togglePhase = (phaseId: string) => {
+  const togglePhase = (phaseId: string, userEvent = "phase-toggle") => {
     const next = new Set(collapsedPhaseIds);
     const expanding = next.has(phaseId);
     expanding ? next.delete(phaseId) : next.add(phaseId);
     const focusRequest: PhaseFocusRequest = {
       requestId: ++phaseFocusRequestIdRef.current,
-      phaseId: expanding ? phaseId : (graph.workspace.activePhaseId ?? phaseId),
+      phaseId,
       edge: expanding ? "exit" : "entry",
       reason: expanding ? "phase-expanded" : "phase-collapsed",
     };
@@ -478,7 +479,7 @@ function WorkspaceViewer({
     setCollapsedPhaseIds(next);
     window.localStorage.setItem(`baley:collapsed-phases:${workspaceId}`, JSON.stringify([...next]));
     traceViewer("phase-collapse:toggle", {
-      userEvent: "phase-toggle",
+      userEvent,
       phaseId,
       calculatedCollapsedPhaseIds: [...next],
       calculatedFocusTarget: focusRequest,
@@ -497,7 +498,15 @@ function WorkspaceViewer({
     });
     setLayoutMode(nextMode);
   };
-  useEffect(() => { const task = graph.tasks.find((item) => item.id === selectedId); if (task && presentation.collapsedPhaseIds.has(task.phaseId)) togglePhase(task.phaseId); }, [selectedId, graph.tasks, presentation.collapsedPhaseIds]);
+  useEffect(() => {
+    const task = graph.tasks.find((item) => item.id === selectedId);
+    const previous = selectedTaskPhaseRef.current;
+    const selectionChanged = previous.taskId !== selectedId || previous.phaseId !== task?.phaseId;
+    selectedTaskPhaseRef.current = { taskId: selectedId, phaseId: task?.phaseId };
+    if (selectionChanged && task && presentation.collapsedPhaseIds.has(task.phaseId)) {
+      togglePhase(task.phaseId, "task-selection-auto-expand");
+    }
+  }, [selectedId, graph.tasks, presentation.collapsedPhaseIds]);
   const selectedTask = graph.tasks.find((task) => task.id === selectedId);
   const selectedGate = graph.gates.find((gate) => gate.id === selectedId);
   const selectedBacklog = graph.backlogItems.find((item) => item.id === selectedBacklogId);
@@ -1006,13 +1015,30 @@ function PhaseCollapseDiagnostics({ layoutMode, collapsedPhaseIds, nodes, edges,
   }, [layoutMode, collapsedPhaseIds, nodes, edges, hiddenTransitiveEdges, store]);
   return null;
 }
-function CanvasOverlay({ graph, layout, view, navigate, laneColors, onOpenBacklog, onSelectBacklog, setBacklogExpandButton, collapsedPhaseIds, onTogglePhase }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void; laneColors: Record<string, string>; onOpenBacklog: () => void; onSelectBacklog: (item: BacklogItem) => void; setBacklogExpandButton: React.RefCallback<HTMLButtonElement>; collapsedPhaseIds: ReadonlySet<string>; onTogglePhase: (phaseId: string) => void }) {
+function CanvasOverlay({ graph, layout, view, navigate, laneColors, onOpenBacklog, onSelectBacklog, setBacklogExpandButton, collapsedPhaseIds, onTogglePhase }: { graph: WorkspaceFixture; layout?: GraphLayout; view: ViewSpec; navigate: (view: ViewSpec) => void; laneColors: Record<string, string>; onOpenBacklog: () => void; onSelectBacklog: (item: BacklogItem) => void; setBacklogExpandButton: React.RefCallback<HTMLButtonElement>; collapsedPhaseIds: ReadonlySet<string>; onTogglePhase: (phaseId: string, userEvent?: string) => void }) {
   const focusedLaneId = view.kind === "lane" ? view.id : undefined;
   const band = focusedLaneId && layout ? laneBandRect(layout, focusedLaneId) : undefined;
   return <div className="graph-overlay" style={{ width: layout?.width, height: layout?.height }}>
     {layout?.phaseRects.map((rect, index) => {
       const phase = graph.phases.find((item) => item.id === rect.id);
-      const collapsible = phase?.state === "completed"; const collapsed = Boolean(phase && collapsedPhaseIds.has(phase.id)); return <div key={rect.id} className={`phase-container phase-${phase?.state}`} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}><span>PHASE {String(index + 1).padStart(2, "0")}{" \u00B7 "}{phase?.state}</span><strong>{phase?.name}</strong>{collapsible && <button type="button" className="phase-collapse-toggle" aria-expanded={!collapsed} onClick={() => onTogglePhase(phase!.id)}>{collapsed ? "Expand phase" : "Collapse phase"}</button>}</div>;
+      const collapsible = phase?.state === "completed";
+      const collapsed = Boolean(phase && collapsedPhaseIds.has(phase.id));
+      return <Fragment key={rect.id}>
+        <div className={`phase-container phase-${phase?.state}`} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}><span>PHASE {String(index + 1).padStart(2, "0")}{" \u00B7 "}{phase?.state}</span><strong>{phase?.name}</strong></div>
+        {collapsible && <button
+          type="button"
+          className="phase-collapse-toggle"
+          aria-expanded={!collapsed}
+          style={{ left: rect.x + 18, top: rect.y + 49 }}
+          onPointerDown={(event) => traceViewer("phase-collapse:button-pointerdown", {
+            userEvent: "pointerdown",
+            phaseId: phase!.id,
+            calculatedTargetState: collapsed ? "expanded" : "collapsed",
+            renderedDom: { buttonText: event.currentTarget.textContent, ariaExpanded: event.currentTarget.getAttribute("aria-expanded") },
+          })}
+          onClick={() => onTogglePhase(phase!.id, "phase-collapse-button")}
+        >{collapsed ? "Expand phase" : "Collapse phase"}</button>}
+      </Fragment>;
     })}
     {band && <div className="lane-focus-band" style={{ left: band.x, top: band.y, width: band.width, height: band.height, "--lane-color": laneColors[focusedLaneId!] ?? "#579bfc" } as React.CSSProperties} />}
     {layout && graph.gates.map((gate) => {

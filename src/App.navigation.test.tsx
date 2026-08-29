@@ -108,6 +108,35 @@ describe("Home navigation entry points", () => {
     ));
   });
 
+  it("keeps a completed Phase collapse control above the canvas and applies its requested presentation", async () => {
+    const completedBuild = {
+      ...pilotReadyFixture,
+      phases: pilotReadyFixture.phases.map((phase) => phase.id === "build" ? { ...phase, state: "completed" as const } : phase),
+    };
+    window.localStorage.setItem("baley:collapsed-phases:pilot", "[]");
+    vi.mocked(fetchGraph).mockResolvedValue(completedBuild);
+    vi.mocked(layoutGraph).mockImplementation(async (fixture, _visible, _reserveRail, collapsed) => ({
+      ...backlogLayout,
+      phaseRects: fixture.phases.map((phase, index) => ({ id: phase.id, x: 260 + index * 280, y: 0, width: 240, height: 740 })),
+      summaryPositions: new Map([...(collapsed ?? new Set<string>())].flatMap((phaseId) => fixture.lanes.map((lane, index) => [`phase-summary:${phaseId}:${lane.id}`, { x: 278, y: 90 + index * 154 }] as const))),
+    }));
+
+    render(<App />);
+    const collapse = await screen.findByRole("button", { name: "Collapse phase" });
+    expect(collapse.parentElement?.classList.contains("phase-container")).toBe(false);
+
+    fireEvent.click(collapse);
+
+    await waitFor(() => expect(collapse.getAttribute("aria-expanded")).toBe("false"));
+    await waitFor(() => expect(vi.mocked(layoutGraph)).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.any(Set),
+      true,
+      new Set(["build"]),
+      "flow",
+    ));
+  });
+
   it("keeps the graph mounted and restores focus after backlog list mode", async () => {
     render(<App />);
     const graph = await screen.findByTestId("graph");
