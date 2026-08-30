@@ -3,4 +3,4 @@ param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-Write-Output "The shared HTTP MCP gateway is retired. Install the tokenless stdio MCP registration instead: scripts/install-baley-mcp-macos.sh or codex mcp add baley -- <baley-mcp>."
+Write-Output "The former shared HTTP bearer-token flow is retired. On Windows use scripts/install-baley-mcp-windows.ps1 for the tokenless loopback Gateway; it never writes a bearer token to Codex configuration."

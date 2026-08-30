@@ -6,9 +6,10 @@ last_active: 2026-08-28
 
 # Tokenless local MCP operations
 
-Baley uses a tokenless stdio MCP process for Codex Desktop and CLI. Codex starts
-`baley-mcp` directly and supplies only the approved Tailnet HTTPS API URL and a
-local credential-store path. `BALEY_MCP_GATEWAY_TOKEN` is not placed in
+On Windows, Baley uses one tokenless loopback MCP Gateway per signed-in user for
+Codex Desktop and CLI. Codex connects to `http://127.0.0.1:8090/mcp`; the
+Gateway alone receives the approved Tailnet HTTPS API URL and local
+credential-store path. `BALEY_MCP_GATEWAY_TOKEN` is not placed in
 `config.toml`, shell profiles, Codex Desktop environment, or an Authorization
 header.
 
@@ -21,13 +22,20 @@ Service. A Workspace Agent credential exists only in the running MCP process;
 a fresh process renews it from the registered gateway. The Keychain item is
 device-bound and is never printed by diagnostics.
 
-The stdio process may connect to the remote Baley API only with HTTPS. Optional
-legacy Streamable HTTP compatibility must listen on a loopback address and is
-not a Tailscale or public endpoint. It is not the supported Codex registration.
+The local Gateway may connect to the remote Baley API only with HTTPS. It binds
+only to loopback, is not a Tailscale or public endpoint, and reads device
+credentials only through the OS credential manager.
 
-After the one-time Owner-approved enrollment, #142 registers the local gateway
-for an active Workspace member. A fresh MCP process renews an Operator-only
-credential from that registration. Logout, membership removal, gateway replace,
+Loopback is a same-machine trust boundary, not a Windows-user authentication
+boundary: do not enable this HTTP transport on a shared/untrusted desktop. In
+that environment keep the tokenless stdio transport until Codex supports a
+per-user OS-authenticated local transport. No external network peer can reach
+the loopback endpoint.
+
+The first device enrollment remains Owner-approved. After that, the same
+registered device is automatically enrolled in any Workspace where its Account
+has active membership; no per-Workspace `mcp-connect` page is shown. Logout,
+membership removal, gateway replace,
 suspected compromise, or server-side revoke invalidates the gateway and derived
 credentials. No path grants Task confirmation, Gate condition changes, Gate
 Task pass, or Gate pass authority.
@@ -46,27 +54,22 @@ On Windows, run from the repository checkout:
 .\scripts\install-baley-mcp-windows.ps1
 ```
 
-The installers build a stripped (`-trimpath -ldflags "-s -w"`) release binary
-in a Git-revisioned path so an upgrade never tries to overwrite an executable
-held open by an active stdio session.
-`baley-mcp` remains one tokenless stdio process per Codex session by design;
-use `scripts\measure-baley-mcp-windows.ps1` to distinguish on-disk binary size
-from the running processes' private and working-set memory. The diagnostic
-also reports per-session aggregates for a comparable idle/active snapshot.
+The Windows installer builds a stripped (`-trimpath -ldflags "-s -w"`) release
+binary in a Git-revisioned path, registers a per-user logon task that owns one
+loopback Gateway, and changes Codex atomically to its local HTTP endpoint. No
+firewall rule is required or created. The macOS installer remains tokenless
+stdio until its platform packaging work is complete.
 
 The equivalent CLI registration is:
 
 ```bash
 codex mcp remove baley
-codex mcp add baley \
-  --env BALEY_SERVER_URL=https://jazzcake-home.tail87e929.ts.net/api \
-  --env "BALEY_MCP_CREDENTIAL_STORE=$HOME/Library/Application Support/baley-mcp/credentials.json" \
-  -- /path/to/baley-mcp
+codex mcp add baley --url http://127.0.0.1:8090/mcp
 ```
 
-Restart Codex Desktop fully after changing its registration. The first request
-for an unregistered Workspace returns the normal signed-in gateway link; retry the
-same request after approval.
+Restart Codex Desktop fully after changing its registration. Only a first device
+or a device invalidated by logout, membership removal, replacement, or revoke
+uses the signed-in gateway enrollment flow.
 
 ## Workspace discovery payload
 

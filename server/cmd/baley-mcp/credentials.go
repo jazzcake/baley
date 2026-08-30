@@ -111,6 +111,11 @@ func requestWorkspaceID(path string, payload any) string {
 func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (string, *mcp.CallToolResult, error) {
 	c.connectionMu.Lock()
 	defer c.connectionMu.Unlock()
+	releaseStoreLock, err := c.lockCredentialStore(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	defer releaseStoreLock()
 	store, err := c.readCredentialStore(ctx)
 	if err != nil {
 		return "", nil, err
@@ -131,6 +136,32 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 		delete(store.Workspaces, workspaceID)
 		if err = c.writeCredentialStore(ctx, &store); err != nil {
 			return "", nil, err
+		}
+	}
+	// A device that was already registered for this Account does not need a
+	// separate browser approval for every Workspace. Prove possession of one
+	// active Keychain-held registration; the Baley API derives its Account and
+	// checks active membership in the target Workspace before issuing a new
+	// Workspace-scoped registration. A first device (or every revoked proof)
+	// still falls through to the explicit browser enrollment below.
+	if store.GatewayID != "" {
+		for proofWorkspaceID, credential := range store.Workspaces {
+			if proofWorkspaceID == workspaceID || credential.GatewaySecret == "" {
+				continue
+			}
+			response, enrollErr := c.autoEnrollWorkspaceGateway(ctx, workspaceID, store.GatewayID, proofWorkspaceID, credential.GatewaySecret)
+			if enrollErr == nil && response.AgentToken != "" && response.GatewaySecret != "" {
+				store.Workspaces[workspaceID] = workspaceCredential{GatewaySecret: response.GatewaySecret, ConnectedAt: time.Now().UTC()}
+				if err = c.writeCredentialStore(ctx, &store); err != nil {
+					return "", nil, err
+				}
+				c.rememberSessionToken(workspaceID, response.AgentToken)
+				return response.AgentToken, nil, nil
+			}
+			var statusError connectionHTTPStatusError
+			if enrollErr != nil && (!errors.As(enrollErr, &statusError) || (statusError.StatusCode != http.StatusUnauthorized && statusError.StatusCode != http.StatusForbidden)) {
+				return "", nil, enrollErr
+			}
 		}
 	}
 
@@ -217,6 +248,24 @@ func (c *client) resumeWorkspaceGateway(ctx context.Context, workspaceID, gatewa
 		return connectionResponse{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/v1/mcp/gateway-sessions", bytes.NewReader(raw))
+	if err != nil {
+		return connectionResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var response connectionResponse
+	err = c.connectionRequest(req, http.StatusOK, &response)
+	return response, err
+}
+
+func (c *client) autoEnrollWorkspaceGateway(ctx context.Context, workspaceID, gatewayID, proofWorkspaceID, proofGatewaySecret string) (connectionResponse, error) {
+	raw, err := json.Marshal(map[string]string{
+		"workspaceId": workspaceID, "gatewayId": gatewayID,
+		"proofWorkspaceId": proofWorkspaceID, "proofGatewaySecret": proofGatewaySecret,
+	})
+	if err != nil {
+		return connectionResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/v1/mcp/gateway-enrollments", bytes.NewReader(raw))
 	if err != nil {
 		return connectionResponse{}, err
 	}
@@ -608,6 +657,11 @@ func (c *client) decryptCredentialStore(encoded string) ([]byte, error) {
 func (c *client) removeWorkspaceCredential(ctx context.Context, workspaceID string) error {
 	c.connectionMu.Lock()
 	defer c.connectionMu.Unlock()
+	releaseStoreLock, err := c.lockCredentialStore(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseStoreLock()
 	store, err := c.readCredentialStore(ctx)
 	if err != nil {
 		return err
@@ -622,4 +676,19 @@ func (c *client) removeWorkspaceCredential(ctx context.Context, workspaceID stri
 	delete(c.sessionTokens, workspaceID)
 	delete(store.PendingConnections, workspaceID)
 	return c.writeCredentialStore(ctx, &store)
+}
+
+// lockCredentialStore serializes the read-modify-write path across stdio
+// processes and the long-lived loopback Gateway. The platform file lock is
+// released by the OS even when its owner is killed, so an installer restart
+// cannot strand the Keychain credential store behind a stale lock file.
+func (c *client) lockCredentialStore(ctx context.Context) (func(), error) {
+	if strings.TrimSpace(c.credentialStorePath) == "" {
+		return func() {}, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(c.credentialStorePath), 0o700); err != nil {
+		return nil, fmt.Errorf("create Baley credential directory: %w", err)
+	}
+	lockPath := c.credentialStorePath + ".lock"
+	return acquireCredentialStoreFileLock(ctx, lockPath)
 }

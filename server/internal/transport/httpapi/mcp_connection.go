@@ -122,6 +122,41 @@ func (a *API) resumeMCPGateway(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"workspaceId": input.WorkspaceID, "agentToken": issued.Token})
 }
 
+// autoEnrollMCPGateway lets a locally registered device add another Workspace
+// without asking the signed-in user to approve every Workspace separately. The
+// proof is a secret from an already active registration, not an untrusted
+// gateway ID or an Agent identity. First-device onboarding still uses the
+// browser connection flow above.
+func (a *API) autoEnrollMCPGateway(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		WorkspaceID        string `json:"workspaceId"`
+		GatewayID          string `json:"gatewayId"`
+		ProofWorkspaceID   string `json:"proofWorkspaceId"`
+		ProofGatewaySecret string `json:"proofGatewaySecret"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
+	input.GatewayID = strings.TrimSpace(input.GatewayID)
+	input.ProofWorkspaceID = strings.TrimSpace(input.ProofWorkspaceID)
+	input.ProofGatewaySecret = strings.TrimSpace(input.ProofGatewaySecret)
+	if !isLowerUUID(input.WorkspaceID) || !isLowerUUID(input.ProofWorkspaceID) || len(input.GatewayID) < 20 || input.ProofGatewaySecret == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]string{"code": "invalid_mcp_gateway", "message": "Target Workspace, existing Workspace proof, and local gateway identity are required"}})
+		return
+	}
+	result, err := a.Repo.AutoEnrollMCPGateway(r.Context(), input.WorkspaceID, input.GatewayID, input.ProofWorkspaceID, input.ProofGatewaySecret, time.Now().UTC())
+	if errors.Is(err, postgres.ErrMCPGatewayNotFound) || errors.Is(err, postgres.ErrMCPGatewaySecret) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "mcp_gateway_reauthentication_required", "message": "A registered local gateway and active Workspace membership are required"}})
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"workspaceId": input.WorkspaceID, "agentToken": result.AgentToken, "gatewayId": input.GatewayID, "gatewaySecret": result.GatewaySecret})
+}
+
 func (a *API) revokeMCPGateway(w http.ResponseWriter, r *http.Request) {
 	state, ok := a.requireOwner(r)
 	if !ok {

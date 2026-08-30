@@ -136,7 +136,6 @@ func TestPhaseTasksAdvertisesBoundedPaginationSchema(t *testing.T) {
 }
 
 func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t *testing.T) {
-	const gatewayToken = "local-gateway-token"
 	const workspaceToken = "workspace-agent-token"
 	var connectionCreated, connectionPolled, workspaceReads int
 	var upstreamAuthorizations []string
@@ -171,27 +170,13 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 	defer upstream.Close()
 
 	credentials := filepath.Join(t.TempDir(), "credentials.json")
-	c := &client{base: upstream.URL, http: upstream.Client(), gatewayToken: gatewayToken, credentialStorePath: credentials, agentActorID: "agent"}
-	handler := c.requireGatewayBearer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServer(c) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: time.Minute}))
+	c := &client{base: upstream.URL, http: upstream.Client(), credentialStorePath: credentials, agentActorID: "agent"}
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServer(c) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: time.Minute})
 	mcpHTTP := httptest.NewServer(handler)
 	defer mcpHTTP.Close()
 
-	unauthenticated, err := http.Post(mcpHTTP.URL, "application/json", strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if unauthenticated.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("missing bearer status=%d", unauthenticated.StatusCode)
-	}
-	_ = unauthenticated.Body.Close()
-
 	newSession := func() (*mcp.ClientSession, error) {
-		httpClient := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-			clone := request.Clone(request.Context())
-			clone.Header.Set("Authorization", "Bearer "+gatewayToken)
-			return http.DefaultTransport.RoundTrip(clone)
-		})}
-		return mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil).Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: mcpHTTP.URL, HTTPClient: httpClient, DisableStandaloneSSE: true}, nil)
+		return mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil).Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: mcpHTTP.URL, HTTPClient: mcpHTTP.Client(), DisableStandaloneSSE: true}, nil)
 	}
 	firstSession, err := newSession()
 	if err != nil {
@@ -229,8 +214,11 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 		t.Fatalf("connections=%d polls=%d workspaceReads=%d, want 1/1/2", connectionCreated, connectionPolled, workspaceReads)
 	}
 	for _, authorization := range upstreamAuthorizations {
-		if authorization == "Bearer "+gatewayToken {
-			t.Fatalf("gateway token leaked to the Baley API: %v", upstreamAuthorizations)
+		if authorization == "" {
+			continue
+		}
+		if authorization != "Bearer "+workspaceToken {
+			t.Fatalf("unexpected local credential leaked to the Baley API: %v", upstreamAuthorizations)
 		}
 	}
 	raw, err := os.ReadFile(credentials)
@@ -241,8 +229,21 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 		t.Fatal("Workspace token was written to the HTTP credential store in plaintext")
 	}
 	entries, err := os.ReadDir(filepath.Dir(credentials))
-	if err != nil || len(entries) != 1 {
+	if err != nil || len(entries) != 2 {
 		t.Fatalf("expected one persistent credential store, entries=%v err=%v", entries, err)
+	}
+}
+
+func TestLoopbackMCPAddressRejectsExternalBindings(t *testing.T) {
+	for _, addr := range []string{"0.0.0.0:8090", "localhost:8090", "192.168.0.10:8090", "[fd7a:115c:a1e0::1]:8090", "bad"} {
+		if err := validateLoopbackMCPAddress(addr); err == nil {
+			t.Fatalf("unsafe address %q was accepted", addr)
+		}
+	}
+	for _, addr := range []string{"127.0.0.1:8090", "[::1]:8090"} {
+		if err := validateLoopbackMCPAddress(addr); err != nil {
+			t.Fatalf("loopback address %q rejected: %v", addr, err)
+		}
 	}
 }
 func TestPhaseTasksUsesOneExplicitBoundedPhasePath(t *testing.T) {

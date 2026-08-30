@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -792,23 +791,25 @@ func newMCPServer(c *client) *mcp.Server {
 }
 
 func serveHTTP(c *client) {
-	if c.gatewayToken == "" {
-		log.Fatal("BALEY_MCP_GATEWAY_TOKEN is required for serve-http")
+	if strings.TrimSpace(c.credentialStorePath) == "" {
+		log.Fatal("BALEY_MCP_CREDENTIAL_STORE is required for tokenless serve-http")
 	}
 	addr := strings.TrimSpace(os.Getenv("BALEY_MCP_HTTP_ADDR"))
 	if addr == "" {
 		addr = "127.0.0.1:8090"
 	}
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil || (host != "127.0.0.1" && host != "localhost" && host != "::1") {
-		log.Fatal("BALEY_MCP_HTTP_ADDR must bind to loopback")
+	if err := validateLoopbackMCPAddress(addr); err != nil {
+		log.Fatal(err)
 	}
 	// Workspace credentials are scoped to this local gateway identity and the
 	// target Workspace, not to an ephemeral MCP transport session. A new Codex
 	// chat or the HTTP session timeout must not require a new gateway login.
 	streamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServer(c) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: 10 * time.Minute})
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", c.requireGatewayBearer(streamable))
+	// The endpoint is loopback-only. Credentials are never carried in Codex
+	// configuration: the local Gateway reads the device binding from the OS
+	// Keychain and obtains short-lived Workspace-scoped Agent tokens itself.
+	mux.Handle("/mcp", streamable)
 	httpServer := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 70 * time.Second, MaxHeaderBytes: 1 << 20}
 	log.Printf("Baley Streamable HTTP MCP listening on http://%s/mcp", addr)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -816,21 +817,12 @@ func serveHTTP(c *client) {
 	}
 }
 
-func (c *client) requireGatewayBearer(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
-		if !strings.HasPrefix(header, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")) == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
-		if subtle.ConstantTimeCompare([]byte(token), []byte(c.gatewayToken)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-
-	})
+func validateLoopbackMCPAddress(addr string) error {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil || (host != "127.0.0.1" && host != "::1") {
+		return errors.New("BALEY_MCP_HTTP_ADDR must bind to loopback")
+	}
+	return nil
 }
 
 func (c *client) get(ctx context.Context, path string) (*mcp.CallToolResult, any, error) {

@@ -91,6 +91,62 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(issued.Token), now.Add(4*time.Minute)); err != nil {
 		t.Fatalf("gateway renewal invalidated an existing live MCP session: %v", err)
 	}
+	// Once a device has a Keychain-held registration for this signed-in Account,
+	// a second Workspace with active membership is enrolled without presenting a
+	// separate browser mcp-connect decision. The proof remains a registration
+	// secret, not merely the copied gateway ID.
+	const autoWorkspaceID = "00000000-0000-4000-8000-000000000099"
+	if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspaces(id,name,state,revision) VALUES($1,'Auto enrollment target','active',1)`, autoWorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspace_memberships(workspace_id,actor_id,role,active,created_by_actor_id) VALUES($1,$2,'owner',true,$2),($1,$3,'operator',true,$2)`, autoWorkspaceID, postgres.DemoHumanActorID, postgres.DemoAgentActorID); err != nil {
+		t.Fatal(err)
+	}
+	auto, err := restarted.AutoEnrollMCPGateway(ctx, autoWorkspaceID, consumed.GatewayID, postgres.DemoWorkspaceID, gatewaySecret, now.Add(4*time.Minute))
+	if err != nil || auto.AgentToken == "" || auto.GatewaySecret == "" {
+		t.Fatalf("registered device did not auto-enroll active member Workspace: %#v %v", auto, err)
+	}
+	if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(auto.AgentToken), now.Add(4*time.Minute)); err != nil {
+		t.Fatalf("auto-enrolled Workspace credential was not accepted: %v", err)
+	}
+	if _, err = restarted.AutoEnrollMCPGateway(ctx, "00000000-0000-4000-8000-000000000098", consumed.GatewayID, postgres.DemoWorkspaceID, gatewaySecret, now.Add(4*time.Minute)); !errors.Is(err, postgres.ErrMCPGatewayNotFound) {
+		t.Fatalf("gateway enrolled a Workspace without active membership: %v", err)
+	}
+	for _, target := range []struct {
+		id   string
+		role string
+	}{
+		{id: "00000000-0000-4000-8000-000000000097", role: "viewer"},
+		{id: "00000000-0000-4000-8000-000000000096", role: "approver"},
+	} {
+		const otherOwnerActorID = "00000000-0000-4000-8000-000000000012"
+		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO actors(id,display_name,actor_type) VALUES($1,'Other Owner','human') ON CONFLICT DO NOTHING`, otherOwnerActorID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO accounts(id,actor_id,login_id,normalized_login_id,display_name,status)
+			VALUES ('00000000-0000-4000-8000-000000000013',$1,'other-owner','other-owner','Other Owner','active') ON CONFLICT DO NOTHING`, otherOwnerActorID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspaces(id,name,state,revision) VALUES($1,'Non-operating member target','active',1)`, target.id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspace_memberships(workspace_id,actor_id,role,active,created_by_actor_id) VALUES($1,$2,'owner',true,$2),($1,$3,$4,true,$2)`, target.id, otherOwnerActorID, postgres.DemoHumanActorID, target.role); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = restarted.AutoEnrollMCPGateway(ctx, target.id, consumed.GatewayID, postgres.DemoWorkspaceID, gatewaySecret, now.Add(4*time.Minute)); !errors.Is(err, postgres.ErrMCPGatewayNotFound) {
+			t.Fatalf("%s member auto-enrolled an Operator gateway: %v", target.role, err)
+		}
+		var agentMemberships, agentTokens int
+		if err = restarted.Pool.QueryRow(ctx, `SELECT count(*) FROM workspace_memberships WHERE workspace_id=$1 AND actor_id=$2`, target.id, postgres.DemoAgentActorID).Scan(&agentMemberships); err != nil {
+			t.Fatal(err)
+		}
+		if err = restarted.Pool.QueryRow(ctx, `SELECT count(*) FROM agent_tokens WHERE workspace_id=$1`, target.id).Scan(&agentTokens); err != nil {
+			t.Fatal(err)
+		}
+		if agentMemberships != 0 || agentTokens != 0 {
+			t.Fatalf("rejected %s auto-enrollment minted agent access: memberships=%d tokens=%d", target.role, agentMemberships, agentTokens)
+		}
+	}
 	// A reapproved local gateway ID replaces the old registration generation.
 	// No credential from the copied/old gateway store may survive that replacement.
 	if _, err = restarted.CreateMCPConnection(ctx, "replacement-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, consumed.GatewayID, postgres.DigestSecret("replacement-secret"), now, now.Add(time.Hour)); err != nil {

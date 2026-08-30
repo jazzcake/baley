@@ -61,6 +61,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/mcp/connections", a.createMCPConnection)
 	mux.HandleFunc("GET /v1/mcp/connections/{connectionId}", a.pollMCPConnection)
 	mux.HandleFunc("POST /v1/mcp/gateway-sessions", a.resumeMCPGateway)
+	mux.HandleFunc("POST /v1/mcp/gateway-enrollments", a.autoEnrollMCPGateway)
 	mux.HandleFunc("GET /v1/workspaces", a.workspaces)
 	mux.HandleFunc("POST /v1/workspaces", a.createWorkspace)
 	mux.HandleFunc("PATCH /v1/workspaces/{workspaceId}", a.renameWorkspace)
@@ -736,7 +737,7 @@ func (a *API) authentication(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/versionz" || r.URL.Path == "/v1/auth/login" || r.URL.Path == "/v1/auth/oidc/providers" || strings.HasSuffix(r.URL.Path, "/start") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasSuffix(r.URL.Path, "/callback") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasPrefix(r.URL.Path, "/v1/mcp/connections") {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/versionz" || r.URL.Path == "/v1/auth/login" || r.URL.Path == "/v1/auth/oidc/providers" || strings.HasSuffix(r.URL.Path, "/start") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasSuffix(r.URL.Path, "/callback") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasPrefix(r.URL.Path, "/v1/mcp/connections") || r.URL.Path == "/v1/mcp/gateway-sessions" || r.URL.Path == "/v1/mcp/gateway-enrollments" {
 			next.ServeHTTP(w, r)
 			return
 		}
