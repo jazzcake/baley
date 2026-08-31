@@ -18,8 +18,8 @@ type CommandRequest struct {
 }
 
 type CommandPrincipal struct {
-	AccountID, CredentialID, WorkspaceID, ApprovalActorID string
-	Subject                                               authz.Subject
+	AccountID, CredentialID, WorkspaceID, SessionID string
+	Subject                                         authz.Subject
 }
 
 type CommandEnvelope struct {
@@ -30,6 +30,7 @@ type CommandEnvelope struct {
 	AcknowledgedWarningCodes  []string                  `json:"acknowledgedWarningCodes,omitempty"`
 	ProceedReason             string                    `json:"proceedReason,omitempty"`
 	HumanApprovalAttestation  *HumanApprovalAttestation `json:"humanApprovalAttestation,omitempty"`
+	ApprovalGrantID           string                    `json:"approvalGrantId,omitempty"`
 	AttemptID                 string                    `json:"-"`
 }
 
@@ -289,6 +290,8 @@ type EventWrite struct {
 }
 type MutationPlan struct {
 	CommandName             string
+	WorkspaceState          domain.WorkspaceState
+	PhaseUpdate             *domain.Phase
 	TaskID                  string
 	TaskStatus              string
 	TaskUpdate              *domain.Task
@@ -338,7 +341,6 @@ type MutationPlan struct {
 	AcceptancePolicy        *domain.AcceptancePolicy
 	AcceptanceAssignment    *domain.TaskAcceptanceAssignment
 	AcceptanceEvidence      *domain.TaskAcceptanceEvidence
-	AutoConfirmTask         bool
 }
 
 type ExecutionResult struct {

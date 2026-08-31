@@ -54,17 +54,21 @@ bundles. Agents can only hold an active `operator` membership.
 - Agent tokens are Workspace-scoped opaque secrets; only their hashes are stored.
 - Agent scopes are a subset of the Operator bundle and can never include approval or
   administration capabilities.
-- A human-only command is executed after an explicit approval in the current Agent
-  conversation. The Agent binds the statement to a fresh preview and executes it
-  without a separate Viewer approval or token-copy step.
-- The server derives the approving Actor from the human who issued or approved the
-  Workspace-scoped Agent credential, rechecks that person's current membership and
-  capability, and binds the attestation to the command hash and decision snapshot.
-- Execute locks the Workspace, rechecks the connected human Account, membership, and
-  role, validates the attestation against the fresh command, then applies the command
-  and records the attestation in one transaction. Rollback records neither.
-- Legacy `approvedByActorId`, statement hash, and conversation reference remain audit
-  provenance and do not establish identity.
+- An Agent bearer never establishes or derives a human approver. Its creator and
+  connection approver are credential provenance only.
+- A signed-in human uses the Viewer approval surface to preview the exact command and
+  issue a five-minute, single-use approval grant. Issuance requires the browser
+  session, CSRF token, active Account and Workspace membership, and current command
+  capability; Workspace close additionally requires Owner.
+- The grant is an opaque UUID reference, not a secret. It is bound to Account, Actor,
+  browser session, Workspace, action, entity, Workspace revision, command hash,
+  decision snapshot, warning acknowledgement, proceed-reason digest, and expiry.
+- Execute locks the Workspace, rechecks every binding and current authority, consumes
+  the grant atomically with the command, and records approval and security audit
+  evidence. Session or membership revocation invalidates unused grants.
+- Enforced HTTP and MCP requests reject legacy body approval fields such as
+  `humanApprovalAttestation` and `approvedByActorId`; those fields are historical
+  audit storage, never client authority.
 
 ## Viewer
 
@@ -81,8 +85,10 @@ bundles. Agents can only hold an active `operator` membership.
   Workspace are distinct operations.
 - A Workspace Owner cannot disable or reset an Account that has another active
   Workspace membership; Account authority never crosses a tenant boundary.
-- Human approval stays inside the Agent conversation. The Viewer does not expose an
-  approval-token panel and never receives command JSON for routine Task management.
+- The Viewer exposes a human approval panel only to Approver/Owner members. It accepts
+  command JSON for a fresh preview and performs issue-and-execute in the same browser
+  session; it never displays a plaintext approval secret or asks the user to copy a
+  token, header, or environment variable.
 - Development traces cover user event, target Workspace, auth state, route, request
   generation, committed graph Workspace, and rendered `data-workspace-id`, without
   credentials or tokens.

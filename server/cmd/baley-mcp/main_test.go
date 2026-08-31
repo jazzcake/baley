@@ -497,8 +497,7 @@ func TestTaskConfirmExecuteForwardsWarningAcknowledgementEnvelope(t *testing.T) 
 		ExecutedByActorID:         "agent",
 		AcknowledgedWarningCodes:  []string{"dangling_path"},
 		ProceedReason:             "Intentional terminal validation task.",
-		ApprovedByActorID:         "human",
-		ApprovedCommandHash:       "sha256:command",
+		ApprovalGrantID:           "11111111-1111-4111-8111-111111111111",
 	}}
 	result, _, err := c.taskConfirmExecute(context.Background(), nil, in)
 	if err != nil || result.IsError {
@@ -517,6 +516,9 @@ func TestTaskConfirmExecuteForwardsWarningAcknowledgementEnvelope(t *testing.T) 
 	}
 	if envelope["proceedReason"] != "Intentional terminal validation task." {
 		t.Fatalf("proceed reason not forwarded: %#v", envelope)
+	}
+	if envelope["approvalGrantId"] != "11111111-1111-4111-8111-111111111111" || envelope["humanApprovalAttestation"] != nil {
+		t.Fatalf("approval grant reference not forwarded safely: %#v", envelope)
 	}
 }
 
@@ -538,7 +540,7 @@ func TestTaskDiscardPreviewAndExecuteForwardReason(t *testing.T) {
 	if result, _, err := c.taskDiscardPreview(context.Background(), nil, preview); err != nil || result.IsError {
 		t.Fatalf("task discard preview failed: %#v %v", result, err)
 	}
-	execute := taskDiscardExecuteInput{WorkspaceID: "workspace", TaskID: 1, Reason: "No longer needed", executeEnvelope: executeEnvelope{ExpectedWorkspaceRevision: 1, IdempotencyKey: "execute-key", ExecutedByActorID: "agent", ApprovedByActorID: "human", ApprovedCommandHash: "sha256:command"}}
+	execute := taskDiscardExecuteInput{WorkspaceID: "workspace", TaskID: 1, Reason: "No longer needed", executeEnvelope: executeEnvelope{ExpectedWorkspaceRevision: 1, IdempotencyKey: "execute-key", ExecutedByActorID: "agent", ApprovalGrantID: "22222222-2222-4222-8222-222222222222"}}
 	if result, _, err := c.taskDiscardExecute(context.Background(), nil, execute); err != nil || result.IsError {
 		t.Fatalf("task discard execute failed: %#v %v", result, err)
 	}
@@ -817,7 +819,7 @@ func TestStructuralCreateHandlersForwardTypedCommandsAndConditionalApproval(t *t
 	_, _, _ = c.gateCreatePreview(context.Background(), nil, gateCreatePreviewInput{gateCreateFields: gateCreateFields{WorkspaceID: "workspace", GateID: "contract-ready", Name: "Contract Ready", FromPhaseID: "validate", ToPhaseID: "contract"}, previewEnvelope: previewEnvValue})
 	_, _, _ = c.gateCreateExecute(context.Background(), nil, gateCreateExecuteInput{gateCreateFields: gateCreateFields{WorkspaceID: "workspace", GateID: "contract-ready", Name: "Contract Ready", FromPhaseID: "validate", ToPhaseID: "contract"}, mutationExecuteEnvelope: executeEnvValue})
 	_, _, _ = c.gateAttachTaskPreview(context.Background(), nil, gateAttachTaskPreviewInput{gateAttachTaskFields: gateAttachTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 116, ClearTerminal: true}, previewEnvelope: previewEnvValue})
-	_, _, _ = c.gateAttachTaskExecute(context.Background(), nil, gateAttachTaskExecuteInput{gateAttachTaskFields: gateAttachTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 116, ClearTerminal: true}, conditionalExecuteEnvelope: conditionalExecuteEnvelope{mutationExecuteEnvelope: executeEnvValue, ApprovedByActorID: "human", ApprovedCommandHash: "sha256:test", ConversationRef: "thread"}})
+	_, _, _ = c.gateAttachTaskExecute(context.Background(), nil, gateAttachTaskExecuteInput{gateAttachTaskFields: gateAttachTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 116, ClearTerminal: true}, conditionalExecuteEnvelope: conditionalExecuteEnvelope{mutationExecuteEnvelope: executeEnvValue, ApprovalGrantID: "33333333-3333-4333-8333-333333333333"}})
 	_, _, _ = c.gateAttachEntryTaskPreview(context.Background(), nil, gateEntryTaskPreviewInput{gateEntryTaskFields: gateEntryTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 129}, previewEnvelope: previewEnvValue})
 	_, _, _ = c.gateAttachEntryTaskExecute(context.Background(), nil, gateEntryTaskExecuteInput{gateEntryTaskFields: gateEntryTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 129}, automaticEnvelope: executeEnvValue.automaticEnvelope})
 	_, _, _ = c.gateDetachEntryTaskPreview(context.Background(), nil, gateEntryTaskPreviewInput{gateEntryTaskFields: gateEntryTaskFields{WorkspaceID: "workspace", GateID: "contract-ready", TaskID: 129}, previewEnvelope: previewEnvValue})
@@ -844,14 +846,11 @@ func TestStructuralCreateHandlersForwardTypedCommandsAndConditionalApproval(t *t
 			t.Fatalf("request %d forwarded removed approvalGrantToken: %#v", index, envelope)
 		}
 		if index == 7 {
-			attestation, ok := envelope["humanApprovalAttestation"].(map[string]any)
-			if !ok || attestation["approvedByActorId"] != "human" || attestation["approvedCommandHash"] != "sha256:test" || attestation["conversationRef"] != "thread" {
+			if envelope["approvalGrantId"] != "33333333-3333-4333-8333-333333333333" {
 				t.Fatalf("conditional approval not forwarded: %#v", envelope)
 			}
-			for _, field := range []string{"decisionSnapshotHash", "statementHash", "approvedAt"} {
-				if _, exists := attestation[field]; exists {
-					t.Fatalf("empty optional approval field %s must be omitted: %#v", field, attestation)
-				}
+			if _, exists := envelope["humanApprovalAttestation"]; exists {
+				t.Fatalf("legacy attestation must not be manufactured: %#v", envelope)
 			}
 		} else if envelope["humanApprovalAttestation"] != nil {
 			t.Fatalf("approval leaked into non-conditional request %d: %#v", index, envelope)

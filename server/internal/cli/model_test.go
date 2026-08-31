@@ -61,19 +61,14 @@ func TestRunStopsHumanOnlyCommandAfterPreviewUntilApproval(t *testing.T) {
 	if err != nil || !outcome.ApprovalRequired || client.executeCalls != 0 {
 		t.Fatalf("human-only command did not stop: %+v %v", outcome, err)
 	}
-	approval := &Approval{
-		ApprovedByActorID: "human", ApprovedCommandHash: outcome.Preview.CommandHash,
-		ExpectedWorkspaceRevision: outcome.Preview.ExpectedWorkspaceRevision, DecisionSnapshotHash: outcome.Preview.DecisionSnapshotHash,
-		StatementHash: "sha256:statement", ConversationRef: "conversation",
-	}
+	approval := &Approval{GrantID: "11111111-1111-4111-8111-111111111111"}
 	outcome, err = Run(context.Background(), client, invocation, approval)
-	attestation := client.executed.Envelope.HumanApprovalAttestation
-	if err != nil || outcome.Execution == nil || client.executeCalls != 1 || attestation == nil || attestation.ApprovedCommandHash != "sha256:command" || attestation.DecisionSnapshotHash != "sha256:decision" || client.executed.Envelope.ExpectedWorkspaceRevision != 8 {
+	if err != nil || outcome.Execution == nil || client.executeCalls != 1 || client.executed.Envelope.HumanApprovalAttestation != nil || client.executed.Envelope.ApprovalGrantID != approval.GrantID || client.executed.Envelope.ExpectedWorkspaceRevision != 8 {
 		t.Fatalf("approved execute shape wrong: %+v %+v %v", client.executed, outcome, err)
 	}
 }
 
-func TestRunRejectsApprovalWhenFreshPreviewChanged(t *testing.T) {
+func TestRunReferencesGrantWithoutManufacturingAttestation(t *testing.T) {
 	client := &fakeClient{preview: application.PreviewResult{
 		CommandHash: "sha256:old", DecisionSnapshotHash: "sha256:old-decision", ExpectedWorkspaceRevision: 8,
 		Errors: []domain.Diagnostic{{Code: domain.CodeHumanApprovalRequired}},
@@ -83,22 +78,14 @@ func TestRunRejectsApprovalWhenFreshPreviewChanged(t *testing.T) {
 	if err != nil || !first.ApprovalRequired {
 		t.Fatalf("initial preview failed: %+v %v", first, err)
 	}
-	approval := &Approval{
-		ApprovedByActorID: "human", ApprovedCommandHash: first.Preview.CommandHash,
-		ExpectedWorkspaceRevision: first.Preview.ExpectedWorkspaceRevision, DecisionSnapshotHash: first.Preview.DecisionSnapshotHash,
-	}
+	approval := &Approval{GrantID: "22222222-2222-4222-8222-222222222222"}
 	client.preview = application.PreviewResult{
 		CommandHash: "sha256:new", DecisionSnapshotHash: "sha256:new-decision", ExpectedWorkspaceRevision: 9,
 		Errors: []domain.Diagnostic{{Code: domain.CodeHumanApprovalRequired}},
 	}
 	_, err = Run(context.Background(), client, invocation, approval)
-	if !IsCode(err, domain.CodeStaleRevision) || client.executeCalls != 0 {
-		t.Fatalf("changed preview silently re-approved: %v calls=%d", err, client.executeCalls)
-	}
-	client.preview.ExpectedWorkspaceRevision = 8
-	_, err = Run(context.Background(), client, invocation, approval)
-	if !IsCode(err, domain.CodeHumanApprovalMismatch) || client.executeCalls != 0 {
-		t.Fatalf("changed command hash silently re-approved: %v calls=%d", err, client.executeCalls)
+	if err != nil || client.executeCalls != 1 || client.executed.Envelope.ApprovalGrantID != approval.GrantID || client.executed.Envelope.HumanApprovalAttestation != nil {
+		t.Fatalf("grant reference was not forwarded exactly: %v calls=%d request=%+v", err, client.executeCalls, client.executed)
 	}
 }
 

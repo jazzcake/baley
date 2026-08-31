@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, Check, ChevronDown, Ellipsis, LayoutGrid, LogOut, Pencil, Plus, RotateCcw, Settings, ShieldCheck, X } from "lucide-react";
+import { Archive, Check, ChevronDown, Ellipsis, KeyRound, LayoutGrid, LogOut, Pencil, Plus, RotateCcw, Settings, ShieldCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
 	attachExistingAccount,
@@ -9,18 +9,22 @@ import {
   createWorkspace,
 	createWorkspaceMember,
   disableMemberAccount,
+	executeCommand,
 	fetchOIDCProviders,
 	fetchWorkspaceMembers,
   fetchMCPConnection,
+	issueApprovalGrant,
+	previewCommand,
   removeWorkspaceMember,
 	resetMemberPassword,
 	renameWorkspace,
 	restoreWorkspace,
+	revokeApprovalGrant,
   transferWorkspaceOwnership,
 	updateWorkspaceMember,
 	oidcLoginURL,
 } from "../api/auth";
-import type { MCPConnection, OIDCProvider } from "../api/auth";
+import type { CommandExecution, CommandPreview, CommandRequest, MCPConnection, OIDCProvider } from "../api/auth";
 import { APIError } from "../api/http";
 import { traceViewer } from "../debug/viewer-trace";
 import type {
@@ -493,6 +497,7 @@ export function WorkspaceAccessControls({
 }) {
   const navigate = useNavigate();
   const [memberAdminOpen, setMemberAdminOpen] = useState(false);
+  const [approvalOpen, setApprovalOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountMenuError, setAccountMenuError] = useState<string>();
 	const [logoutBusy, setLogoutBusy] = useState(false);
@@ -502,6 +507,8 @@ export function WorkspaceAccessControls({
   const accountMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 	const canAdmin = membership.capabilities.includes("workspace:admin") || membership.role === "owner";
+	const canApprove = membership.role === "owner" || membership.capabilities.some((capability) =>
+		capability === "task:approve" || capability === "lane:approve" || capability === "gate:approve");
 
 	useEffect(() => {
 		if (!accountMenuOpen) return;
@@ -597,6 +604,10 @@ export function WorkspaceAccessControls({
           closeAccountMenu();
           navigate("/workspaces");
         }}><LayoutGrid size={16} />내 Workspace</button>
+        {canApprove && <button type="button" role="menuitem" tabIndex={-1} onClick={() => {
+          closeAccountMenu();
+          setApprovalOpen(true);
+        }}><KeyRound size={16} />Human approval</button>}
         {canAdmin && <button type="button" role="menuitem" tabIndex={-1} onClick={() => {
           closeAccountMenu();
           setMemberAdminOpen(true);
@@ -635,6 +646,180 @@ export function WorkspaceAccessControls({
       onClose={() => setMemberAdminOpen(false)}
       onMembershipsChanged={onMembershipsChanged}
     />}
+    {approvalOpen && <HumanApprovalPanel
+      workspace={membership}
+      csrfToken={csrfToken}
+      onClose={() => setApprovalOpen(false)}
+    />}
+  </div>;
+}
+
+function HumanApprovalPanel({
+  workspace,
+  csrfToken,
+  onClose,
+}: {
+  workspace: WorkspaceMembership;
+  csrfToken: string;
+  onClose: () => void;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const commandRef = useRef<HTMLTextAreaElement>(null);
+  const [preview, setPreview] = useState<{ command: CommandRequest; result: CommandPreview }>();
+  const [acknowledgedWarnings, setAcknowledgedWarnings] = useState<string[]>([]);
+  const [proceedReason, setProceedReason] = useState("");
+  const [execution, setExecution] = useState<CommandExecution>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    window.setTimeout(() => closeRef.current?.focus(), 0);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!preview && !execution) return;
+    window.requestAnimationFrame(() => traceViewer("human-approval:dom-rendered", {
+      workspaceId: workspace.id,
+      previewVisible: Boolean(document.querySelector("[data-human-approval-preview]")),
+      executionVisible: Boolean(document.querySelector("[data-human-approval-execution]")),
+      applicationState: { hasPreview: Boolean(preview), hasExecution: Boolean(execution), busy },
+    }));
+  }, [busy, execution, preview, workspace.id]);
+
+  const loadPreview = async () => {
+    traceViewer("human-approval:event", { event: "preview-click", workspaceId: workspace.id });
+    setError(undefined);
+    setExecution(undefined);
+    let command: CommandRequest;
+    try {
+      command = JSON.parse(commandRef.current?.value ?? "") as CommandRequest;
+    } catch {
+      setError("Command JSON is invalid.");
+      return;
+    }
+    if (!command || typeof command.name !== "string" || !command.arguments ||
+      !command.envelope || typeof command.envelope.idempotencyKey !== "string" ||
+      typeof command.envelope.expectedWorkspaceRevision !== "number") {
+      setError("A typed command with idempotencyKey and expectedWorkspaceRevision is required.");
+      return;
+    }
+    if (command.arguments.workspaceId !== workspace.id) {
+      setError("The command belongs to a different Workspace.");
+      return;
+    }
+    if (command.envelope.approvalGrantId || command.envelope.humanApprovalAttestation) {
+      setError("Use the original command without any approval fields.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await previewCommand(command, csrfToken);
+      traceViewer("human-approval:preview-state", {
+        workspaceId: workspace.id,
+        calculatedTarget: { action: command.name, entityType: result.entityType, entityId: result.entityId },
+        commandHash: result.commandHash,
+        workspaceRevision: result.expectedWorkspaceRevision,
+        controllerState: { warningCodes: result.warnings.map((item) => item.code), errorCodes: result.errors.map((item) => item.code) },
+      });
+      setPreview({ command, result });
+      setAcknowledgedWarnings([]);
+      setProceedReason("");
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approveAndExecute = async () => {
+    if (!preview) return;
+    traceViewer("human-approval:event", {
+      event: "approve-and-execute-click",
+      workspaceId: workspace.id,
+      calculatedTarget: { action: preview.command.name, entityType: preview.result.entityType, entityId: preview.result.entityId },
+      applicationState: { acknowledgedWarnings, proceedReasonPresent: Boolean(proceedReason.trim()) },
+    });
+    setBusy(true);
+    setError(undefined);
+    let grantId = "";
+    try {
+      const grant = await issueApprovalGrant(workspace.id, {
+        command: preview.command,
+        acknowledgedWarningCodes: acknowledgedWarnings,
+        proceedReason,
+      }, csrfToken);
+      grantId = grant.id;
+      traceViewer("human-approval:grant-state", {
+        workspaceId: workspace.id, grantId: grant.id, expiresAt: grant.expiresAt,
+        commandHash: grant.commandHash, workspaceRevision: grant.workspaceRevision,
+      });
+      const command: CommandRequest = {
+        ...preview.command,
+        envelope: {
+          ...preview.command.envelope,
+          expectedWorkspaceRevision: grant.workspaceRevision,
+          acknowledgedWarningCodes: acknowledgedWarnings,
+          ...(proceedReason.trim() ? { proceedReason: proceedReason.trim() } : {}),
+          approvalGrantId: grant.id,
+        },
+      };
+      const result = await executeCommand(command, csrfToken);
+      setExecution(result);
+      traceViewer("human-approval:execution-state", {
+        workspaceId: workspace.id, commandId: result.commandId,
+        workspaceRevision: result.workspaceRevision, approvalProtocol: result.approvalProtocol,
+      });
+    } catch (reason) {
+      if (grantId) void revokeApprovalGrant(workspace.id, grantId, csrfToken).catch(() => undefined);
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const blockingErrors = preview?.result.errors.filter((item) => item.code !== "human_approval_required") ?? [];
+  const allWarningsAcknowledged = preview?.result.warnings.every((warning) => acknowledgedWarnings.includes(warning.code)) ?? false;
+  const canApprove = Boolean(preview && blockingErrors.length === 0 && allWarningsAcknowledged &&
+    (preview.result.warnings.length === 0 || proceedReason.trim()));
+
+  return <div className="admin-overlay">
+    <section className="member-admin human-approval-panel" role="dialog" aria-modal="true" aria-labelledby="human-approval-title">
+      <header>
+        <div><span>HUMAN ONLY</span><h2 id="human-approval-title">Review and approve command</h2></div>
+        <button ref={closeRef} className="icon-button" type="button" aria-label="Close human approval" onClick={onClose}><X size={18} /></button>
+      </header>
+      <p className="admin-intro">Paste the non-secret typed command, review the fresh server preview, then approve and execute it in this authenticated browser session. No token, header, or environment secret is created.</p>
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <label className="command-input-label" htmlFor="human-approval-command">Typed command JSON</label>
+      <textarea ref={commandRef} id="human-approval-command" spellCheck={false} onChange={() => { setPreview(undefined); setExecution(undefined); }} />
+      <button className="primary-button preview-button" type="button" disabled={busy} onClick={() => void loadPreview()}>Load fresh preview</button>
+      {preview && <section className="approval-preview" data-human-approval-preview>
+        <h3>Exact command decision</h3>
+        <dl>
+          <div><dt>Action</dt><dd>{preview.command.name}</dd></div>
+          <div><dt>Target</dt><dd>{preview.result.entityType || "workspace"} · {preview.result.entityId || workspace.id}</dd></div>
+          <div><dt>Revision</dt><dd>{preview.result.expectedWorkspaceRevision}</dd></div>
+          <div><dt>Capability</dt><dd>{preview.result.requiredCapability}</dd></div>
+          <div><dt>Command hash</dt><dd><code>{preview.result.commandHash}</code></dd></div>
+          <div><dt>Decision snapshot</dt><dd><code>{preview.result.decisionSnapshotHash || "none"}</code></dd></div>
+        </dl>
+        <details><summary>Projected diff</summary><pre>{JSON.stringify(preview.result.projectedDiff, null, 2)}</pre></details>
+        {preview.result.errors.map((item) => <div className={item.code === "human_approval_required" ? "approval-required" : "form-error"} key={item.code}><strong>{item.code}</strong><span>{item.message}</span></div>)}
+        {preview.result.warnings.length > 0 && <fieldset className="warning-list"><legend>Warning acknowledgement</legend>
+          {preview.result.warnings.map((warning) => <label key={warning.code}><input type="checkbox" checked={acknowledgedWarnings.includes(warning.code)} onChange={(event) => {
+            setAcknowledgedWarnings((current) => event.currentTarget.checked ? [...new Set([...current, warning.code])] : current.filter((code) => code !== warning.code));
+          }} /><span><strong>{warning.code}</strong>{warning.message}</span></label>)}
+        </fieldset>}
+        {preview.result.warnings.length > 0 && <label className="command-input-label">Proceed reason<textarea className="proceed-reason" value={proceedReason} onChange={(event) => setProceedReason(event.currentTarget.value)} /></label>}
+        <button className="primary-button" type="button" disabled={busy || !canApprove} onClick={() => void approveAndExecute()}>Approve and execute once</button>
+      </section>}
+      {execution && <section className="approval-execution" data-human-approval-execution><h3>Executed</h3><p>Command <code>{execution.commandId}</code> committed at Workspace revision {execution.workspaceRevision}.</p></section>}
+    </section>
   </div>;
 }
 

@@ -44,7 +44,7 @@ func TestMigration14DownUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	for _, table := range []string{"accounts", "account_sessions", "workspace_memberships", "agent_tokens", "security_events"} {
+	for _, table := range []string{"accounts", "account_sessions", "workspace_memberships", "agent_tokens", "approval_grants", "security_events"} {
 		var exists *string
 		if err = repo.Pool.QueryRow(context.Background(), "SELECT to_regclass($1)::text", table).Scan(&exists); err != nil || exists == nil {
 			t.Fatalf("table %s missing after down/up: %v", table, err)
@@ -65,7 +65,7 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE security_events,agent_tokens,workspace_memberships,account_sessions,account_credentials,accounts,events,human_approval_attestations,commands,workspace_counters,runs,gate_entry_tasks,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE; SET session_replication_role='origin'"); err != nil {
+	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE security_events,approval_grants,agent_tokens,workspace_memberships,account_sessions,account_credentials,accounts,events,human_approval_attestations,commands,workspace_counters,runs,gate_entry_tasks,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE; SET session_replication_role='origin'"); err != nil {
 		t.Fatal(err)
 	}
 	if err = repo.SeedDemo(ctx); err != nil {
@@ -312,7 +312,7 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agent.Subject.Kind != authz.ActorAgent || agent.WorkspaceID != postgres.DemoWorkspaceID || agent.ApprovalActorID != postgres.DemoHumanActorID {
+	if agent.Subject.Kind != authz.ActorAgent || agent.WorkspaceID != postgres.DemoWorkspaceID {
 		t.Fatalf("unexpected Agent principal: %+v", agent)
 	}
 	agentCrossRequest := httptest.NewRequest(http.MethodPost, "/v1/commands/execute", bytes.NewReader(crossWorkspaceCommand))
@@ -353,29 +353,52 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if len(warnings) > 0 {
 		proceedReason = "Owner reviewed the exact warning set"
 	}
+	grantBody, _ := json.Marshal(map[string]any{"command": previewRequest, "acknowledgedWarningCodes": warnings, "proceedReason": proceedReason})
+	grantWithoutCSRF := httptest.NewRequest(http.MethodPost, "/v1/workspaces/"+postgres.DemoWorkspaceID+"/approval-grants", bytes.NewReader(grantBody))
+	grantWithoutCSRF.Header.Set("Origin", "http://localhost:5173")
+	grantWithoutCSRF.AddCookie(sessionCookie)
+	grantWithoutCSRF.AddCookie(csrfCookie)
+	grantWithoutCSRFResponse := httptest.NewRecorder()
+	handler.ServeHTTP(grantWithoutCSRFResponse, grantWithoutCSRF)
+	if grantWithoutCSRFResponse.Code != http.StatusForbidden {
+		t.Fatalf("approval grant issuance without CSRF status=%d body=%s", grantWithoutCSRFResponse.Code, grantWithoutCSRFResponse.Body.String())
+	}
+	grantResponse := ownerMutation(http.MethodPost, "/v1/workspaces/"+postgres.DemoWorkspaceID+"/approval-grants", grantBody)
+	if grantResponse.Code != http.StatusCreated {
+		t.Fatalf("browser approval grant status=%d body=%s", grantResponse.Code, grantResponse.Body.String())
+	}
+	var grant postgres.ApprovalGrantResult
+	if err = json.Unmarshal(grantResponse.Body.Bytes(), &grant); err != nil || grant.ID == "" {
+		t.Fatalf("decode browser approval grant: %+v %v", grant, err)
+	}
+	var activeGrantCount int
+	if err = repo.Pool.QueryRow(ctx, "SELECT count(*) FROM approval_grants WHERE id=$1 AND workspace_id=$2 AND status='active'", grant.ID, postgres.DemoWorkspaceID).Scan(&activeGrantCount); err != nil || activeGrantCount != 1 {
+		t.Fatalf("issued browser approval grant was not persisted: count=%d err=%v", activeGrantCount, err)
+	}
 	execute := previewRequest
-	execute.Envelope.IdempotencyKey = "chat-approved-confirm"
+	execute.Envelope.IdempotencyKey = "browser-grant-confirm"
 	execute.Envelope.AcknowledgedWarningCodes = warnings
 	execute.Envelope.ProceedReason = proceedReason
-	execute.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
-		ApprovedCommandHash: preview.CommandHash, DecisionSnapshotHash: preview.DecisionSnapshotHash,
-		StatementHash: "sha256:chat-approval", ConversationRef: "account-access-test",
-	}
-	execute.Principal = &application.CommandPrincipal{CredentialID: agent.CredentialID, WorkspaceID: agent.WorkspaceID, ApprovalActorID: agent.ApprovalActorID, Subject: agent.Subject}
+	execute.Envelope.ApprovalGrantID = grant.ID
+	execute.Principal = &application.CommandPrincipal{CredentialID: agent.CredentialID, WorkspaceID: agent.WorkspaceID, Subject: agent.Subject}
 
 	missingApproval := execute
-	missingApproval.Envelope.IdempotencyKey = "missing-chat-approval"
-	missingApproval.Envelope.HumanApprovalAttestation = nil
+	missingApproval.Envelope.IdempotencyKey = "missing-browser-grant"
+	missingApproval.Envelope.ApprovalGrantID = ""
 	if _, err = service.Execute(ctx, missingApproval); err == nil {
-		t.Fatal("human-only command without chat approval was accepted")
+		t.Fatal("human-only command without a browser grant was accepted")
 	}
 	mismatch := execute
-	mismatch.Envelope.IdempotencyKey = "connected-human-mismatch"
+	mismatch.Envelope.IdempotencyKey = "legacy-attestation-mismatch"
+	mismatch.Envelope.ApprovalGrantID = ""
 	mismatch.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
 		ApprovedByActorID: "different-human", ApprovedCommandHash: preview.CommandHash,
 	}
 	if _, err = service.Execute(ctx, mismatch); err == nil {
-		t.Fatal("approval attributed to a different human was accepted")
+		t.Fatal("legacy body approval fields were accepted in enforced mode")
+	}
+	if err = repo.Pool.QueryRow(ctx, "SELECT count(*) FROM approval_grants WHERE id=$1 AND workspace_id=$2 AND status='active'", grant.ID, postgres.DemoWorkspaceID).Scan(&activeGrantCount); err != nil || activeGrantCount != 1 {
+		t.Fatalf("rejected requests changed browser approval grant: count=%d err=%v", activeGrantCount, err)
 	}
 	executeRaw, _ := json.Marshal(execute)
 	executeRequest := httptest.NewRequest(http.MethodPost, "/v1/commands/execute", bytes.NewReader(executeRaw))
@@ -383,13 +406,13 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	executeResponse := httptest.NewRecorder()
 	handler.ServeHTTP(executeResponse, executeRequest)
 	if executeResponse.Code != http.StatusOK {
-		t.Fatalf("HTTP Agent chat-approved execute status=%d body=%s", executeResponse.Code, executeResponse.Body.String())
+		t.Fatalf("HTTP Agent grant execute status=%d body=%s", executeResponse.Code, executeResponse.Body.String())
 	}
 	var result application.ExecutionResult
 	if err = json.Unmarshal(executeResponse.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.ApprovalProtocol != "connected_human_chat_attestation" {
+	if result.ApprovalProtocol != "browser_session_approval_grant" {
 		t.Fatalf("approval protocol=%q", result.ApprovalProtocol)
 	}
 	retryRequest := httptest.NewRequest(http.MethodPost, "/v1/commands/execute", bytes.NewReader(executeRaw))
@@ -401,12 +424,12 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 		t.Fatalf("safe HTTP idempotent retry failed: status=%d result=%+v body=%s", retryResponse.Code, retry, retryResponse.Body.String())
 	}
 	tamperedRetry := execute
-	tamperedRetry.Envelope.HumanApprovalAttestation = nil
+	tamperedRetry.Envelope.ApprovalGrantID = ""
 	if _, err = service.Execute(ctx, tamperedRetry); commandErrorCode(err) != domain.CodeIdempotencyConflict {
 		t.Fatalf("changed approval envelope reused successful idempotency key: %v", err)
 	}
-	var recordedApprover string
-	if err = repo.Pool.QueryRow(ctx, "SELECT approved_by_actor_id FROM human_approval_attestations WHERE executed_command_id=$1", result.CommandID).Scan(&recordedApprover); err != nil || recordedApprover != postgres.DemoHumanActorID {
+	var recordedApprover, recordedGrantID string
+	if err = repo.Pool.QueryRow(ctx, "SELECT approved_by_actor_id,approval_grant_id::text FROM human_approval_attestations WHERE executed_command_id=$1", result.CommandID).Scan(&recordedApprover, &recordedGrantID); err != nil || recordedApprover != postgres.DemoHumanActorID || recordedGrantID != grant.ID {
 		t.Fatalf("connected human approval attribution=%q err=%v", recordedApprover, err)
 	}
 	forgedCommand := map[string]any{

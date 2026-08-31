@@ -45,12 +45,7 @@ type Client interface {
 }
 
 type Approval struct {
-	ApprovedByActorID         string
-	ApprovedCommandHash       string
-	ExpectedWorkspaceRevision int64
-	DecisionSnapshotHash      string
-	StatementHash             string
-	ConversationRef           string
+	GrantID string
 }
 
 type Outcome struct {
@@ -234,23 +229,14 @@ func Run(ctx context.Context, client Client, invocation Invocation, approval *Ap
 		outcome.ApprovalRequired = approvalRequired
 		return outcome, nil
 	}
-	if approvalRequired && (approval == nil || strings.TrimSpace(approval.ApprovedByActorID) == "") {
+	if approvalRequired && (approval == nil || strings.TrimSpace(approval.GrantID) == "") {
 		outcome.ApprovalRequired = true
 		return outcome, nil
-	}
-	if approvalRequired && approval.ExpectedWorkspaceRevision != preview.ExpectedWorkspaceRevision {
-		return outcome, &StructuredError{Code: domain.CodeStaleRevision, Message: "approved preview revision is stale"}
-	}
-	if approvalRequired && (approval.ApprovedCommandHash != preview.CommandHash || approval.DecisionSnapshotHash != preview.DecisionSnapshotHash) {
-		return outcome, &StructuredError{Code: domain.CodeHumanApprovalMismatch, Message: "approved preview does not match current preview"}
 	}
 	request.Envelope.ExpectedWorkspaceRevision = preview.ExpectedWorkspaceRevision
 	request.Envelope.AcknowledgedWarningCodes = append([]string(nil), invocation.AcknowledgedWarningCodes...)
 	if approvalRequired {
-		request.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
-			ApprovedByActorID: strings.TrimSpace(approval.ApprovedByActorID), ApprovedCommandHash: approval.ApprovedCommandHash,
-			DecisionSnapshotHash: approval.DecisionSnapshotHash, StatementHash: strings.TrimSpace(approval.StatementHash), ConversationRef: strings.TrimSpace(approval.ConversationRef),
-		}
+		request.Envelope.ApprovalGrantID = strings.TrimSpace(approval.GrantID)
 	}
 	execution, err := client.Execute(ctx, request)
 	if err != nil {

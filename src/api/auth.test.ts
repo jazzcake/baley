@@ -4,11 +4,14 @@ import {
   archiveWorkspace,
   createWorkspace,
   disableMemberAccount,
-	  fetchOIDCProviders,
+  executeCommand,
+  fetchOIDCProviders,
+  issueApprovalGrant,
   login,
   logout,
   renameWorkspace,
   resetMemberPassword,
+  revokeApprovalGrant,
   restoreWorkspace,
   updateWorkspaceMember,
 } from "./auth";
@@ -145,5 +148,35 @@ describe("credentialed account API", () => {
     for (const [, init] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
       expect((init.headers as Headers).get("X-Baley-CSRF")).toBe("csrf");
     }
+  });
+
+  it("issues, references, and revokes a non-secret browser approval grant with CSRF", async () => {
+    const command = {
+      name: "task.confirm",
+      arguments: { workspaceId: "workspace", taskId: 158 },
+      envelope: { idempotencyKey: "approve-158", expectedWorkspaceRevision: 7, executedByActorId: "human" },
+    };
+    const grant = { id: "11111111-1111-4111-8111-111111111111", expiresAt: "2026-08-31T06:00:00Z" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(grant, 201))
+      .mockResolvedValueOnce(jsonResponse({ commandId: "command", workspaceRevision: 8, eventIds: [] }))
+      .mockResolvedValueOnce(jsonResponse(undefined, 204));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const issued = await issueApprovalGrant("workspace", { command, acknowledgedWarningCodes: [], proceedReason: "" }, "csrf");
+    await executeCommand({ ...command, envelope: { ...command.envelope, approvalGrantId: issued.id } }, "csrf");
+    await revokeApprovalGrant("workspace", issued.id, "csrf");
+
+    for (const [, init] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
+      expect(init.credentials).toBe("include");
+      expect((init.headers as Headers).get("X-Baley-CSRF")).toBe("csrf");
+      expect(String(init.body ?? "")).not.toContain("approvalGrantToken");
+      expect(String(init.body ?? "")).not.toContain("humanApprovalAttestation");
+    }
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      expect.stringContaining("/v1/workspaces/workspace/approval-grants"),
+      expect.stringContaining("/v1/commands/execute"),
+      expect.stringContaining(`/v1/workspaces/workspace/approval-grants/${grant.id}`),
+    ]);
   });
 });

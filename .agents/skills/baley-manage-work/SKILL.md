@@ -35,7 +35,7 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
    - every attached Gate Task is confirmed or explicitly passed for that Gate before transition.
    - Gate pass and Gate Task pass/revoke target the current active Phase's outgoing Gate.
    - only detailed-planning Runs start in a future inactive Phase.
-   - the requested action does not exercise human-only authority without an explicit matching `humanApprovalAttestation`.
+   - the requested action does not exercise human-only authority without a fresh browser-session approval grant for that exact command.
 9. For routine Operator mutations, treat the user's clear request as authorization: prepare the concise preview internally, execute immediately, and report the result without asking a confirmation question. This includes Task and Backlog create/update/move/reorder, normal dependency changes, Run lifecycle, and Task Record registration. Ask for a human decision only for the human-only authority boundaries below.
 10. Call the Baley MCP tool only when one is available and any required human approval has been obtained.
 11. If no Baley command tool is available, stop after the preview. Do not patch fixtures, application source, or a database as a substitute.
@@ -157,7 +157,7 @@ Use `dependency.patch` for edge reversal or any rewrite that removes and adds ed
 
 For every human-only action, create the fresh preview before asking for approval, but present a human decision brief rather than a transport dump. Lead with what was delivered, how it was verified, independent review results when available, and any residual risk that could change the decision. Keep Workspace revision, command hash, capability, and snapshot hash as internal audit-binding data unless the human asks for them or a stale/mismatch error requires explanation.
 
-The human answers in the same conversation. After an unambiguous approval, execute immediately with a chat attestation bound to the fresh preview. The server derives `approvedByActorId` from the human who connected the current Agent credential and rechecks that person's current Workspace role. Never ask the human to open a separate approval panel, paste command JSON, issue a grant, copy a token, or repeat the same decision in another channel.
+The human makes the authoritative decision in Baley's signed-in Viewer approval surface. The browser creates a fresh preview, acknowledges its exact warnings, and issues a short-lived single-use grant bound to that browser session and command. The Agent may execute the exact command only by referencing the resulting grant ID; an Agent bearer never derives `approvedByActorId` and may not manufacture approval fields. Never ask for a plaintext secret, custom header, environment variable, or copied approval token.
 
 For one `task.confirm`, use this concise pattern:
 
@@ -165,23 +165,13 @@ For one `task.confirm`, use this concise pattern:
 #<id>은 <delivered outcome>, <test/build verification>, <independent review result>를 완료했습니다. 완료로 확인할까요?
 ```
 
-When several Tasks are already `implemented`, create a write-free baseline `task.confirm` preview for every target at the same starting Workspace revision, then explicitly enumerate their outcomes in one grouped decision brief. V1 grouped approval is limited to this homogeneous `task.confirm` set. Keep different actions separate: confirmation and discard must not be hidden in the same generic “complete all” question. Treat an unambiguous reply such as “yes”, “confirm”, “네”, or “확인합니다” to the immediately preceding single or explicitly enumerated grouped decision brief as the human approval statement.
-
-Execute a grouped approval as an LLM-controlled sequence, not as a server batch mutation. For every command in the approved set:
-
-1. create a fresh preview just in time;
-2. require the first fresh preview revision to equal the retained group baseline revision and every later fresh preview revision to equal the immediately preceding successful command's resulting revision; then compare action, target, projected diff, required capability, all errors/warnings/advisories, and optional decision snapshot with that target's baseline preview, ignoring only the expected revision and command hash;
-3. execute with a new command-specific `humanApprovalAttestation` bound to that preview's exact revision, command hash, and optional snapshot hash;
-4. use the same non-empty approval `statementHash` and `conversationRef` on every command-specific attestation for correlation, never a prior command hash or attestation;
-5. fresh-read before the next iteration.
-
-The expected revision increase caused solely by an earlier successful command in that approved sequence does not require another human question. Re-preview internally and continue only when the revision progression and comparison fields remain equivalent. Any mismatch before the first command or between later commands means external or unexpected state changed: stop and ask again even when the projected diff appears unchanged. Do not let the Agent downgrade a changed diagnostic as “not material” on the human's behalf. Report each resulting status and Event IDs, including any partial progress if a later iteration stops.
+When several Tasks are already `implemented`, present them separately. Each Task requires its own Viewer preview, human decision, and command-specific grant. After one confirmation changes the Workspace revision, fresh-read and fresh-preview the next Task. Never treat a chat reply or a prior grant as authority for another Task.
 
 Do not present routine topology diagnostics as though they were implementation-quality failures. In particular, acknowledge `dangling_path` only as a warning when confirmation is otherwise approved; never invent or approve a terminal reason to suppress it. Surface the diagnostic in the decision brief only when it materially changes the human decision.
 
 Apply the same outcome-first approach to human-only Gate, Lane, `task.discard`, and Workspace decisions: describe the real-world effect and decision evidence first, while preserving exact revision/hash/snapshot binding internally. `task.rework` is an Agent Operator action and does not require human approval. V1 has no persisted approval inbox.
 
-The server enforces each command's current revision, canonical hash, target, warnings, command-specific chat attestation, and the current capability of the human bound to the Agent credential. The Skill/Operator enforces the grouped baseline comparison, revision chain, and shared human statement. Do not claim the server provides an atomic approval bundle or independently verifies conversation semantics.
+The server enforces each command's current revision, canonical hash, target, warnings, single-use browser grant, issuing session, and the issuing human's current capability. Grouped confirmation is not supported because each command requires a separate browser decision and grant. Do not claim the server provides an atomic approval bundle.
 
 Treat Viewer, Operator, Approver, and Owner as capability bundles for the future authenticated API. Never assume an Agent Operator has human approval capability.
 

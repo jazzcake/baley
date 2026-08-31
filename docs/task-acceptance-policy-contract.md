@@ -9,19 +9,16 @@ implementation_task: 130
 
 ## 목적
 
-Task의 기술적 완료(`implemented`)와 업무 수용(`confirmed`)을 구분하되, 순수 기계
-검증 Task는 PM이 사전에 위임한 policy와 typed evidence에 따라 자동 수용한다.
-
-> 배포 경계: #130이 배포되기 전 현재 V1 runtime에는 이 문서의 mode/evidence/Event
-> field와 command가 없으며, 모든 `task.confirm`은 기존 사람 승인 경로를 사용한다.
+Task의 기술적 완료(`implemented`)와 업무 수용(`confirmed`)을 구분한다. 모든 Task
+수용은 human-required이며 Agent evidence는 Task를 자동 확인하지 않는다. 이 P0 규칙은
+기존 delegated acceptance 계약을 대체한다.
 
 ## Mode와 고정 규칙
 
 | requested mode | 생성 시 처리 | effective mode |
 | --- | --- | --- |
-| `delegated` | 사람 approver가 허용한 template/policy에서만 선택 | `delegated` |
 | `human_required` | 항상 허용 | `human_required` |
-| `inherit` | Workspace default를 생성 시 한 번 resolve | resolved value |
+| `inherit` | Workspace default를 생성 시 한 번 resolve | `human_required` |
 
 - Task는 생성 시 `effective_acceptance_mode`, `acceptance_policy_version`,
   `evidence_profile_id`를 하나의 immutable binding으로 저장한다. migration의 initial
@@ -30,50 +27,32 @@ Task의 기술적 완료(`implemented`)와 업무 수용(`confirmed`)을 구분�
 - `task.acceptance_policy.change`는 사람 승인으로 future Task template만 바꾼다. pending,
   in_progress, implemented를 포함한 기존 Task의 binding은 절대 변경하지 않으며, 이후 새
   Task만 새 template binding을 resolve해 고정한다.
-- Agent는 human_required로 escalation을 제안할 수 있다. delegated 부여, delegated로의
-  변경, evidence profile 완화는 사람 승인 command와 Event를 요구한다.
+- migration은 기존 delegated assignment history를 보존하고 새 human-required assignment
+  version을 append한 뒤 current Task binding과 Workspace default를 `human_required`로 바꾼다.
+- 새 delegated policy 또는 Task 요청은 거부한다.
 - 혼합 Task(기능 수용·디자인·sign-off 요소 포함)는 `human_required`가 우선한다.
 
 ## Mode 선택 기준
 
-`delegated`는 아래를 모두 만족하는 순수 기술 Task만 허용한다.
-
-- acceptance가 versioned test/build/migration/contract assertion으로 닫힌다.
-- UX·제품 동작 수용, 디자인 평가, code-review sign-off, 보안/비용/법적 판단이 없다.
-- required evidence profile이 typed record로 충족 가능하다.
-
-다음은 항상 `human_required`다.
+다음은 모두 `human_required`다.
 
 - 기능 수용과 사용자 시각 검증
 - 디자인·UX·copy·접근성의 최종 수용
 - code-review/sign-off와 architecture/product decision
 - 정책 완화, Task discard, Gate/Lane/Workspace 관련 판단
 
-## Monotonic escalation clarification
+## Historical delegated assignments
 
-The initial assignment is immutable against automatic/default policy replacement. One narrow,
-append-only exception is permitted: an already-created `delegated` Task may be escalated to
-`human_required` when a scope change, UX/product judgment, review risk, or security/cost/legal
-judgment is discovered.
-
-- An Agent may only propose the escalation. It is never automatic.
-- A human-approved `task.acceptance_mode.escalate` command appends a new
-  `TaskAcceptanceAssignment` version with the reason, evidence reference, approver, policy
-  version, and superseded assignment ID recorded in its Event.
-- The command is monotonic: it permits only `delegated -> human_required`; de-escalation and
-  evidence-profile weakening are rejected. Future template changes remain the responsibility of
-  human-approved `task.acceptance_policy.change`.
-- It applies only while the Task is pending, in progress, or implemented. An implemented Task
-  remains implemented and loses delegated auto-confirm eligibility; normal human
-  `task.confirm` preview/attestation is then required. A confirmed Task is never changed;
-  a human-required follow-up Task is created if further work is necessary.
+Delegated rows remain append-only historical evidence. Migration appends a superseding
+human-required assignment. Runtime resolution, policy changes and Task creation cannot select
+delegated mode, and `task.evidence.report` never changes Task status.
 
 ## Typed data model
 
 ```text
 Task
-  requested_acceptance_mode: delegated | human_required | inherit
-  effective_acceptance_mode: delegated | human_required
+  requested_acceptance_mode: human_required | inherit
+  effective_acceptance_mode: human_required
   acceptance_policy_version: string
   evidence_profile_id: string
 
@@ -106,8 +85,7 @@ enum, non-empty passed verification reference와 blocking count를
 - `task.create`는 requested mode/evidence profile을 받고 effective mode/policy version을
   결과에 포함한다. `backlog.promote`도 같은 optional requested mode/profile을 받고
   pending Task, dependency, Backlog 전이와 assignment 동결을 한 transaction으로 처리한다.
-  mode를 생략하면 `inherit`을 resolve한다. ad-hoc delegated 선택은 사람 승인된 template
-  또는 policy assignment가 없으면 거부한다.
+  mode를 생략하면 `inherit`을 `human_required`로 resolve한다. delegated 선택은 거부한다.
 - 사람 승인 `task.acceptance_policy.change`는 future Task template의 기본 mode/profile만
   auditably 변경한다. 생성된 Task의 `requested_acceptance_mode`,
   `effective_acceptance_mode`, `acceptance_policy_version`, `evidence_profile_id`는 절대
@@ -116,11 +94,9 @@ enum, non-empty passed verification reference와 blocking count를
 - `task.evidence.report`는 implemented Task에 새 evidence version을 append하며 기존
   evidence를 삭제·수정하지 않는다. report/evidence command 뒤에는 서버가 current
   assignment와 가장 최근 유효 evidence version을 재평가한다.
-- delegated eligibility가 충족되는 첫 재평가에서 같은 transaction으로
-  `task.auto_confirmed` Event와 Task `confirmed` 전이를 만든다.
-- evidence 부족/review fail이면 Task는 `implemented`에 남고 typed reason을 query에
-  제공한다. 이후 evidence report로 다시 평가할 수 있다.
-- human_required Task는 기존 `task.confirm` preview/attestation 경로를 그대로 쓴다.
+- evidence 충족 여부와 무관하게 Task는 `implemented`에 남고 typed reason을 query에
+  제공한다. 이후 evidence report로 다시 평가할 수 있지만 확인 상태로 전이하지 않는다.
+- `task.confirm`은 browser-session approval grant를 요구하는 human-only command다.
 
 ## 바뀌지 않는 경계
 
@@ -138,5 +114,5 @@ acceptance mode는 Task `implemented → confirmed`에만 영향을 준다.
 - schema/migration, command contract, Go domain/service, PostgreSQL, HTTP/CLI/MCP,
   Viewer projection이 effective mode와 typed evidence를 같은 의미로 노출한다.
 - preview는 write-free이고 policy/evidence 변경은 revision·idempotency·audit을 지킨다.
-- delegated success, evidence 부족, review fail, existing-task migration, human-required
-  fallback, 모든 Gate/Lane/Workspace 회귀를 integration/E2E로 검증한다.
+- delegated 거부, evidence 비자동확인, existing-task migration, human-required grant,
+  모든 Gate/Lane/Workspace 회귀를 integration/E2E로 검증한다.

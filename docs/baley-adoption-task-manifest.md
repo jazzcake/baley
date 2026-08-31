@@ -6,6 +6,7 @@ workspace_revision_observed: 182
 last_validated_revision: 591
 last_validated_at: "2026-08-03"
 lane_id: adoption
+approval_authority_superseded_by: docs/task-acceptance-policy-contract.md
 phases:
   - embedding-contract
   - embedding-enablement

@@ -17,8 +17,8 @@ func TestMigration15BackfillsGatePublicNumbersAndCounter(t *testing.T) {
 	requireDisposableDatabase(t, url)
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "migration-15-integration-secret")
 	migrations := filepath.Join("..", "migrations")
-	// Step from latest (17) to the schema immediately before migration 15.
-	for range 3 {
+	// Step from latest (23) to the schema immediately before migration 15.
+	for range 9 {
 		if err := postgres.Migrate(url, migrations, "down"); err != nil {
 			t.Fatal(err)
 		}

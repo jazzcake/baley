@@ -18,6 +18,7 @@ export type CommandRequest = {
     acknowledgedWarningCodes?: string[];
     proceedReason?: string;
     humanApprovalAttestation?: unknown;
+    approvalGrantId?: string;
   };
 };
 export type Diagnostic = { code: string; message: string; details?: unknown };
@@ -32,6 +33,19 @@ export type CommandPreview = {
   decisionSnapshotHash?: string;
   entityType?: string;
   entityId?: string;
+};
+export type ApprovalGrant = {
+  id: string;
+  expiresAt: string;
+  commandHash: string;
+  workspaceRevision: number;
+  decisionSnapshotHash?: string;
+};
+export type CommandExecution = {
+  commandId: string;
+  workspaceRevision: number;
+  eventIds: string[];
+  approvalProtocol?: string;
 };
 export type MCPConnection = {
   id: string;
@@ -220,6 +234,34 @@ export function previewCommand(command: CommandRequest, csrfToken: string): Prom
   return requestJSON<CommandPreview>(
     "/v1/commands/preview",
     { method: "POST", body: JSON.stringify(command) },
+    csrfToken,
+  );
+}
+
+export function issueApprovalGrant(
+  workspaceId: string,
+  input: { command: CommandRequest; acknowledgedWarningCodes: string[]; proceedReason: string },
+  csrfToken: string,
+): Promise<ApprovalGrant> {
+  return requestJSON<ApprovalGrant>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/approval-grants`,
+    { method: "POST", body: JSON.stringify(input) },
+    csrfToken,
+  );
+}
+
+export function executeCommand(command: CommandRequest, csrfToken: string): Promise<CommandExecution> {
+  return requestJSON<CommandExecution>(
+    "/v1/commands/execute",
+    { method: "POST", body: JSON.stringify(command) },
+    csrfToken,
+  );
+}
+
+export function revokeApprovalGrant(workspaceId: string, grantId: string, csrfToken: string): Promise<void> {
+  return requestJSON<void>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/approval-grants/${encodeURIComponent(grantId)}`,
+    { method: "DELETE" },
     csrfToken,
   );
 }

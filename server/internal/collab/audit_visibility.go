@@ -293,13 +293,12 @@ func auditCommandEventRelation(command, eventType string, activeGate bool) (bool
 }
 
 var secondaryAuditEvents = map[string][]string{
-	"backlog.promote":      {"task.created"},
-	"project.bootstrap":    {"workspace.created", "repository.registered"},
-	"workspace.activate":   {"phase.activated"},
-	"workspace.close":      {"phase.completed"},
-	"gate.pass":            {"phase.completed", "phase.activated"},
-	"run.start":            {"task.started"},
-	"task.evidence.report": {"task.auto_confirmed"},
+	"backlog.promote":    {"task.created"},
+	"project.bootstrap":  {"workspace.created", "repository.registered"},
+	"workspace.activate": {"phase.activated"},
+	"workspace.close":    {"phase.completed"},
+	"gate.pass":          {"phase.completed", "phase.activated"},
+	"run.start":          {"task.started"},
 }
 
 func eventRequiresTaskScope(eventType string) bool {

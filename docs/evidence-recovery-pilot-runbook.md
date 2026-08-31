@@ -33,9 +33,9 @@ relative path, working-tree hash, commit/blob reference와 short summary가 연�
 4. 다음 행동 후보는 confirmed dependency, active Gate, blocker, evidence freshness를
    근거로 제시한다.
 5. 복원은 read-only이며 Task, Gate, Lane, Workspace, Run 상태를 바꾸지 않는다. Gate
-   pass, `human_required` Task confirmation/discard, Lane/Workspace 종료는 후보가 아니라
-   사람 판단으로 남긴다. 미래의 `delegated` Task auto-confirm은 복원 행동이 아니라
-   #130의 policy와 typed-evidence transaction이다.
+   pass, Task confirmation/discard, Lane/Workspace 종료는 후보가 아니라 사람 판단으로
+   남긴다. 모든 Task는 human-required이며 recovery 또는 evidence report가 Task를
+   auto-confirm하지 않는다.
 
 ## 불일치 처리
 

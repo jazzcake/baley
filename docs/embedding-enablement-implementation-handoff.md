@@ -4,7 +4,11 @@ status: ready
 workspace_id: "00000000-0000-4000-8000-000000000001"
 phase_id: embedding-enablement
 source_plan: docs/embedding-enablement-implementation-plan.md
+approval_authority_superseded_by: docs/task-acceptance-policy-contract.md
 ---
+
+> Historical handoff: any delegated acceptance or auto-confirm direction below
+> is superseded and is not executable authority.
 
 # Phase 4 구현 세션 Handoff Prompt
 

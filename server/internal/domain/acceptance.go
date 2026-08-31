@@ -79,7 +79,7 @@ type AcceptanceEvaluation struct {
 }
 
 func ResolveAcceptance(policy AcceptancePolicy, requested AcceptanceMode, profileID string) (TaskAcceptanceAssignment, error) {
-	if policy.WorkspaceID == "" || strings.TrimSpace(policy.PolicyVersion) == "" || (policy.DefaultMode != AcceptanceDelegated && policy.DefaultMode != AcceptanceHumanRequired) || strings.TrimSpace(policy.EvidenceProfileID) == "" {
+	if policy.WorkspaceID == "" || strings.TrimSpace(policy.PolicyVersion) == "" || policy.DefaultMode != AcceptanceHumanRequired || strings.TrimSpace(policy.EvidenceProfileID) == "" {
 		return TaskAcceptanceAssignment{}, &Violation{Code: CodeInvalidStateTransition}
 	}
 	if requested == "" {
@@ -89,11 +89,8 @@ func ResolveAcceptance(policy AcceptancePolicy, requested AcceptanceMode, profil
 	if requested == AcceptanceInherit {
 		effective = policy.DefaultMode
 	}
-	if effective != AcceptanceDelegated && effective != AcceptanceHumanRequired {
+	if effective != AcceptanceHumanRequired || requested == AcceptanceDelegated {
 		return TaskAcceptanceAssignment{}, &Violation{Code: CodeInvalidStateTransition}
-	}
-	if requested == AcceptanceDelegated && policy.DefaultMode != AcceptanceDelegated {
-		return TaskAcceptanceAssignment{}, &Violation{Code: CodeHumanApprovalRequired}
 	}
 	if strings.TrimSpace(profileID) == "" {
 		profileID = policy.EvidenceProfileID

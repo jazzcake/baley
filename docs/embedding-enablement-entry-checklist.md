@@ -2,7 +2,11 @@
 type: embedding-enablement-entry-checklist
 status: reviewed-contract-baseline
 source_task: 120
+approval_authority_superseded_by: docs/task-acceptance-policy-contract.md
 ---
+
+> Historical checklist: delegated acceptance and auto-confirm are no longer
+> supported. Every Task remains human-required.
 
 # Embedding Enablement entry checklist
 

@@ -147,6 +147,14 @@ func TestEmbeddingEnablementSingleRepositoryScenarioAgainstPostgres(t *testing.T
 			ApprovedCommandHash:  preview.CommandHash,
 			DecisionSnapshotHash: preview.DecisionSnapshotHash,
 		}
+		for _, warning := range preview.Warnings {
+			if !scenarioContainsString(command.Envelope.AcknowledgedWarningCodes, warning.Code) {
+				command.Envelope.AcknowledgedWarningCodes = append(command.Envelope.AcknowledgedWarningCodes, warning.Code)
+			}
+		}
+		if len(command.Envelope.AcknowledgedWarningCodes) > 0 {
+			command.Envelope.ProceedReason = "Scenario human reviewed the exact warning set"
+		}
 		result, executeErr := service.Execute(ctx, command)
 		if executeErr != nil {
 			t.Fatalf("%s human execution failed: %v", name, executeErr)
@@ -165,11 +173,11 @@ func TestEmbeddingEnablementSingleRepositoryScenarioAgainstPostgres(t *testing.T
 	}, "scenario-gate")
 	humanExecute("task.acceptance_policy.change", map[string]any{
 		"workspaceId": workspaceID, "policyVersion": "scenario-v1",
-		"defaultMode": "delegated", "evidenceProfileId": "technical-v1",
+		"defaultMode": "human_required", "evidenceProfileId": "technical-v1",
 	}, "scenario-policy")
 	execute("backlog.create", map[string]any{
 		"workspaceId": workspaceID, "backlogUuid": "6279cb62-d52f-4642-942c-15e7bd72c932",
-		"laneId": "adoption", "title": "Promote delegated acceptance",
+		"laneId": "adoption", "title": "Promote human-required acceptance",
 	}, "scenario-backlog-one")
 	execute("backlog.create", map[string]any{
 		"workspaceId": workspaceID, "backlogUuid": "6279cb62-d52f-4642-942c-15e7bd72c933",
@@ -182,7 +190,7 @@ func TestEmbeddingEnablementSingleRepositoryScenarioAgainstPostgres(t *testing.T
 	execute("backlog.promote", map[string]any{
 		"workspaceId": workspaceID, "backlogPublicId": 1,
 		"taskUuid": "6279cb62-d52f-4642-942c-15e7bd72c934",
-		"phaseId":  "intake", "requestedAcceptanceMode": "delegated",
+		"phaseId":  "intake", "requestedAcceptanceMode": "human_required",
 		"evidenceProfileId": "technical-v1",
 	}, "scenario-backlog-promote")
 	execute("backlog.discard", map[string]any{
@@ -361,7 +369,10 @@ supersedes: null
 		"verificationReferenceKind": "task_record",
 		"independentReviewRecordId": "6279cb62-d52f-4642-942c-15e7bd72c941",
 		"reviewVerdict":             "pass", "unresolvedBlockingCount": 0,
-	}, "scenario-delegated-evidence")
+	}, "scenario-human-required-evidence")
+	humanExecute("task.confirm", map[string]any{
+		"workspaceId": workspaceID, "taskId": 1,
+	}, "scenario-human-task-confirm")
 
 	execute("run.start", map[string]any{
 		"workspaceId": workspaceID, "taskId": 3,
@@ -398,12 +409,12 @@ supersedes: null
 		"lane.close_out", map[string]any{"workspaceId": workspaceID, "laneId": "adoption", "reason": "must remain human"}, "scenario-no-human-lane")
 	workspaceClose := request("workspace.close", map[string]any{"workspaceId": workspaceID}, "scenario-no-human-workspace", revision)
 	workspaceClose.Envelope.ExecutedByActorID = operator.ActorID
-	if _, err = service.Execute(ctx, workspaceClose); commandErrorCode(err) != "invalid_request" {
-		t.Fatalf("unexposed workspace.close unexpectedly executable: %v", err)
+	if _, err = service.Execute(ctx, workspaceClose); commandErrorCode(err) != domain.CodeHumanApprovalRequired && commandErrorCode(err) != domain.CodeHumanApprovalMismatch {
+		t.Fatalf("workspace.close crossed its human-only boundary: %v", err)
 	}
 	afterWorkspaceClose, _ := repo.LoadSnapshot(ctx, workspaceID)
 	if afterWorkspaceClose.Workspace.Revision != revision || afterWorkspaceClose.Workspace.State != "active" {
-		t.Fatal("unsupported workspace.close changed state")
+		t.Fatal("unapproved workspace.close changed state")
 	}
 
 	rawCanaries := []string{"approval-text-canary-124", "agent-token-canary-124", "password-canary-124"}
@@ -553,4 +564,13 @@ func fileSHA256(t *testing.T, path string) string {
 	}
 	digest := sha256.Sum256(content)
 	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func scenarioContainsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }

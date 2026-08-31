@@ -41,7 +41,7 @@ func TestEmbeddingEnablementCrossFeatureAcceptanceAgainstPostgres(t *testing.T) 
 	service := application.NewService(repo)
 	policyRequest := request("task.acceptance_policy.change", map[string]any{
 		"workspaceId": postgres.DemoWorkspaceID, "policyVersion": "acceptance-e2e-v1",
-		"defaultMode": "delegated", "evidenceProfileId": "technical-v1",
+		"defaultMode": "human_required", "evidenceProfileId": "technical-v1",
 	}, "acceptance-e2e-policy", 1)
 	policyPreview, err := service.Preview(ctx, policyRequest)
 	if err != nil {
@@ -59,8 +59,8 @@ func TestEmbeddingEnablementCrossFeatureAcceptanceAgainstPostgres(t *testing.T) 
 		"workspaceId": postgres.DemoWorkspaceID,
 		"taskUuid":    "6279cb62-d52f-4642-942c-15e7bd72c920",
 		"laneId":      "server", "phaseId": "build",
-		"title":                   "Cross-feature delegated acceptance",
-		"requestedAcceptanceMode": "delegated",
+		"title":                   "Cross-feature human-required acceptance",
+		"requestedAcceptanceMode": "human_required",
 		"evidenceProfileId":       "technical-v1",
 	}, "acceptance-e2e-task", 2)); err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestEmbeddingEnablementCrossFeatureAcceptanceAgainstPostgres(t *testing.T) 
 		}
 		reportRequest = request("task.report_implemented", reportArguments, "acceptance-e2e-implemented", 5)
 		reportRequest.Envelope.AcknowledgedWarningCodes = codes
-		reportRequest.Envelope.ProceedReason = "The fixture deliberately isolates delegated Task acceptance."
+		reportRequest.Envelope.ProceedReason = "The fixture deliberately isolates human-required Task acceptance."
 	}
 	if _, err = service.Execute(ctx, reportRequest); err != nil {
 		t.Fatal(err)
@@ -149,8 +149,8 @@ func TestEmbeddingEnablementCrossFeatureAcceptanceAgainstPostgres(t *testing.T) 
 			delegatedStatus = task.Status
 		}
 	}
-	if delegatedStatus != "confirmed" {
-		t.Fatalf("delegated Task did not auto-confirm: %s", delegatedStatus)
+	if delegatedStatus != "implemented" {
+		t.Fatalf("Agent evidence confirmed a human-required Task: %s", delegatedStatus)
 	}
 	if snapshot.Workspace.ActivePhaseID == nil || *snapshot.Workspace.ActivePhaseID != "build" || snapshot.Gates[0].Status != "open" {
 		t.Fatalf("Task acceptance widened authority: phase=%s gate=%s",

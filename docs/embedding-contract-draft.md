@@ -6,7 +6,12 @@ phase_id: embedding-contract
 tasks: [117, 118, 119, 120, 130]
 created_at: "2026-07-26"
 pm_decision: "confirmed in chat on 2026-07-26"
+approval_authority_superseded_by: docs/task-acceptance-policy-contract.md
 ---
+
+> Historical baseline: the delegated acceptance and auto-confirm sections below
+> are superseded. All current Tasks are human-required and evidence reporting
+> cannot confirm a Task.
 
 # Embedding Contract
 

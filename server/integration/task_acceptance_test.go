@@ -9,7 +9,7 @@ import (
 	"github.com/jazzcake/baley/server/internal/persistence/postgres"
 )
 
-func TestDelegatedAcceptanceAutoConfirmsOnlyEligibleTasks(t *testing.T) {
+func TestHumanRequiredAcceptanceNeverAutoConfirmsTasks(t *testing.T) {
 	url := os.Getenv("BALEY_TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("BALEY_TEST_DATABASE_URL is not set")
@@ -40,7 +40,7 @@ func TestDelegatedAcceptanceAutoConfirmsOnlyEligibleTasks(t *testing.T) {
 	service := application.NewService(repo)
 	policyRequest := request("task.acceptance_policy.change", map[string]any{
 		"workspaceId": postgres.DemoWorkspaceID, "policyVersion": "pilot-v2",
-		"defaultMode": "delegated", "evidenceProfileId": "technical-v1",
+		"defaultMode": "human_required", "evidenceProfileId": "technical-v1",
 	}, "acceptance-policy-v2", 1)
 	policyPreview, err := service.Preview(ctx, policyRequest)
 	if err != nil {
@@ -66,18 +66,18 @@ func TestDelegatedAcceptanceAutoConfirmsOnlyEligibleTasks(t *testing.T) {
 		"laneId":      "server", "phaseId": "build", "title": "Weakened profile fixture",
 		"requestedAcceptanceMode": "delegated", "evidenceProfileId": "weaker-v1",
 	}, "weakened-profile-create", 2))
-	if commandErrorCode(err) != "human_approval_required" {
-		t.Fatalf("delegated profile weakening accepted: %v", err)
+	if commandErrorCode(err) != "invalid_state_transition" {
+		t.Fatalf("removed delegated mode was accepted: %v", err)
 	}
 
 	createResult, err := service.Execute(ctx, request("task.create", map[string]any{
 		"workspaceId": postgres.DemoWorkspaceID,
 		"taskUuid":    "00000000-0000-4000-8000-000000000091",
-		"laneId":      "server", "phaseId": "build", "title": "Delegated acceptance fixture",
-		"requestedAcceptanceMode": "delegated", "evidenceProfileId": "technical-v1",
-	}, "delegated-task-create", 2))
+		"laneId":      "server", "phaseId": "build", "title": "Human-required acceptance fixture",
+		"requestedAcceptanceMode": "human_required", "evidenceProfileId": "technical-v1",
+	}, "human-required-task-create", 2))
 	if err != nil || createResult.WorkspaceRevision != 3 {
-		t.Fatalf("delegated task create failed: %#v %v", createResult, err)
+		t.Fatalf("human-required task create failed: %#v %v", createResult, err)
 	}
 	if _, err = repo.Pool.Exec(ctx, "UPDATE tasks SET status='implemented' WHERE workspace_id=$1 AND public_id IN (110,111)", postgres.DemoWorkspaceID); err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestDelegatedAcceptanceAutoConfirmsOnlyEligibleTasks(t *testing.T) {
 
 	insertAcceptanceRecords(t, ctx, repo, "00000000-0000-4000-8000-000000000091",
 		"00000000-0000-4000-8000-000000000092", "00000000-0000-4000-8000-000000000093")
-	delegatedEvidence := map[string]any{
+	humanRequiredEvidence := map[string]any{
 		"workspaceId": postgres.DemoWorkspaceID, "taskId": 111,
 		"evidenceId":               "00000000-0000-4000-8000-000000000094",
 		"completionReportRecordId": "00000000-0000-4000-8000-000000000092",
@@ -94,16 +94,16 @@ func TestDelegatedAcceptanceAutoConfirmsOnlyEligibleTasks(t *testing.T) {
 		"independentReviewRecordId": "00000000-0000-4000-8000-000000000093",
 		"reviewVerdict":             "pass", "unresolvedBlockingCount": 0,
 	}
-	evidenceResult, err := service.Execute(ctx, request("task.evidence.report", delegatedEvidence, "delegated-evidence", 3))
-	if err != nil || evidenceResult.WorkspaceRevision != 4 || len(evidenceResult.EventIDs) != 2 {
-		t.Fatalf("delegated evidence failed: %#v %v", evidenceResult, err)
+	evidenceResult, err := service.Execute(ctx, request("task.evidence.report", humanRequiredEvidence, "human-required-evidence-one", 3))
+	if err != nil || evidenceResult.WorkspaceRevision != 4 || len(evidenceResult.EventIDs) != 1 {
+		t.Fatalf("human-required evidence failed: %#v %v", evidenceResult, err)
 	}
 	var delegatedStatus string
 	if err = repo.Pool.QueryRow(ctx, "SELECT status FROM tasks WHERE workspace_id=$1 AND public_id=111", postgres.DemoWorkspaceID).Scan(&delegatedStatus); err != nil {
 		t.Fatal(err)
 	}
-	if delegatedStatus != "confirmed" {
-		t.Fatalf("eligible delegated task status=%s", delegatedStatus)
+	if delegatedStatus != "implemented" {
+		t.Fatalf("Agent evidence confirmed a human-required Task: %s", delegatedStatus)
 	}
 
 	insertAcceptanceRecords(t, ctx, repo, "user-test",

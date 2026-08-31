@@ -394,18 +394,13 @@ type previewEnvelope struct {
 	InitiatedByActorID        string `json:"initiatedByActorId,omitempty"`
 }
 type executeEnvelope struct {
-	ExpectedWorkspaceRevision int64      `json:"expectedWorkspaceRevision"`
-	IdempotencyKey            string     `json:"idempotencyKey"`
-	ExecutedByActorID         string     `json:"executedByActorId"`
-	InitiatedByActorID        string     `json:"initiatedByActorId,omitempty"`
-	AcknowledgedWarningCodes  []string   `json:"acknowledgedWarningCodes,omitempty"`
-	ProceedReason             string     `json:"proceedReason,omitempty"`
-	ApprovedByActorID         string     `json:"approvedByActorId,omitempty"`
-	ApprovedCommandHash       string     `json:"approvedCommandHash"`
-	DecisionSnapshotHash      string     `json:"decisionSnapshotHash,omitempty"`
-	StatementHash             string     `json:"statementHash,omitempty"`
-	ConversationRef           string     `json:"conversationRef,omitempty"`
-	ApprovedAt                *time.Time `json:"approvedAt,omitempty"`
+	ExpectedWorkspaceRevision int64    `json:"expectedWorkspaceRevision"`
+	IdempotencyKey            string   `json:"idempotencyKey"`
+	ExecutedByActorID         string   `json:"executedByActorId"`
+	InitiatedByActorID        string   `json:"initiatedByActorId,omitempty"`
+	AcknowledgedWarningCodes  []string `json:"acknowledgedWarningCodes,omitempty"`
+	ProceedReason             string   `json:"proceedReason,omitempty"`
+	ApprovalGrantID           string   `json:"approvalGrantId"`
 }
 type automaticEnvelope struct {
 	ExpectedWorkspaceRevision int64  `json:"expectedWorkspaceRevision"`
@@ -420,12 +415,7 @@ type mutationExecuteEnvelope struct {
 }
 type conditionalExecuteEnvelope struct {
 	mutationExecuteEnvelope
-	ApprovedByActorID    string     `json:"approvedByActorId,omitempty"`
-	ApprovedCommandHash  string     `json:"approvedCommandHash,omitempty"`
-	DecisionSnapshotHash string     `json:"decisionSnapshotHash,omitempty"`
-	StatementHash        string     `json:"statementHash,omitempty"`
-	ConversationRef      string     `json:"conversationRef,omitempty"`
-	ApprovedAt           *time.Time `json:"approvedAt,omitempty"`
+	ApprovalGrantID string `json:"approvalGrantId,omitempty"`
 }
 type runStartInput struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -738,7 +728,7 @@ func newMCPServer(c *client) *mcp.Server {
 	mcp.AddTool(server, classifiedTool("baley_commit_attach", "Attach a Git commit reference to a Task"), c.commitAttach)
 	mcp.AddTool(server, classifiedTool("baley_git_observe", "Record non-authoritative Run Git metadata"), c.gitObserve)
 	mcp.AddTool(server, classifiedTool("baley_task_report_implemented", "Report implementation complete with assessment and explicit warning acknowledgement"), c.taskReportImplemented)
-	mcp.AddTool(server, classifiedTool("baley_task_evidence_report", "Append typed acceptance evidence and atomically auto-confirm an eligible delegated Task"), c.taskEvidenceReport)
+	mcp.AddTool(server, classifiedTool("baley_task_evidence_report", "Append typed acceptance evidence; evidence never confirms a Task"), c.taskEvidenceReport)
 	mcp.AddTool(server, classifiedTool("baley_task_acceptance_policy_change_preview", "Preview a human-approved future-Task acceptance policy change"), c.acceptancePolicyChangePreview)
 	mcp.AddTool(server, classifiedTool("baley_task_acceptance_policy_change_execute", "Execute an approved future-Task acceptance policy change"), c.acceptancePolicyChangeExecute)
 	mcp.AddTool(server, classifiedTool("baley_task_acceptance_mode_escalate_preview", "Preview monotonic delegated to human-required escalation"), c.acceptanceModeEscalatePreview)
@@ -925,7 +915,9 @@ func executeEnv(v executeEnvelope) map[string]any {
 	if v.InitiatedByActorID != "" {
 		envelope["initiatedByActorId"] = v.InitiatedByActorID
 	}
-	envelope["humanApprovalAttestation"] = approvalAttestation(v.ApprovedByActorID, v.ApprovedCommandHash, v.DecisionSnapshotHash, v.StatementHash, v.ConversationRef, v.ApprovedAt)
+	if v.ApprovalGrantID != "" {
+		envelope["approvalGrantId"] = v.ApprovalGrantID
+	}
 	return envelope
 }
 func automaticEnv(v automaticEnvelope) map[string]any {
@@ -947,25 +939,10 @@ func mutationExecuteEnv(v mutationExecuteEnvelope) map[string]any {
 }
 func conditionalExecuteEnv(v conditionalExecuteEnvelope) map[string]any {
 	envelope := mutationExecuteEnv(v.mutationExecuteEnvelope)
-	if v.ApprovedByActorID != "" || v.ApprovedCommandHash != "" || v.DecisionSnapshotHash != "" || v.StatementHash != "" || v.ConversationRef != "" || v.ApprovedAt != nil {
-		envelope["humanApprovalAttestation"] = approvalAttestation(v.ApprovedByActorID, v.ApprovedCommandHash, v.DecisionSnapshotHash, v.StatementHash, v.ConversationRef, v.ApprovedAt)
+	if v.ApprovalGrantID != "" {
+		envelope["approvalGrantId"] = v.ApprovalGrantID
 	}
 	return envelope
-}
-func approvalAttestation(approvedByActorID, approvedCommandHash, decisionSnapshotHash, statementHash, conversationRef string, approvedAt *time.Time) map[string]any {
-	attestation := map[string]any{"approvedCommandHash": approvedCommandHash}
-	if approvedByActorID != "" {
-		attestation["approvedByActorId"] = approvedByActorID
-	}
-	for key, value := range map[string]string{"decisionSnapshotHash": decisionSnapshotHash, "statementHash": statementHash, "conversationRef": conversationRef} {
-		if value != "" {
-			attestation[key] = value
-		}
-	}
-	if approvedAt != nil {
-		attestation["approvedAt"] = approvedAt
-	}
-	return attestation
 }
 
 func (c *client) workspaceGraph(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {

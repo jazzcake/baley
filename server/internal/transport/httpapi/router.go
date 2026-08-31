@@ -81,6 +81,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}/approve", a.approveMCPConnection)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}/reject", a.rejectMCPConnection)
 	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/mcp-gateways/{gatewayId}", a.revokeMCPGateway)
+	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/approval-grants", a.approvalGrant)
+	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/approval-grants/{grantId}", a.revokeApprovalGrant)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}", a.workspace)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/context", a.workspaceContext)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/graph", a.graph)
@@ -1068,13 +1070,69 @@ func (a *API) records(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, s.Records)
 }
+
+func (a *API) approvalGrant(w http.ResponseWriter, r *http.Request) {
+	state, ok := authState(r)
+	if !ok || state.Principal.AccountID == "" || state.Principal.SessionID == "" || state.Principal.Subject.Kind != authz.ActorHuman {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "unauthenticated", "message": "authenticated human browser session required"}})
+		return
+	}
+	var input struct {
+		Command                  application.CommandRequest `json:"command"`
+		AcknowledgedWarningCodes []string                   `json:"acknowledgedWarningCodes,omitempty"`
+		ProceedReason            string                     `json:"proceedReason,omitempty"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	workspaceID := commandWorkspaceID(input.Command.Arguments)
+	if workspaceID == "" || workspaceID != r.PathValue("workspaceId") || input.Command.Envelope.ApprovalGrantID != "" || input.Command.Envelope.HumanApprovalAttestation != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "grant issuance requires an unapproved command for this Workspace"}})
+		return
+	}
+	input.Command.Principal = &application.CommandPrincipal{
+		AccountID: state.Principal.AccountID, CredentialID: state.Principal.SessionID,
+		WorkspaceID: state.Principal.WorkspaceID, SessionID: state.Principal.SessionID,
+		Subject: state.Principal.Subject,
+	}
+	input.Command.Envelope.ExecutedByActorID = state.Principal.ActorID
+	input.Command.Envelope.InitiatedByActorID = state.Principal.ActorID
+	preview, err := a.Service.Preview(r.Context(), input.Command)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	grant, err := a.Repo.CreateApprovalGrant(r.Context(), state.Principal, workspaceID, input.Command.Name, preview, input.AcknowledgedWarningCodes, input.ProceedReason)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "approval_grant_denied", "message": err.Error()}})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id": grant.ID, "expiresAt": grant.ExpiresAt, "commandHash": preview.CommandHash,
+		"workspaceRevision": preview.ExpectedWorkspaceRevision, "decisionSnapshotHash": preview.DecisionSnapshotHash,
+	})
+}
+
+func (a *API) revokeApprovalGrant(w http.ResponseWriter, r *http.Request) {
+	state, ok := authState(r)
+	if !ok || state.Principal.AccountID == "" || state.Principal.SessionID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "unauthenticated", "message": "authenticated human browser session required"}})
+		return
+	}
+	if err := a.Repo.RevokeApprovalGrant(r.Context(), r.PathValue("workspaceId"), r.PathValue("grantId"), state.Principal); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{"code": "approval_grant_revoke_failed", "message": err.Error()}})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *API) preview(w http.ResponseWriter, r *http.Request) {
 	var req application.CommandRequest
 	if !decode(w, r, &req) {
 		return
 	}
 	if state, ok := authState(r); ok {
-		req.Principal = &application.CommandPrincipal{AccountID: state.Principal.AccountID, CredentialID: firstNonEmpty(state.Principal.CredentialID, state.Principal.SessionID), WorkspaceID: state.Principal.WorkspaceID, ApprovalActorID: state.Principal.ApprovalActorID, Subject: state.Principal.Subject}
+		req.Principal = &application.CommandPrincipal{AccountID: state.Principal.AccountID, CredentialID: firstNonEmpty(state.Principal.CredentialID, state.Principal.SessionID), WorkspaceID: state.Principal.WorkspaceID, SessionID: state.Principal.SessionID, Subject: state.Principal.Subject}
 		req.Envelope.ExecutedByActorID = state.Principal.ActorID
 		req.Envelope.InitiatedByActorID = state.Principal.ActorID
 		workspaceID := commandWorkspaceID(req.Arguments)
@@ -1131,7 +1189,7 @@ func (a *API) execute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state, ok := authState(r); ok {
-		req.Principal = &application.CommandPrincipal{AccountID: state.Principal.AccountID, CredentialID: firstNonEmpty(state.Principal.CredentialID, state.Principal.SessionID), WorkspaceID: state.Principal.WorkspaceID, ApprovalActorID: state.Principal.ApprovalActorID, Subject: state.Principal.Subject}
+		req.Principal = &application.CommandPrincipal{AccountID: state.Principal.AccountID, CredentialID: firstNonEmpty(state.Principal.CredentialID, state.Principal.SessionID), WorkspaceID: state.Principal.WorkspaceID, SessionID: state.Principal.SessionID, Subject: state.Principal.Subject}
 		req.Envelope.ExecutedByActorID = state.Principal.ActorID
 		req.Envelope.InitiatedByActorID = state.Principal.ActorID
 		workspaceID := commandWorkspaceID(req.Arguments)
@@ -1330,6 +1388,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status = 409
 	case "invalid_request":
 		status = 400
+	case "forbidden", "human_approval_mismatch", "approval_grant_required", "approval_grant_invalid", "approval_grant_mismatch":
+		status = 403
 	case "invalid_backlog_filter":
 		status = 400
 	}

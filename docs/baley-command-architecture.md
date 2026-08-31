@@ -53,7 +53,7 @@ Operator가 정상 workflow에서 수행:
 
 Run 상태 갱신과 Record 등록을 매번 사람에게 확인하지 않는다. manual correction은 예외이며 사유와 Event를 요구한다.
 
-승인 command는 LLM이 전달한 `humanApprovalAttestation`을 포함한다. 서버는 Agent credential을 발급하거나 연결한 사람을 승인 Actor로 자동 귀속하고 그 사람의 현재 Workspace membership과 capability를 다시 검사한다. action, 대상, Workspace revision, canonical command hash, 선택적 decision snapshot hash와 발화 hash/reference는 실행 command와 1:1로 기록한다. 하나의 명시적 사람 발화가 열거된 여러 `task.confirm` outcome을 승인할 수 있지만, LLM은 각 command마다 fresh preview와 별도 attestation을 만들고 동일하며 비어 있지 않은 statement hash/reference로 승인 묶음을 연관시킨다. 서버는 개별 command 결속만 강제하며 묶음의 baseline 동등성과 revision 연속성은 Skill/Operator가 강제한다. 별도 Viewer 승인, grant 발급과 token 복사 단계는 없다.
+Agent credential은 인간 승인 권한을 파생하거나 위임하지 않는다. 사람 전용 command는 로그인한 Viewer 세션에서 fresh preview를 확인한 사람이 발급한 5분 single-use approval grant ID를 실행 envelope의 `approvalGrantId`로 참조한다. 서버는 grant를 Account, human Actor, browser session, Workspace, action, entity, revision, canonical command hash, decision snapshot, warning acknowledgement, proceed-reason digest와 결속하고 실행 transaction에서 원자적으로 소비한다. session/membership/capability가 철회되거나 grant가 만료·소비되면 재사용할 수 없다. enforced HTTP/MCP는 `humanApprovalAttestation`, `approvedByActorId` 같은 legacy body authority를 거부한다. grant ID는 secret이 아니며 plaintext secret, header, 환경 변수 또는 token 복사 경로를 두지 않는다.
 
 ## 3. Skill, MCP와 로컬 filesystem
 
@@ -123,9 +123,9 @@ Gate 조건 또는 Gate entry Task를 자동 변경하지 않는다.
 - Gate entry binding은 `toPhase` Task만 explicit attach/detach하며 Gate readiness나 dependency를 바꾸지 않는다.
 - explicit entry가 없으면 `toPhase`의 same-Phase incoming dependency가 없는 DAG root를 public ID 순으로 read-only 투영한다.
 
-Query는 action, target, expected Workspace revision과 condition snapshot hash를 반환한다. Skill은 사람 전용 action에서 fresh preview를 만든 뒤, raw transport 필드 대신 결과·검증·리뷰·의사결정에 영향을 주는 잔여 위험을 요약해 같은 채팅에서 승인 여부를 묻는다. revision, command hash와 snapshot hash는 내부 audit 결속 정보로 유지하고, 사람이 승인하면 각 실행의 정확한 preview에 결속된 `humanApprovalAttestation`을 포함해 즉시 실행한다. 승인 Actor ID는 연결된 credential에서 서버가 파생한다. Attestation은 실행 command와 1:1이지만, 하나의 승인 진술은 같은 승인 종류로 명시적으로 열거된 여러 outcome을 승인할 수 있다. 별도 ApprovalRequest나 승인 token은 V1에 두지 않는다.
+Query는 action, target, expected Workspace revision과 condition snapshot hash를 반환한다. 사람 전용 action은 Viewer의 Human approval panel에서 exact command JSON을 fresh preview하고 결과·warning·잔여 위험을 확인한다. Viewer는 같은 CSRF-protected browser session으로 command-specific grant를 발급한 뒤 즉시 실행하거나, Agent가 정확한 `approvalGrantId`를 참조해 실행할 수 있게 한다. 서버는 Agent bearer에서 승인 Actor를 파생하지 않는다. 하나의 grant는 하나의 command만 승인하므로 grouped `task.confirm` 실행은 지원하지 않는다.
 
-Task 완료 확인의 기본 질문은 `#<id>은 <구현 결과>, <test/build 검증>, <독립 리뷰 결과>를 완료했습니다. 완료로 확인할까요?` 형식이다. 여러 Task가 이미 `implemented`이면 LLM이 같은 시작 revision에서 대상별 write-free `task.confirm` baseline preview를 확보하고 각 outcome을 열거해 한 번에 확인할 수 있다. V1 공동 승인은 이 동일 action 묶음에만 적용한다. 내부 루프의 첫 fresh preview revision은 group baseline revision과 같아야 하고, 이후 preview revision은 직전 성공 execute 결과 revision과 같아야 한다. 이 진행 조건을 통과한 뒤 expected revision과 command hash만 제외한 action·target·projected diff·capability·errors/warnings/advisories 전체·선택적 decision snapshot이 baseline과 같으면 다시 묻지 않는다. revision 진행이나 비교 필드가 하나라도 달라지면 해당 지점에서 갱신된 요약으로 다시 승인받는다. `dangling_path` 같은 topology warning은 구현 품질 실패나 terminal 승인으로 표현하지 않으며, 완료 판단을 바꿀 때만 사람용 요약에 노출한다.
+Task 완료 확인은 Task별 Viewer approval로 수행한다. 여러 Task가 `implemented`여도 각각 fresh preview와 별도 browser grant가 필요하며, 앞 command의 revision 변화 뒤에는 다음 Task를 다시 preview해야 한다. `dangling_path` 같은 topology warning은 구현 품질 실패나 terminal 승인으로 표현하지 않으며, 사람이 exact warning을 확인하고 grant를 발급해야 한다.
 
 주 Task 구현이 다른 Task에도 영향을 주면 LLM이 관련 열린 Task를 분류한다. 이미 `implemented`여도 assessment와 commit·test/build·독립 리뷰 증거가 acceptance를 실제로 충족하는지 다시 확인한 뒤 공동 확인 대상에 넣는다. 부족하면 Agent가 `task.rework`로 되돌린다. 같은 증거가 `pending` 또는 `in_progress` Task의 범위를 완전히 충족하면 공유 증거 assessment를 남기고 정상 workflow로 먼저 `implemented` 보고한 뒤 공동 확인한다. 실제 구현이 아니라 필요성이 사라진 Task는 완료가 아니라 `task.discard`로 제안하고, 대체된 경우 사유에 `superseded by #<id>`를 기록한다. 부분 충족 또는 불확실한 Task는 열린 상태를 유지하며, 이미 confirmed/discarded인 terminal Task에 새 일이 생기면 follow-up Task를 생성한다. 사람 승인은 이 분류나 상태 머신을 우회하지 않는다.
 
@@ -140,7 +140,7 @@ approver → 사람 전용 Task/Lane/Gate 승인
 owner    → membership, Workspace 설정과 close
 ```
 
-Agent token에는 approval scope를 부여하지 않는다. 사람 전용 command는 Agent credential에 연결된 사람의 현재 approval capability와 HumanApprovalAttestation을 함께 검증한다. 정확한 bundle은 [`contracts/v1/capabilities.json`](../contracts/v1/capabilities.json)을 따른다.
+Agent token에는 approval scope를 부여하지 않는다. 사람 전용 command는 approval grant를 발급한 human session의 현재 capability와 exact grant binding을 함께 검증하며 Agent credential의 creator/connector는 authority가 아니다. 정확한 bundle은 [`contracts/v1/capabilities.json`](../contracts/v1/capabilities.json)을 따른다.
 
 ### 5.4 Preview와 execute
 

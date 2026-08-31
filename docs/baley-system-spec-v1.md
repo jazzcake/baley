@@ -852,14 +852,14 @@ executed_command_id UNIQUE
 
 - 승인 진술은 action, 대상 entity, canonical command payload hash와 Workspace revision에 결속된다. Gate 통과처럼 조건 snapshot이 있는 action은 snapshot hash에도 결속된다.
 - `task_confirm/task_discard`는 Task ID, `lane_close_out/lane_discard`는 Lane ID, `gate_attach_task/gate_pass`는 Gate ID, `gate_pass_task/gate_revoke_task_pass`는 `gate_tasks.id`, `workspace_close`는 Workspace ID를 대상으로 사용한다.
-- 승인 대상 command는 공통 mutation envelope에 `humanApprovalAttestation` payload를 포함한다.
-- `approved_by_actor_id`는 기본적으로 현재 Agent credential을 발급하거나 연결한 사람에게서 서버가 파생한다. client가 값을 보낼 경우 파생된 Actor와 정확히 같아야 한다.
-- 승인 과정은 같은 Agent 대화 안에서 끝난다. Viewer 승인 패널, command JSON 붙여넣기, grant 발급과 token 복사 단계는 존재하지 않는다.
-- 서버는 mutation transaction 안에서 command별 attestation과 실행 command를 1:1로 기록한다.
-- 같은 idempotency key와 command hash의 재시도는 같은 결과를 반환할 수 있지만, attestation과 command hash를 다른 command·action·entity·revision에 재사용할 수 없다.
-- 하나의 명시적 사람 발화는 바로 앞 decision brief에 열거된 유한한 `task.confirm` outcome 집합을 승인할 수 있다. LLM은 각 command에 fresh preview와 별도 attestation을 만들되 동일하며 비어 있지 않은 `statement_hash`와 `conversation_ref`로 그 승인 집합을 연관시킨다. 다른 action 종류는 별도 승인 질문을 사용한다.
-- V1은 만료되거나 대기 중인 승인 요청을 저장하지 않는다. 장기 비동기 승인 생명주기는 후속 `ApprovalRequest`의 책임이다.
-- V1의 승인은 protocol audit이며 사람 신원을 보안적으로 증명하지 않는다. 실제 신뢰는 단일 사용자 배포 보호와 Skill 준수에 의존한다.
+- 승인 대상 command는 공통 mutation envelope에 `approvalGrantId`를 포함한다.
+- approval grant는 로그인한 human browser session만 fresh preview에 대해 발급할 수 있다. Agent bearer와 Agent credential creator는 승인 Actor를 설정하거나 파생하지 못한다.
+- grant는 Workspace/account/actor/session/action/entity/revision/command hash/decision snapshot/warnings/proceed reason/expiry에 결속된 5분 single-use reference이며 CSRF, membership, capability와 Owner-only close 검사를 거친다.
+- 서버는 mutation transaction 안에서 grant 소비, command별 attestation audit와 실행 command를 1:1로 기록한다. session 또는 membership 철회는 미사용 grant를 revoke한다.
+- 같은 idempotency key와 request fingerprint의 재시도는 같은 결과를 반환할 수 있지만, grant를 다른 command·action·entity·revision에 재사용할 수 없다.
+- grant 하나는 command 하나만 승인하며 grouped confirmation은 지원하지 않는다. 다음 command는 revision 변화 뒤 다시 preview하고 별도 grant를 발급한다.
+- grant ID는 secret이 아니고 Viewer는 plaintext secret, custom header, 환경 변수나 copy/paste token을 만들거나 노출하지 않는다.
+- enforced transport는 legacy `humanApprovalAttestation`, `approvedByActorId`, statement/conversation body authority를 거부한다.
 
 ### 14.2 파생된 승인 대기
 
@@ -878,11 +878,11 @@ Gate ready
 
 `task.get`, `gate.status`, `workspace.get`과 `decision.list`는 대상 action, 대상 ID, expected Workspace revision, 관련 criteria/condition snapshot hash와 warning을 반환한다. Viewer는 각각 “완료확인 대기”, “Gate 통과 승인 대기”, “Workspace 종료 가능”으로 표시한다.
 
-Operator는 사람 전용 action에 도달하면 fresh preview를 만든 뒤 실행을 멈춘다. 사람에게는 raw revision/hash 목록보다 결과, 검증, 리뷰와 의사결정에 영향을 주는 잔여 위험을 우선 제시한다. Task 완료 확인은 기본적으로 `#<id>은 <구현 결과>, <test/build 검증>, <독립 리뷰 결과>를 완료했습니다. 완료로 확인할까요?`처럼 묻는다. 여러 Task가 이미 `implemented`이면 각 outcome을 명시한 하나의 질문으로 묶을 수 있다. 명확한 긍정 응답을 승인 진술로 사용하고, 내부적으로 각 command의 현재 revision, command hash와 선택적 snapshot hash에 결속된 별도 `humanApprovalAttestation`으로 순차 실행한다.
+Operator는 사람 전용 action에 도달하면 실행을 멈추고 Viewer Human approval panel로 안내한다. 로그인한 사람은 exact command JSON을 fresh preview해 결과, 검증, warning과 잔여 위험을 확인하고 같은 browser session에서 grant를 발급해 실행한다. Task마다 별도 grant가 필요하고 Agent 대화의 긍정 응답 자체는 서버 authority가 아니다.
 
-공동 승인 질문 전 Operator는 같은 시작 Workspace revision에서 대상마다 write-free `task.confirm` baseline preview를 확보하고 그 group baseline revision을 보존한다. 승인 후 첫 fresh preview revision은 group baseline revision과 같아야 하며, 이후 fresh preview revision은 직전 성공 execute 결과 revision과 같아야 한다. 이 진행 조건을 통과한 뒤 expected revision과 command hash만 제외한 action, target, projected diff, required capability, errors/warnings/advisories 전체와 선택적 decision snapshot을 해당 baseline과 비교해 모두 같을 때만 계속한다. 첫 command 전이나 command 사이의 revision mismatch 또는 다른 비교 차이가 있으면 외부·예상 밖 변경으로 보고 해당 지점에서 멈춰 갱신된 판단 요약으로 다시 승인받는다. V1 서버는 batch mutation을 제공하지 않으므로 앞선 command는 성공하고 뒤 command가 중단될 수 있으며 Operator는 부분 진행을 명확히 보고한다. 여러 사람의 장기 비동기 결재함이 필요해질 때만 후속 버전에서 `ApprovalRequest`를 추가한다.
+여러 Task를 한 번에 확인하는 공동 승인은 지원하지 않는다. 각 `task.confirm`은 현재 revision에서 Viewer가 fresh preview하고 별도 single-use grant를 발급해야 한다. 앞 command가 revision을 바꾸면 다음 command는 다시 preview한다.
 
-서버는 각 command의 현재 revision, canonical hash, target, warning acknowledgement와 command별 attestation만 강제한다. 공동 승인 대상의 baseline 동등성, 동일 statement correlation과 앞선 성공 command만으로 이어진 revision chain은 Skill/Operator protocol의 책임이다. 이 묶음을 서버가 원자적으로 강제하려면 별도 batch command 또는 persisted ApprovalRequest가 필요하며 V1 범위에는 두지 않는다.
+서버는 각 command의 현재 revision, canonical hash, target, warning acknowledgement, issuing browser session과 command별 grant를 강제하고 성공 transaction에서 grant를 소비한다. V1 서버는 batch mutation이나 persisted ApprovalRequest를 제공하지 않는다.
 
 `dangling_path` 같은 topology warning은 구현 품질 실패가 아니며 Task 확인을 위해 terminal reason을 만들라는 뜻도 아니다. 승인된 확인 command가 정확한 warning acknowledgement를 요구하면 Operator가 이를 audit evidence로 전달하되, warning이 사람의 판단을 실제로 바꿀 때만 사람용 요약에 노출한다.
 
@@ -913,7 +913,7 @@ workspace:close
 workspace:admin
 ```
 
-API token은 subject Actor, Actor kind, Workspace membership과 capability scope를 가진다. Agent token에는 approval capability를 부여하지 않는다. 대신 Agent credential을 연결한 human Actor의 현재 approval capability를 사람 전용 command마다 검사하며, `workspace.close`는 연결된 human `owner`에게만 허용한다. 정확한 capability와 role bundle은 [`contracts/v1/capabilities.json`](../contracts/v1/capabilities.json)을 따른다.
+API token은 subject Actor, Actor kind, Workspace membership과 capability scope를 가진다. Agent token에는 approval capability를 부여하지 않고 연결·발급한 human Actor를 approval authority로 파생하지 않는다. 사람 전용 command는 grant를 발급한 현재 human session의 capability를 다시 검사하며, `workspace.close` grant는 human `owner`만 발급할 수 있다. 정확한 capability와 role bundle은 [`contracts/v1/capabilities.json`](../contracts/v1/capabilities.json)을 따른다.
 
 ## 15. Command와 MCP
 
@@ -936,7 +936,7 @@ initiatedByActorId nullable
 executedByActorId
 acknowledgedWarningCodes []
 proceedReason nullable
-humanApprovalAttestation nullable
+approvalGrantId nullable
 ```
 
 Warning acknowledgement와 진행 사유는 개별 command payload가 아니라 공통 envelope에 둔다. 각 command는 자신이 평가한 warning code만 수락하며 Event payload에 평가 결과를 기록한다.
@@ -1318,12 +1318,12 @@ cross-table 상태 전이, cycle, Phase 순서와 Gate readiness는 Go command s
 - implemented Task가 완료확인 대기로 파생
 - ready Gate가 Gate 통과 승인 대기로 파생
 - 마지막 Phase와 Run 조건에서 Workspace 종료 가능 결정 파생
-- revision 또는 snapshot 변경 후 기존 humanApprovalAttestation 거부
-- Lane close-out/discard의 사람 승인 진술 검증
-- 채팅 의미는 protocol audit이며, 승인 Actor 귀속은 연결된 Agent credential에서 파생됨을 API metadata에 표시
+- revision 또는 snapshot 변경 후 기존 approval grant 거부
+- Lane close-out/discard의 browser-session grant 검증
+- 승인 Actor는 grant를 발급한 authenticated human session에서만 귀속하며 Agent credential에서는 파생하지 않음
 - command catalog가 각 mutation의 `requiredCapability`를 반환
 - active Gate attach가 transaction 현재 상태에서 `gate:approve`를 요구
-- 인증 단계 acceptance: Agent token 자체는 approval capability를 얻지 못하고, 사람 전용 command는 연결된 human Approver/Owner의 현재 권한을 요구
+- 인증 단계 acceptance: Agent token은 approval capability를 얻지 못하고, 사람 전용 command는 grant 발급 human Approver/Owner의 현재 권한을 요구
 
 ### Run과 Record
 

@@ -87,65 +87,47 @@ func TestTaskStatusesAndRunKindsExistInStateContract(t *testing.T) {
 	assertExactSet(t, "commit verification state", contract.CommitReference.VerificationStates, commitVerificationStateStrings())
 }
 
-func TestApprovalContractSupportsGroupedStatementWithFreshAttestations(t *testing.T) {
+func TestApprovalContractRequiresBrowserSessionSingleUseGrant(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "contracts", "v1", "commands.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read command contract: %v", err)
 	}
 	var contract struct {
-		HumanApprovalAttestation struct {
-			EachCommandRequiresFreshPreviewAndAttestation bool `json:"eachCommandRequiresFreshPreviewAndAttestation"`
-			ReusableAcrossCommands                        bool `json:"reusableAcrossCommands"`
-			GroupedTaskConfirm                            struct {
-				Supported              bool     `json:"supported"`
-				EnforcedBy             string   `json:"enforcedBy"`
-				RequiredSharedFields   []string `json:"requiredSharedFields"`
-				RequestBaselineFields  []string `json:"requestBaselineFields"`
-				PreviewBaselineFields  []string `json:"previewBaselineFields"`
-				AllowedChangingFields  []string `json:"allowedChangingFields"`
-				FirstFreshPreview      string   `json:"firstFreshPreview"`
-				SubsequentFreshPreview string   `json:"subsequentFreshPreview"`
-				Mismatch               string   `json:"mismatch"`
+		HumanApprovalGrant struct {
+			ExecuteReferenceField                   string   `json:"executeReferenceField"`
+			IssuedOnlyBy                            string   `json:"issuedOnlyBy"`
+			BoundFields                             []string `json:"boundFields"`
+			LegacyAuthorityFieldsRejectedInEnforced []string `json:"legacyAuthorityFieldsRejectedInEnforcedMode"`
+			EachCommandRequiresFreshPreviewAndGrant bool     `json:"eachCommandRequiresFreshPreviewAndGrant"`
+			SingleUse                               bool     `json:"singleUse"`
+			ShortLived                              bool     `json:"shortLived"`
+			ReusableAcrossCommands                  bool     `json:"reusableAcrossCommands"`
+			GroupedTaskConfirm                      struct {
+				Supported bool `json:"supported"`
 			} `json:"groupedTaskConfirm"`
-		} `json:"humanApprovalAttestation"`
+		} `json:"humanApprovalGrant"`
 	}
 	if err = json.Unmarshal(data, &contract); err != nil {
 		t.Fatalf("parse command contract: %v", err)
 	}
-	approval := contract.HumanApprovalAttestation
+	approval := contract.HumanApprovalGrant
 	grouped := approval.GroupedTaskConfirm
-	if approval.ReusableAcrossCommands || !approval.EachCommandRequiresFreshPreviewAndAttestation || !grouped.Supported || grouped.EnforcedBy != "operator" {
-		t.Fatalf("grouped approval safety contract mismatch: %+v", approval)
+	if approval.ExecuteReferenceField != "approvalGrantId" || approval.IssuedOnlyBy != "authenticated_human_browser_session" ||
+		approval.ReusableAcrossCommands || !approval.EachCommandRequiresFreshPreviewAndGrant || !approval.SingleUse || !approval.ShortLived || grouped.Supported {
+		t.Fatalf("approval grant safety contract mismatch: %+v", approval)
 	}
-	fields := asSet(grouped.RequiredSharedFields)
-	if !fields["statementHash"] || !fields["conversationRef"] || len(fields) != 2 {
-		t.Fatalf("approval statement correlation fields mismatch: %v", grouped.RequiredSharedFields)
-	}
-	requestFields := asSet(grouped.RequestBaselineFields)
-	for _, field := range []string{"name", "arguments.workspaceId", "arguments.taskId"} {
-		if !requestFields[field] {
-			t.Errorf("grouped approval request baseline field %q is missing: %v", field, grouped.RequestBaselineFields)
+	bound := asSet(approval.BoundFields)
+	for _, field := range []string{"workspaceId", "accountId", "actorId", "sessionId", "action", "entityType", "entityId", "workspaceRevision", "commandHash", "decisionSnapshotHash", "expiresAt"} {
+		if !bound[field] {
+			t.Errorf("approval grant binding %q is missing: %v", field, approval.BoundFields)
 		}
 	}
-	if len(requestFields) != 3 {
-		t.Fatalf("unexpected grouped approval request baseline fields: %v", grouped.RequestBaselineFields)
-	}
-	previewFields := asSet(grouped.PreviewBaselineFields)
-	for _, field := range []string{"projectedDiff", "requiredCapability", "errors", "warnings", "advisories", "decisionSnapshotHash"} {
-		if !previewFields[field] {
-			t.Errorf("grouped approval preview baseline field %q is missing: %v", field, grouped.PreviewBaselineFields)
+	legacy := asSet(approval.LegacyAuthorityFieldsRejectedInEnforced)
+	for _, field := range []string{"humanApprovalAttestation", "approvedByActorId", "statementHash", "conversationRef"} {
+		if !legacy[field] {
+			t.Errorf("legacy approval field %q is not rejected: %v", field, approval.LegacyAuthorityFieldsRejectedInEnforced)
 		}
-	}
-	if len(previewFields) != 6 {
-		t.Fatalf("unexpected grouped approval preview baseline fields: %v", grouped.PreviewBaselineFields)
-	}
-	changingFields := asSet(grouped.AllowedChangingFields)
-	if !changingFields["expectedWorkspaceRevision"] || !changingFields["commandHash"] || len(changingFields) != 2 {
-		t.Fatalf("grouped approval changing fields mismatch: %v", grouped.AllowedChangingFields)
-	}
-	if grouped.FirstFreshPreview != "groupBaselineRevision" || grouped.SubsequentFreshPreview != "previousSuccessfulResultRevision" || grouped.Mismatch != "requiresReapproval" {
-		t.Fatalf("grouped approval revision progression mismatch: %+v", grouped)
 	}
 }
 

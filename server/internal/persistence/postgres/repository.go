@@ -744,13 +744,20 @@ func nullableTime(value time.Time) any {
 }
 
 func (r *Repository) Execute(ctx context.Context, wid string, req application.CommandRequest, requestFingerprint string, evaluate func(application.Snapshot) (application.PreviewResult, application.MutationPlan, error)) (result application.ExecutionResult, err error) {
+	if expireErr := r.ExpireApprovalGrants(ctx, wid, time.Now().UTC()); expireErr != nil {
+		return result, expireErr
+	}
 	tx, err := r.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return result, err
 	}
+	grantRejectionReason := ""
 	defer func() {
 		if err != nil {
 			_ = tx.Rollback(ctx)
+			if grantRejectionReason != "" {
+				r.RecordApprovalGrantRejection(context.WithoutCancel(ctx), wid, req.Envelope.ApprovalGrantID, req.Principal, grantRejectionReason)
+			}
 		}
 	}()
 	if req.Envelope.AttemptID != "" {
@@ -805,8 +812,12 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 	}
 	preview, plan, err := evaluate(snapshot)
 	if err != nil {
+		if req.Envelope.ApprovalGrantID != "" {
+			grantRejectionReason = "command_evaluation_failed"
+		}
 		return result, err
 	}
+	grantID := ""
 	if req.Principal != nil {
 		if req.Principal.WorkspaceID != "" && req.Principal.WorkspaceID != wid {
 			return result, &application.CommandError{Code: "forbidden", Message: "credential is scoped to another Workspace"}
@@ -819,11 +830,15 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		humanOnly := plan.ForceHumanApproval || commandRequiresHumanApproval(req.Name)
 		if humanOnly {
 			var approverActorID string
-			approverActorID, err = validateConnectedHumanApproval(ctx, tx, wid, req, required)
+			grantID, approverActorID, err = validateApprovalGrant(ctx, tx, wid, req, preview, plan, required)
 			if err != nil {
+				grantRejectionReason = commandErrorCode(err)
 				return result, err
 			}
-			req.Envelope.HumanApprovalAttestation.ApprovedByActorID = approverActorID
+			req.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
+				ApprovedByActorID: approverActorID, ApprovedCommandHash: preview.CommandHash,
+				DecisionSnapshotHash: preview.DecisionSnapshotHash,
+			}
 		} else {
 			decision := authz.Authorize(authz.AuthorizationInput{
 				Subject: req.Principal.Subject, Membership: membership, WorkspaceID: wid,
@@ -901,6 +916,14 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		}
 	}
 	switch plan.CommandName {
+	case "workspace.close":
+		if plan.WorkspaceState != domain.WorkspaceClosed || plan.PhaseUpdate == nil {
+			return result, fmt.Errorf("workspace.close plan is missing closed Workspace state")
+		}
+		_, err = tx.Exec(ctx, "UPDATE phases SET state='completed' WHERE workspace_id=$1 AND id=$2 AND state='active'", wid, plan.PhaseUpdate.ID)
+		if err == nil {
+			_, err = tx.Exec(ctx, "UPDATE workspaces SET state='closed' WHERE id=$1 AND state='active'", wid)
+		}
 	case "phase.create":
 		phase := plan.PhaseCreate
 		if phase == nil {
@@ -1179,13 +1202,6 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 			evidence.VerificationVerdict, evidence.VerificationReference, evidence.VerificationReferenceKind,
 			evidence.IndependentReviewRecordID, evidence.ReviewVerdict, evidence.UnresolvedBlockingCount,
 			evidence.CommitReferenceID, evidence.ReportedByActorID, now)
-		if err == nil && plan.AutoConfirmTask {
-			var tag pgconn.CommandTag
-			tag, err = tx.Exec(ctx, "UPDATE tasks SET status='confirmed',updated_at=$1 WHERE workspace_id=$2 AND id=$3 AND status='implemented'", now, wid, evidence.TaskID)
-			if err == nil && tag.RowsAffected() != 1 {
-				err = fmt.Errorf("delegated auto-confirm affected %d tasks", tag.RowsAffected())
-			}
-		}
 	case "gate.pass_task":
 		_, err = tx.Exec(ctx, "UPDATE gate_tasks SET passed_at=$1,passed_by_actor_id=$2,pass_reason=$3 WHERE workspace_id=$4 AND id=$5", now, req.Envelope.HumanApprovalAttestation.ApprovedByActorID, plan.GateTaskReason, wid, plan.GateTaskID)
 	case "gate.revoke_task_pass":
@@ -1292,7 +1308,11 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 	}
 	result = application.ExecutionResult{CommandID: commandID, WorkspaceRevision: newRevision, EventIDs: make([]string, 0, len(eventWrites)), Projection: preview.ProjectedDiff, LeaseToken: plan.RunLeaseToken, Idempotent: plan.IdempotentNoMutation, CommandHash: preview.CommandHash}
 	if req.Envelope.HumanApprovalAttestation != nil {
-		result.ApprovalProtocol = "connected_human_chat_attestation"
+		if grantID != "" {
+			result.ApprovalProtocol = "browser_session_approval_grant"
+		} else {
+			result.ApprovalProtocol = "legacy_unenforced_attestation"
+		}
 	}
 	for range eventWrites {
 		result.EventIDs = append(result.EventIDs, newID())
@@ -1308,8 +1328,26 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 	if _, err = tx.Exec(ctx, "INSERT INTO commands(id,workspace_id,idempotency_key,command_name,command_hash,request_fingerprint,workspace_revision,result,initiated_by_actor_id,executed_by_actor_id,authenticated_credential_kind,authenticated_credential_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,NULLIF($11,''),NULLIF($12,''))", commandID, wid, req.Envelope.IdempotencyKey, req.Name, preview.CommandHash, requestFingerprint, newRevision, resultJSON, req.Envelope.InitiatedByActorID, req.Envelope.ExecutedByActorID, credentialKind, credentialID); err != nil {
 		return result, err
 	}
+	if grantID != "" {
+		tag, consumeErr := tx.Exec(ctx, `UPDATE approval_grants
+			SET status='consumed',consumed_at=$1,consumed_by_command_id=$2
+			WHERE id=$3 AND workspace_id=$4 AND status='active'`, now, commandID, grantID, wid)
+		if consumeErr != nil {
+			return result, consumeErr
+		}
+		if tag.RowsAffected() != 1 {
+			grantRejectionReason = "approval_grant_replayed"
+			return result, &application.CommandError{Code: "approval_grant_invalid", Message: "approval grant is no longer active"}
+		}
+		att := req.Envelope.HumanApprovalAttestation
+		if err = insertSecurityEvent(ctx, tx, wid, "", att.ApprovedByActorID,
+			"approval_grant.consumed", "approval_grant", grantID,
+			map[string]any{"commandId": commandID, "action": req.Name, "commandHash": preview.CommandHash}); err != nil {
+			return result, err
+		}
+	}
 	if att := req.Envelope.HumanApprovalAttestation; att != nil {
-		if _, err = tx.Exec(ctx, "INSERT INTO human_approval_attestations(id,workspace_id,approved_by_actor_id,approved_command_hash,decision_snapshot_hash,action,entity_type,entity_id,workspace_revision,executed_command_id,statement_hash,conversation_ref,approved_at) VALUES($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,$9,$10,NULLIF($11,''),NULLIF($12,''),$13)", attestationID, wid, att.ApprovedByActorID, att.ApprovedCommandHash, att.DecisionSnapshotHash, approvalAction, plan.EntityType, plan.EntityID, snapshot.Workspace.Revision, commandID, att.StatementHash, att.ConversationRef, att.ApprovedAt); err != nil {
+		if _, err = tx.Exec(ctx, "INSERT INTO human_approval_attestations(id,workspace_id,approved_by_actor_id,approved_command_hash,decision_snapshot_hash,action,entity_type,entity_id,workspace_revision,executed_command_id,statement_hash,conversation_ref,approved_at,approval_grant_id) VALUES($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,$9,$10,NULLIF($11,''),NULLIF($12,''),$13,NULLIF($14,'')::uuid)", attestationID, wid, att.ApprovedByActorID, att.ApprovedCommandHash, att.DecisionSnapshotHash, approvalAction, plan.EntityType, plan.EntityID, snapshot.Workspace.Revision, commandID, att.StatementHash, att.ConversationRef, att.ApprovedAt, grantID); err != nil {
 			return result, err
 		}
 	}
@@ -1408,39 +1446,109 @@ func commandRequiresHumanApproval(name string) bool {
 	return false
 }
 
-func validateConnectedHumanApproval(ctx context.Context, tx pgx.Tx, workspaceID string, req application.CommandRequest, required authz.Capability) (string, error) {
-	attestation := req.Envelope.HumanApprovalAttestation
-	approverActorID := strings.TrimSpace(req.Principal.ApprovalActorID)
-	if attestation == nil || approverActorID == "" || attestation.ApprovedByActorID != approverActorID {
-		return "", &application.CommandError{Code: "human_approval_mismatch", Message: "chat approval does not match the human connected to this credential"}
+func validateApprovalGrant(ctx context.Context, tx pgx.Tx, workspaceID string, req application.CommandRequest, preview application.PreviewResult, plan application.MutationPlan, required authz.Capability) (string, string, error) {
+	grantRef := strings.TrimSpace(req.Envelope.ApprovalGrantID)
+	if grantRef == "" || req.Principal == nil {
+		return "", "", &application.CommandError{Code: "approval_grant_required", Message: "a browser-session approval grant is required"}
+	}
+	var grantID, accountID, approverActorID, sessionID, action, entityType, entityID, commandHash, snapshotHash, proceedDigest, status string
+	var revision int64
+	var warningsRaw []byte
+	var expiresAt, sessionIdleExpiresAt, sessionAbsoluteExpiresAt time.Time
+	var sessionRevokedAt *time.Time
+	err := tx.QueryRow(ctx, `SELECT approval.id::text,approval.approved_by_account_id::text,approval.approved_by_actor_id,
+		approval.approved_by_session_id::text,approval.action,approval.entity_type,approval.entity_id,approval.workspace_revision,
+		approval.command_hash,COALESCE(approval.decision_snapshot_hash,''),approval.warning_codes,
+		approval.proceed_reason_digest,approval.status,approval.expires_at,
+		session.idle_expires_at,session.absolute_expires_at,session.revoked_at
+		FROM approval_grants approval
+		JOIN account_sessions session ON session.id=approval.approved_by_session_id
+		WHERE approval.id=$1 AND approval.workspace_id=$2 FOR UPDATE`, grantRef, workspaceID).
+		Scan(&grantID, &accountID, &approverActorID, &sessionID, &action, &entityType, &entityID, &revision,
+			&commandHash, &snapshotHash, &warningsRaw, &proceedDigest, &status, &expiresAt,
+			&sessionIdleExpiresAt, &sessionAbsoluteExpiresAt, &sessionRevokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", &application.CommandError{Code: "approval_grant_invalid", Message: "approval grant was not found in this Workspace"}
+	}
+	if err != nil {
+		return "", "", err
+	}
+	now := time.Now().UTC()
+	if status != "active" {
+		return "", "", &application.CommandError{Code: "approval_grant_invalid", Message: "approval grant is no longer active"}
+	}
+	if !now.Before(expiresAt) || sessionRevokedAt != nil || !now.Before(sessionIdleExpiresAt) || !now.Before(sessionAbsoluteExpiresAt) {
+		return "", "", &application.CommandError{Code: "approval_grant_invalid", Message: "approval grant browser session is expired or revoked"}
+	}
+	if action != req.Name || entityType != plan.EntityType || entityID != plan.EntityID ||
+		revision != preview.ExpectedWorkspaceRevision || commandHash != preview.CommandHash ||
+		snapshotHash != preview.DecisionSnapshotHash || proceedDigest != digestText(req.Envelope.ProceedReason) {
+		return "", "", &application.CommandError{Code: "approval_grant_mismatch", Message: "approval grant does not match the locked command"}
+	}
+	var approvedWarnings []string
+	if json.Unmarshal(warningsRaw, &approvedWarnings) != nil || !sameStringSet(approvedWarnings, req.Envelope.AcknowledgedWarningCodes) {
+		return "", "", &application.CommandError{Code: "approval_grant_mismatch", Message: "approval grant warning acknowledgement does not match"}
 	}
 	var accountStatus, actorKind string
-	if err := tx.QueryRow(ctx, `SELECT account.status,actor.actor_type
-		FROM accounts account JOIN actors actor ON actor.id=account.actor_id
-		WHERE account.actor_id=$1`, approverActorID).Scan(&accountStatus, &actorKind); err != nil ||
+	if err = tx.QueryRow(ctx, `SELECT account.status,actor.actor_type FROM accounts account
+		JOIN actors actor ON actor.id=account.actor_id
+		WHERE account.id=$1 AND account.actor_id=$2`, accountID, approverActorID).Scan(&accountStatus, &actorKind); err != nil ||
 		accountStatus != "active" || actorKind != string(authz.ActorHuman) {
-		return "", &application.CommandError{Code: "human_approval_mismatch", Message: "connected human approver is inactive"}
+		return "", "", &application.CommandError{Code: "approval_grant_invalid", Message: "approval grant approver is inactive"}
 	}
 	approverMembership, err := membershipFromQuerier(ctx, tx, workspaceID, approverActorID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	approver := authz.Subject{ActorID: approverActorID, Kind: authz.ActorHuman, Credential: authz.HumanSession, Scopes: append([]authz.Capability(nil), authz.Capabilities...)}
 	decision := authz.Authorize(authz.AuthorizationInput{Subject: approver, Membership: approverMembership, WorkspaceID: workspaceID, EntityWorkspaceID: workspaceID, Capability: required})
 	if !decision.Allowed || req.Name == "workspace.close" && (approverMembership == nil || approverMembership.Role != authz.RoleOwner) {
-		return "", &application.CommandError{Code: "forbidden", Message: "connected human lacks approval capability"}
+		return "", "", &application.CommandError{Code: "approval_grant_invalid", Message: "approval grant approver no longer has capability"}
 	}
-	executorMembership, err := membershipFromQuerier(ctx, tx, workspaceID, req.Principal.Subject.ActorID)
-	if err != nil {
-		return "", err
-	}
-	if req.Principal.Subject.ActorID != approverActorID {
+	if req.Principal.Subject.Kind == authz.ActorHuman {
+		if req.Principal.Subject.ActorID != approverActorID || req.Principal.AccountID != accountID || req.Principal.SessionID != sessionID {
+			return "", "", &application.CommandError{Code: "approval_grant_invalid", Message: "approval grant belongs to another browser session"}
+		}
+	} else {
+		executorMembership, membershipErr := membershipFromQuerier(ctx, tx, workspaceID, req.Principal.Subject.ActorID)
+		if membershipErr != nil {
+			return "", "", membershipErr
+		}
 		executorDecision := authz.Authorize(authz.AuthorizationInput{Subject: req.Principal.Subject, Membership: executorMembership, WorkspaceID: workspaceID, EntityWorkspaceID: workspaceID, Capability: authz.WorkspaceOperate})
 		if !executorDecision.Allowed {
-			return "", &application.CommandError{Code: "forbidden", Message: "approval command executor lacks operator capability"}
+			return "", "", &application.CommandError{Code: "forbidden", Message: "approval command executor lacks operator capability"}
 		}
 	}
-	return approverActorID, nil
+	return grantID, approverActorID, nil
+}
+
+func digestText(value string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return hex.EncodeToString(digest[:])
+}
+
+func sameStringSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := map[string]int{}
+	for _, value := range left {
+		counts[value]++
+	}
+	for _, value := range right {
+		if counts[value] == 0 {
+			return false
+		}
+		counts[value]--
+	}
+	return true
+}
+
+func commandErrorCode(err error) string {
+	if typed, ok := err.(*application.CommandError); ok {
+		return typed.Code
+	}
+	return "approval_grant_rejected"
 }
 
 func newID() string {

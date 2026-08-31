@@ -24,6 +24,9 @@ type Service struct {
 
 func NewService(repo Repository) *Service { return &Service{repo: repo, now: time.Now} }
 
+type workspaceMutationArgs struct {
+	WorkspaceID string `json:"workspaceId"`
+}
 type taskConfirmArgs struct {
 	WorkspaceID string `json:"workspaceId"`
 	TaskID      int    `json:"taskId"`
@@ -341,11 +344,8 @@ func (s *Service) Execute(ctx context.Context, request CommandRequest) (result E
 		}
 		request.Envelope.ExecutedByActorID = authenticatedActor
 		request.Envelope.InitiatedByActorID = authenticatedActor
-		if attestation := request.Envelope.HumanApprovalAttestation; attestation != nil && request.Principal.ApprovalActorID != "" {
-			if attestation.ApprovedByActorID != "" && attestation.ApprovedByActorID != request.Principal.ApprovalActorID {
-				return ExecutionResult{}, &CommandError{Code: "forbidden", Message: "approval Actor does not match the connected human"}
-			}
-			attestation.ApprovedByActorID = request.Principal.ApprovalActorID
+		if request.Envelope.HumanApprovalAttestation != nil {
+			return ExecutionResult{}, &CommandError{Code: domain.CodeHumanApprovalMismatch, Message: "legacy human approval fields are not authority in enforced mode"}
 		}
 	}
 	workspaceRevisionRequired := request.Name != "run.heartbeat"
@@ -358,8 +358,8 @@ func (s *Service) Execute(ctx context.Context, request CommandRequest) (result E
 		securityDigest := sha256.Sum256([]byte(strings.Join([]string{
 			request.Principal.Subject.ActorID,
 			request.Principal.CredentialID,
-			request.Principal.ApprovalActorID,
-			approvalFingerprint(request.Envelope.HumanApprovalAttestation),
+			request.Principal.SessionID,
+			strings.TrimSpace(request.Envelope.ApprovalGrantID),
 			strings.Join(request.Envelope.AcknowledgedWarningCodes, "\x1f"),
 			strings.TrimSpace(request.Envelope.ProceedReason),
 		}, "\x00")))
@@ -466,6 +466,62 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 	}
 	var decisionHash string
 	switch args := typed.(type) {
+	case workspaceMutationArgs:
+		result.RequiredCapability = "workspace:close"
+		plan.EntityType, plan.EntityID = "workspace", args.WorkspaceID
+		var activePhase *PhaseProjection
+		phases := make([]domain.Phase, 0, len(snapshot.Phases))
+		for index := range snapshot.Phases {
+			phases = append(phases, domainPhase(snapshot.Phases[index], args.WorkspaceID))
+			if snapshot.Workspace.ActivePhaseID != nil && snapshot.Phases[index].ID == *snapshot.Workspace.ActivePhaseID {
+				activePhase = &snapshot.Phases[index]
+			}
+		}
+		if activePhase == nil {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.WorkspaceID})
+			break
+		}
+		tasks := make([]domain.Task, 0, len(snapshot.Tasks))
+		for _, value := range snapshot.Tasks {
+			tasks = append(tasks, domainTask(value, args.WorkspaceID))
+		}
+		lanes := make([]domain.Lane, 0, len(snapshot.Lanes))
+		for _, value := range snapshot.Lanes {
+			lanes = append(lanes, domainLane(value, args.WorkspaceID))
+		}
+		activeRunCount := 0
+		for _, value := range snapshot.Runs {
+			if value.Status == string(domain.RunRunning) {
+				activeRunCount++
+			}
+		}
+		domainPlan := domain.PlanMutation("workspace.close", domain.MutationContext{
+			Mode: domain.MutationPreview, Workspace: domainWorkspace(snapshot),
+			Phase: domainPhase(*activePhase, args.WorkspaceID), Phases: phases,
+			Tasks: tasks, Lanes: lanes, BacklogItems: domainBacklogItems(snapshot.BacklogItems, args.WorkspaceID),
+			ActiveRunCount: activeRunCount,
+		})
+		result.Errors = append(result.Errors, domainPlan.Evaluation.Errors...)
+		result.Warnings = append(result.Warnings, domainPlan.Evaluation.Warnings...)
+		result.ProjectedDiff = domainPlan.ProjectedDiff
+		if executing && !domainPlan.Evaluation.HasErrors() && !sameDiagnosticCodes(domainPlan.Evaluation.Warnings, request.Envelope.AcknowledgedWarningCodes) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: "warnings"})
+		}
+		if len(result.Errors) > 0 {
+			break
+		}
+		closedPhase := domainPhase(*activePhase, args.WorkspaceID)
+		closedPhase.State = domain.PhaseCompleted
+		plan.WorkspaceState, plan.PhaseUpdate = domain.WorkspaceClosed, &closedPhase
+		for _, event := range domainPlan.Events {
+			payload := event.Payload
+			if event.Type == "workspace.closed" && len(domainPlan.Evaluation.Warnings) > 0 {
+				payload["warnings"] = request.Envelope.AcknowledgedWarningCodes
+				payload["acknowledgedWarningCodes"] = request.Envelope.AcknowledgedWarningCodes
+				payload["proceedReason"] = strings.TrimSpace(request.Envelope.ProceedReason)
+			}
+			plan.Events = append(plan.Events, EventWrite{Type: event.Type, EntityType: event.EntityType, EntityID: event.EntityID, Payload: payload})
+		}
 	case phaseCreateArgs:
 		result.RequiredCapability = "workspace:operate"
 		plan.EntityType, plan.EntityID = "phase", args.PhaseID
@@ -1161,7 +1217,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 				break
 			}
 		}
-		if strings.TrimSpace(args.PolicyVersion) == "" || !foundProfile || (mode != domain.AcceptanceDelegated && mode != domain.AcceptanceHumanRequired) {
+		if strings.TrimSpace(args.PolicyVersion) == "" || !foundProfile || mode != domain.AcceptanceHumanRequired {
 			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.WorkspaceID})
 			break
 		}
@@ -1263,13 +1319,9 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			break
 		}
 		evaluation := domain.EvaluateAcceptance(*profile, evidence)
-		autoConfirm := task.EffectiveAcceptanceMode == string(domain.AcceptanceDelegated) && evaluation.Eligible
-		plan.AcceptanceEvidence, plan.AutoConfirmTask = &evidence, autoConfirm
-		result.ProjectedDiff = map[string]any{"taskId": args.TaskID, "evidence": evidence, "evaluation": evaluation, "autoConfirmed": autoConfirm}
+		plan.AcceptanceEvidence = &evidence
+		result.ProjectedDiff = map[string]any{"taskId": args.TaskID, "evidence": evidence, "evaluation": evaluation, "humanApprovalRequired": true, "autoConfirmed": false}
 		plan.Events = []EventWrite{{Type: "task.acceptance_evidence_reported", EntityType: "task", EntityID: task.ID, Payload: map[string]any{"taskId": task.ID, "evidenceId": evidence.ID, "evaluation": evaluation}}}
-		if autoConfirm {
-			plan.Events = append(plan.Events, EventWrite{Type: "task.auto_confirmed", EntityType: "task", EntityID: task.ID, Payload: map[string]any{"taskId": task.ID, "policyVersion": task.AcceptancePolicyVersion, "evidenceProfileId": task.EvidenceProfileID, "evidenceId": evidence.ID}})
-		}
 	case gateTaskArgs:
 		result.RequiredCapability = "gate:approve"
 		plan.EntityType = "gate_task"
@@ -1743,13 +1795,13 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 	result.EntityType, result.EntityID = plan.EntityType, plan.EntityID
 	result.CommandHash = hashCommand(request.Name, typed, request.Envelope.ExpectedWorkspaceRevision, decisionHash)
 	requiresHumanApproval := requiresHumanApproval(request.Name) || plan.ForceHumanApproval
-	if executing && !requiresHumanApproval && request.Envelope.HumanApprovalAttestation != nil {
+	if executing && !requiresHumanApproval && (request.Envelope.HumanApprovalAttestation != nil || request.Envelope.ApprovalGrantID != "") {
 		result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeHumanApprovalMismatch, EntityID: plan.EntityID})
 	}
-	if requiresHumanApproval && (!executing || request.Envelope.HumanApprovalAttestation == nil) {
+	if requiresHumanApproval && (!executing || request.Envelope.HumanApprovalAttestation == nil && request.Envelope.ApprovalGrantID == "") {
 		result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeHumanApprovalRequired, EntityID: plan.EntityID})
 	}
-	if executing && requiresHumanApproval {
+	if executing && requiresHumanApproval && request.Envelope.ApprovalGrantID == "" {
 		att := request.Envelope.HumanApprovalAttestation
 		valid := att != nil && att.ApprovedCommandHash == result.CommandHash && (decisionHash == "" || att.DecisionSnapshotHash == decisionHash)
 		if valid {
@@ -1789,6 +1841,8 @@ func approvalFingerprint(attestation *HumanApprovalAttestation) string {
 func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 	var target any
 	switch name {
+	case "workspace.close":
+		target = &workspaceMutationArgs{}
 	case "phase.create":
 		target = &phaseCreateArgs{}
 	case "task.create":
@@ -1861,6 +1915,8 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 		return "", nil, &CommandError{Code: "invalid_request", Message: err.Error()}
 	}
 	switch v := target.(type) {
+	case *workspaceMutationArgs:
+		return v.WorkspaceID, *v, nil
 	case *phaseCreateArgs:
 		return v.WorkspaceID, *v, nil
 	case *taskCreateArgs:
@@ -1942,7 +1998,7 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 
 func requiresHumanApproval(name string) bool {
 	switch name {
-	case "task.confirm", "task.discard", "task.acceptance_policy.change", "task.acceptance_mode.escalate", "lane.close_out", "lane.discard", "gate.pass_task", "gate.revoke_task_pass", "gate.pass":
+	case "workspace.close", "task.confirm", "task.discard", "task.acceptance_policy.change", "task.acceptance_mode.escalate", "lane.close_out", "lane.discard", "gate.pass_task", "gate.revoke_task_pass", "gate.pass":
 		return true
 	default:
 		return false
@@ -2483,8 +2539,12 @@ func dependencyPatchFromArgs(tasks []TaskProjection, args dependencyMutationArgs
 
 func sameDiagnosticCodes(diagnostics []domain.Diagnostic, codes []string) bool {
 	want := make([]string, 0, len(diagnostics))
+	seen := map[string]bool{}
 	for _, diagnostic := range diagnostics {
-		want = append(want, diagnostic.Code)
+		if !seen[diagnostic.Code] {
+			want = append(want, diagnostic.Code)
+			seen[diagnostic.Code] = true
+		}
 	}
 	left, right := append([]string(nil), want...), append([]string(nil), codes...)
 	sort.Strings(left)

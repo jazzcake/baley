@@ -5,22 +5,21 @@ import "testing"
 func TestResolveAcceptanceUsesImmutablePolicySnapshot(t *testing.T) {
 	policy := AcceptancePolicy{
 		WorkspaceID: "workspace", PolicyVersion: "pilot-v2",
-		DefaultMode: AcceptanceDelegated, EvidenceProfileID: "technical-v1",
+		DefaultMode: AcceptanceHumanRequired, EvidenceProfileID: "technical-v1",
 	}
 	assignment, err := ResolveAcceptance(policy, AcceptanceInherit, "")
-	if err != nil || assignment.EffectiveMode != AcceptanceDelegated ||
+	if err != nil || assignment.EffectiveMode != AcceptanceHumanRequired ||
 		assignment.PolicyVersion != "pilot-v2" || assignment.EvidenceProfileID != "technical-v1" {
 		t.Fatalf("inherit resolution failed: %+v %v", assignment, err)
 	}
-	policy.PolicyVersion, policy.DefaultMode = "pilot-v3", AcceptanceHumanRequired
-	if assignment.PolicyVersion != "pilot-v2" || assignment.EffectiveMode != AcceptanceDelegated {
+	policy.PolicyVersion = "pilot-v3"
+	if assignment.PolicyVersion != "pilot-v2" || assignment.EffectiveMode != AcceptanceHumanRequired {
 		t.Fatalf("existing assignment changed with future policy: %+v", assignment)
 	}
-	if _, err = ResolveAcceptance(policy, AcceptanceDelegated, ""); acceptanceViolationCode(err) != CodeHumanApprovalRequired {
-		t.Fatalf("delegated request bypassed human-required policy: %v", err)
+	if _, err = ResolveAcceptance(policy, AcceptanceDelegated, ""); acceptanceViolationCode(err) != CodeInvalidStateTransition {
+		t.Fatalf("delegated request was not rejected: %v", err)
 	}
-	policy.DefaultMode = AcceptanceDelegated
-	if _, err = ResolveAcceptance(policy, AcceptanceDelegated, "weaker-v1"); acceptanceViolationCode(err) != CodeHumanApprovalRequired {
+	if _, err = ResolveAcceptance(policy, AcceptanceHumanRequired, "weaker-v1"); acceptanceViolationCode(err) != CodeHumanApprovalRequired {
 		t.Fatalf("ad-hoc profile weakening accepted: %v", err)
 	}
 }

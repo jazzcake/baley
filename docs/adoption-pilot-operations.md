@@ -51,8 +51,8 @@ lane Backlog
   → Run start
   → 구현·검증·독립 리뷰
   → Record/Git evidence
-  → delegated Task만 정책 충족 시 auto-confirm
-  → human_required Task 및 Gate는 사람 결정 대기
+  → 모든 Task는 implemented에서 사람 결정 대기
+  → Task confirmation 및 Gate는 browser-session approval grant 필요
 ```
 
 Backlog 항목은 Lane에는 속하지만 생성 시 Phase를 가정하지 않는다. Run
@@ -67,14 +67,12 @@ Record/Git mismatch는 자동 수정하지 않는다. lane brief는 mismatch를
 
 ## 승인 경계
 
-- delegated technical Task: immutable assignment와 typed evidence profile을
-  충족한 경우에만 Task 자체를 auto-confirm할 수 있다.
-- human_required Task: implemented에서 사람 확인을 기다린다.
+- 모든 Task는 human_required이며 typed evidence가 충족돼도 auto-confirm하지 않는다.
+- Task는 implemented에서 signed-in human browser approval을 기다린다.
 - Gate pass, active Gate 조건 변경, Lane close/discard, Workspace close:
   fresh preview 뒤 authenticated human approval이 항상 필요하다.
 
-여러 implemented Task의 확인은 같은 outcome을 묶어 한 번 질문할 수 있지만,
-서버에서는 각 command를 fresh preview/execute loop로 순서대로 처리한다.
+여러 implemented Task도 각각 fresh preview와 single-use browser grant가 필요하다.
 Gate pass는 Task 확인 뒤 새 revision으로 다시 preview하는 별도 결정이다.
 
 ## PilotMeasurement
@@ -104,7 +102,7 @@ command argument에 저장하지 않는다. idempotency key는 command table에
 
 격리된 test database와 임시 repository에서 다음을 한 번에 확인한다:
 bootstrap/adoption, Backlog promote, Gate condition/entry와 G# lookup, Run
-interruption/recovery, Record/Git mismatch read-only, delegated auto-confirm,
+interruption/recovery, Record/Git mismatch read-only, human-required non-auto-confirm,
 human authority boundary, mutation-attempt redaction, PilotMeasurement.
 
 실행 entry point:

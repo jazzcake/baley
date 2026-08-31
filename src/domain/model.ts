@@ -25,8 +25,8 @@ export type Task = {
   nextAction?: string;
   terminalReason?: string;
   implementedAssessment?: string;
-  requestedAcceptanceMode?: "delegated" | "human_required" | "inherit";
-  effectiveAcceptanceMode?: "delegated" | "human_required";
+  requestedAcceptanceMode?: "human_required" | "inherit";
+  effectiveAcceptanceMode?: "human_required";
   acceptancePolicyVersion?: string;
   evidenceProfileId?: string;
   acceptanceEvaluation?: { eligible: boolean; reasons: string[] };

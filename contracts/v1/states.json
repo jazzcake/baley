@@ -47,8 +47,8 @@
     "types": ["detailed-plan", "handoff", "independent-agent-review", "review-response", "completion-report", "pilot-measurement"]
   },
   "taskAcceptance": {
-    "requestedModes": ["delegated", "human_required", "inherit"],
-    "effectiveModes": ["delegated", "human_required"],
+    "requestedModes": ["human_required", "inherit"],
+    "effectiveModes": ["human_required"],
     "verificationVerdicts": ["passed", "failed", "unavailable"],
     "reviewVerdicts": ["pass", "fail", "unavailable"],
     "referenceKinds": ["task_record", "run", "commit_reference", "artifact"]

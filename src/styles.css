@@ -361,6 +361,29 @@ body { background: #f6f7fb; }
 .password-reset-form input { width: 100%; height: 34px; display: block; margin-top: 5px; padding: 0 9px; border: 1px solid #c5c7d0; border-radius: 6px; }
 .password-reset-form button { height: 34px; padding: 0 11px; border: 0; border-radius: 6px; background: #0073ea; color: #fff; font-size: 9px; font-weight: 700; cursor: pointer; }
 .admin-intro { margin: 18px 0; color: #676879; font-size: 11px; line-height: 1.6; }
+.human-approval-panel { width: min(760px,90vw); }
+.command-input-label { display: block; margin: 16px 0 6px; color: #545866; font-size: 10px; font-weight: 700; }
+.human-approval-panel > textarea,.human-approval-panel .proceed-reason { width: 100%; min-height: 155px; padding: 11px; resize: vertical; border: 1px solid #c5c7d0; border-radius: 7px; background: #f9fafc; color: #323338; font: 10px/1.55 'DM Mono'; }
+.human-approval-panel .proceed-reason { min-height: 70px; margin-top: 6px; font-family: Manrope,sans-serif; }
+.preview-button { width: auto; margin-top: 9px; padding: 10px 15px; }
+.approval-preview { margin-top: 20px; padding-top: 20px; border-top: 1px solid #e6e7eb; }
+.approval-preview h3,.approval-execution h3 { margin: 0 0 12px; font-size: 12px; }
+.approval-preview dl { display: grid; gap: 5px; margin: 0 0 12px; }
+.approval-preview dl > div { display: grid; grid-template-columns: 125px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid #eceef3; }
+.approval-preview dt { color: #7e8290; font-family: 'DM Mono'; font-size: 8px; text-transform: uppercase; }
+.approval-preview dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #454750; font-size: 10px; }
+.approval-preview code,.approval-execution code { font-family: 'DM Mono'; font-size: 9px; }
+.approval-preview details { margin: 12px 0; }
+.approval-preview summary { color: #0759b3; font-size: 10px; cursor: pointer; }
+.approval-preview pre { max-height: 240px; overflow: auto; padding: 10px; border-radius: 6px; background: #20232a; color: #eff3f8; font: 9px/1.5 'DM Mono'; }
+.approval-required,.warning-list { margin: 10px 0; padding: 10px; border: 1px solid #cbdcff; border-radius: 6px; background: #f3f7ff; color: #0759b3; font-size: 10px; }
+.approval-required strong,.approval-required span { display: block; }
+.warning-list { border-color: #ffd88b; background: #fff8e8; color: #754d00; }
+.warning-list legend { padding: 0 5px; font-size: 9px; font-weight: 700; }
+.warning-list label { display: flex; align-items: flex-start; gap: 8px; margin: 7px 0; }
+.warning-list label span,.warning-list label strong { display: block; }
+.warning-list label strong { font-family: 'DM Mono'; font-size: 8px; }
+.approval-execution { margin-top: 18px; padding: 14px; border: 1px solid #9bd5b8; border-radius: 7px; background: #effbf5; color: #176943; font-size: 10px; }
 @media (max-width: 1280px) {
   .topbar { grid-template-columns: auto 1fr auto; }
   .account-summary { display: none; }

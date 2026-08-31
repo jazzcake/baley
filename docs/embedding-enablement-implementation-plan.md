@@ -5,7 +5,12 @@ workspace_id: "00000000-0000-4000-8000-000000000001"
 phase_id: embedding-enablement
 workspace_revision_observed: 277
 source_tasks: [121, 122, 123, 124, 129, 130, 131]
+approval_authority_superseded_by: docs/task-acceptance-policy-contract.md
 ---
+
+> Historical implementation plan: delegated acceptance and auto-confirm items
+> are superseded by the P0 human-only approval contract. They are retained only
+> as planning history and must not be implemented or used as authority.
 
 # Embedding Enablement — Phase 4 상세 구현 계획
 

@@ -20,39 +20,28 @@
       "initiatedByActorId",
       "acknowledgedWarningCodes",
       "proceedReason",
-      "humanApprovalAttestation"
+      "approvalGrantId"
     ]
   },
-  "humanApprovalAttestation": {
-    "required": ["approvedCommandHash"],
-    "optional": [
-      "approvedByActorId",
-      "decisionSnapshotHash",
-      "statementHash",
-      "conversationRef",
-      "approvedAt"
+  "humanApprovalGrant": {
+    "executeReferenceField": "approvalGrantId",
+    "issuedOnlyBy": "authenticated_human_browser_session",
+    "boundFields": [
+      "workspaceId", "accountId", "actorId", "sessionId", "action",
+      "entityType", "entityId", "workspaceRevision", "commandHash",
+      "decisionSnapshotHash", "warningCodes", "proceedReasonDigest", "expiresAt"
     ],
-    "serverDerived": [
-      "approvedByActorIdFromConnectedCredential",
-      "action",
-      "entityType",
-      "entityId",
-      "workspaceRevision",
-      "executedCommandId",
-      "recordedAt"
+    "singleUse": true,
+    "shortLived": true,
+    "legacyAuthorityFieldsRejectedInEnforcedMode": [
+      "humanApprovalAttestation", "approvedByActorId", "approvedCommandHash",
+      "decisionSnapshotHash", "statementHash", "conversationRef", "approvedAt"
     ],
     "reusableAcrossCommands": false,
-    "eachCommandRequiresFreshPreviewAndAttestation": true,
+    "eachCommandRequiresFreshPreviewAndGrant": true,
     "groupedTaskConfirm": {
-      "supported": true,
-      "enforcedBy": "operator",
-      "requiredSharedFields": ["statementHash", "conversationRef"],
-      "requestBaselineFields": ["name", "arguments.workspaceId", "arguments.taskId"],
-      "previewBaselineFields": ["projectedDiff", "requiredCapability", "errors", "warnings", "advisories", "decisionSnapshotHash"],
-      "allowedChangingFields": ["expectedWorkspaceRevision", "commandHash"],
-      "firstFreshPreview": "groupBaselineRevision",
-      "subsequentFreshPreview": "previousSuccessfulResultRevision",
-      "mismatch": "requiresReapproval"
+      "supported": false,
+      "reason": "each command requires a separate browser-session grant"
     }
   },
   "previewResult": [

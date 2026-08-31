@@ -11,7 +11,9 @@ WORKDIR /app
 COPY --from=build /out/baley-server /app/baley-server
 COPY server/migrations /app/migrations
 COPY docker/server-entrypoint.sh /usr/local/bin/baley-server-entrypoint
-RUN chmod 0755 /usr/local/bin/baley-server-entrypoint && mkdir -p /var/lib/baley
+RUN sed -i 's/\r$//' /usr/local/bin/baley-server-entrypoint \
+    && chmod 0755 /usr/local/bin/baley-server-entrypoint \
+    && mkdir -p /var/lib/baley
 ENV BALEY_ENV=development \
     BALEY_AUTH_MODE=enforced \
     BALEY_ALLOW_CONTAINER_BIND=true \
