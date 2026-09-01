@@ -32,10 +32,14 @@ bundles. Agents can only hold an active `operator` membership.
   stored. Sessions have idle and absolute expiry and are revoked by logout, password
   change/reset, or Account disable.
 - The default browser policy is 30 days idle and 90 days absolute. Operators may
-  shorten it with `BALEY_SESSION_IDLE_TTL` and `BALEY_SESSION_ABSOLUTE_TTL`; both
+  configure it with `BALEY_SESSION_IDLE_TTL` and `BALEY_SESSION_ABSOLUTE_TTL`; both
   values use Go duration syntax, idle may not exceed absolute, and absolute may not
-  exceed 365 days. The policy applies when a session is issued, so a deployment
-  change requires one final login for an already-issued short session.
+  exceed 365 days. A session's absolute expiry is fixed when it is issued. Its idle
+  expiry slides under the currently running server policy whenever an authenticated
+  request refreshes the session, but is always capped by that fixed absolute expiry.
+  Therefore a deployment change does not discard stored sessions, while an
+  already-issued session with a short absolute expiry requires one final login to
+  receive the new absolute lifetime.
 - Cookie mutations require the session-bound CSRF value and an exact allowed Origin.
   Production cookies are `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`.
 

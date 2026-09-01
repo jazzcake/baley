@@ -65,9 +65,9 @@ Write or refresh `description` in this default order:
 3. What changes when it is complete
 4. Scope and exclusions
 
-Use clear headings in the user's language and keep the implementation contract under those headings. Apply this format automatically for `task.create`, for `task.update` whenever title or description changes, and whenever an existing non-terminal Task is brought up to date. Include a refreshed `currentSummary` in the same update even when the prior summary still looks usable. Do not wait for the user to request the format.
+Use clear headings in the user's language and keep the implementation contract under those headings. Apply this format automatically for `task.create` and for every content-changing `task.update`. When the user asks to refresh, clarify, revise, or otherwise bring an existing non-terminal Task's content up to date, execute one `task.update` that carries the normalized `title`, `description`, and `currentSummary` together, even when one of those values did not otherwise need editing. A read-only request to inspect, list, explain, or summarize Tasks never mutates them. Do not wait for the user to request the format.
 
-`backlog.promote` cannot accept a Task summary override. After promotion returns the new Task public ID, immediately use `task.update` to add `currentSummary` and normalize the copied description to this format before treating promotion as complete. Do not rewrite a confirmed or discarded Task; create the appropriate follow-up Task instead.
+`backlog.promote` cannot accept a Task summary override. After promotion returns the new Task public ID, immediately re-read that Task, preview and execute `task.update` to add `currentSummary` and normalize the copied title and description to this format. Treat stale-revision, interruption, or retryable update failures as an incomplete promotion workflow: re-read the Task and Workspace revision, rebuild the preview, and retry idempotently. Do not start a Run or any other downstream work for the promoted Task until normalization succeeds. Do not rewrite a confirmed or discarded Task; create the appropriate follow-up Task instead.
 
 ## Write Requests
 
@@ -101,6 +101,20 @@ User: task104 뒤에 API 검증 추가해
 Command:
 task.create {
   title: "API 검증",
+  currentSummary: "새 API가 기대한 입력과 출력을 안전하게 처리하는지 자동으로 확인합니다.",
+  description: """
+  쉬운 설명
+  API의 주요 사용 흐름을 자동 테스트합니다.
+
+  왜 필요한가
+  변경 이후 기존 호출이 깨지는 문제를 배포 전에 발견해야 합니다.
+
+  완료되면 무엇이 달라지는가
+  정상·오류 응답을 검증하는 테스트가 지속적으로 실행됩니다.
+
+  범위·제외 사항
+  API 계약 검증만 포함하며 부하 테스트와 UI 검증은 제외합니다.
+  """,
   predecessorTaskIds: [104]
 }
 
@@ -110,6 +124,29 @@ Preview:
 ```
 
 Do not invent the new public Task ID before execution.
+
+When changing Task content, send the complete human-facing set together:
+
+```text
+task.update {
+  taskId: 105,
+  title: "API 검증",
+  currentSummary: "새 API가 기대한 입력과 출력을 안전하게 처리하는지 자동으로 확인합니다.",
+  description: """
+  쉬운 설명
+  ...
+
+  왜 필요한가
+  ...
+
+  완료되면 무엇이 달라지는가
+  ...
+
+  범위·제외 사항
+  ...
+  """
+}
+```
 
 When adding a Task after work already exists, establish its predecessor or obtain an explicit user statement that it is an independent root. If neither is available, keep the proposed row in chat or a planning document and ask for the missing context; do not create a standalone Task merely to make the graph valid.
 

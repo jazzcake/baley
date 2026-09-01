@@ -9,10 +9,49 @@ task.create {
   laneId,
   phaseId,
   title,
+  currentSummary,
+  description: """
+    Easy explanation
+    ...
+
+    Why it is needed
+    ...
+
+    What changes when it is complete
+    ...
+
+    Scope and exclusions
+    ...
+  """,
   parentTaskId?,
   predecessorTaskIds?: [],
   successorTaskIds?: [],
   terminalReason?
+}
+```
+
+The Baley Skill requires `currentSummary` and all four description sections even
+when the wire contract keeps those fields optional for compatibility. A content
+change sends the complete human-facing set together:
+
+```text
+task.update {
+  taskId,
+  title,
+  currentSummary,
+  description: """
+    Easy explanation
+    ...
+
+    Why it is needed
+    ...
+
+    What changes when it is complete
+    ...
+
+    Scope and exclusions
+    ...
+  """
 }
 ```
 
@@ -36,7 +75,11 @@ backlog.promote {
 
 Backlog creation is deliberately phase-free. `backlog.promote` requires an
 explicit target Phase, copies lane/title/description, and reuses atomic
-`task.create` dependency and warning semantics. It never changes a Gate.
+`task.create` dependency and warning semantics. It never changes a Gate. Because
+promotion cannot set `currentSummary`, re-read the created Task and immediately
+normalize its title, summary, and four-section description with `task.update`.
+On stale revision, interruption, or a retryable failure, re-read, re-preview, and
+retry idempotently. Do not start downstream work until normalization succeeds.
 
 ## Atomic dependency rewrite
 
