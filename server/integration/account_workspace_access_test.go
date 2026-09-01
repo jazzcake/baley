@@ -193,6 +193,20 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if sessionCookie == nil || csrfCookie == nil {
 		t.Fatal("login cookies missing")
 	}
+	_, issuedSession, err := authService.AuthenticateSession(ctx, sessionCookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if idleRemaining := issuedSession.IdleExpiresAt.Sub(now); idleRemaining < 29*24*time.Hour || idleRemaining > 31*24*time.Hour {
+		t.Fatalf("session idle lifetime=%s, want approximately 30 days", idleRemaining)
+	}
+	if absoluteRemaining := issuedSession.AbsoluteExpiresAt.Sub(now); absoluteRemaining < 89*24*time.Hour || absoluteRemaining > 91*24*time.Hour {
+		t.Fatalf("session absolute lifetime=%s, want approximately 90 days", absoluteRemaining)
+	}
+	if cookieRemaining := sessionCookie.Expires.Sub(now); cookieRemaining < 89*24*time.Hour || cookieRemaining > 91*24*time.Hour {
+		t.Fatalf("session cookie lifetime=%s, want approximately 90 days", cookieRemaining)
+	}
 	ownerMutation := func(method, path string, body []byte) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, path, bytes.NewReader(body))
 		request.Header.Set("Origin", "http://localhost:5173")

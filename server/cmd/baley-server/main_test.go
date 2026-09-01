@@ -3,7 +3,34 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestResolveSessionPolicyDefaultsAndOverrides(t *testing.T) {
+	policy, err := resolveSessionPolicy("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.IdleTTL != 30*24*time.Hour || policy.AbsoluteTTL != 90*24*time.Hour {
+		t.Fatalf("default policy = %#v", policy)
+	}
+
+	policy, err = resolveSessionPolicy("168h", "2160h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.IdleTTL != 7*24*time.Hour || policy.AbsoluteTTL != 90*24*time.Hour {
+		t.Fatalf("override policy = %#v", policy)
+	}
+}
+
+func TestResolveSessionPolicyRejectsInvalidConfiguration(t *testing.T) {
+	for _, values := range [][2]string{{"one month", "2160h"}, {"720h", "12h"}, {"720h", "8784h"}} {
+		if _, err := resolveSessionPolicy(values[0], values[1]); err == nil {
+			t.Fatalf("invalid session policy accepted: %q/%q", values[0], values[1])
+		}
+	}
+}
 
 func TestResolveRuntimeConfigAuthModeContract(t *testing.T) {
 	tests := []struct {

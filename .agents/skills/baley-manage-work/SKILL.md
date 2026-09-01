@@ -56,7 +56,18 @@ Treat multiple predecessor/successor edges and disconnected DAG components as va
 
 ## Task summaries
 
-For every new or edited Task, include `currentSummary` whenever an easy explanation is useful. Write one or two short, plain-language sentences that explain the user value and expected result; avoid implementation jargon, internal IDs, or compressed specification language. Keep `description` as the detailed implementation contract. `currentSummary` is optional so existing Tasks without one continue to display their description normally.
+For every Task creation or content change, always write `currentSummary`. Write one or two short, plain-language sentences that explain the user value and expected result; avoid implementation jargon, internal IDs, or compressed specification language. Never omit it merely because the contract marks the field optional or because the existing Task has no summary.
+
+Write or refresh `description` in this default order:
+
+1. Easy explanation
+2. Why it is needed
+3. What changes when it is complete
+4. Scope and exclusions
+
+Use clear headings in the user's language and keep the implementation contract under those headings. Apply this format automatically for `task.create`, for `task.update` whenever title or description changes, and whenever an existing non-terminal Task is brought up to date. Include a refreshed `currentSummary` in the same update even when the prior summary still looks usable. Do not wait for the user to request the format.
+
+`backlog.promote` cannot accept a Task summary override. After promotion returns the new Task public ID, immediately use `task.update` to add `currentSummary` and normalize the copied description to this format before treating promotion as complete. Do not rewrite a confirmed or discarded Task; create the appropriate follow-up Task instead.
 
 ## Write Requests
 

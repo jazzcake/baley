@@ -131,7 +131,11 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	authService, err := authn.NewService(repo)
+	sessionPolicy, err := resolveSessionPolicy(os.Getenv("BALEY_SESSION_IDLE_TTL"), os.Getenv("BALEY_SESSION_ABSOLUTE_TTL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	authService, err := authn.NewServiceWithPolicy(repo, sessionPolicy)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -228,6 +232,28 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func resolveSessionPolicy(rawIdle, rawAbsolute string) (authn.SessionPolicy, error) {
+	policy := authn.DefaultSessionPolicy()
+	if raw := strings.TrimSpace(rawIdle); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return authn.SessionPolicy{}, fmt.Errorf("BALEY_SESSION_IDLE_TTL must be a Go duration: %w", err)
+		}
+		policy.IdleTTL = value
+	}
+	if raw := strings.TrimSpace(rawAbsolute); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return authn.SessionPolicy{}, fmt.Errorf("BALEY_SESSION_ABSOLUTE_TTL must be a Go duration: %w", err)
+		}
+		policy.AbsoluteTTL = value
+	}
+	if err := authn.ValidateSessionPolicy(policy); err != nil {
+		return authn.SessionPolicy{}, fmt.Errorf("invalid browser session policy: %w", err)
+	}
+	return policy, nil
 }
 
 type runtimeConfig struct {

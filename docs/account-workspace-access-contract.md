@@ -31,6 +31,11 @@ bundles. Agents can only hold an active `operator` membership.
 - Browser sessions use at least 256 bits of random entropy. Only token hashes are
   stored. Sessions have idle and absolute expiry and are revoked by logout, password
   change/reset, or Account disable.
+- The default browser policy is 30 days idle and 90 days absolute. Operators may
+  shorten it with `BALEY_SESSION_IDLE_TTL` and `BALEY_SESSION_ABSOLUTE_TTL`; both
+  values use Go duration syntax, idle may not exceed absolute, and absolute may not
+  exceed 365 days. The policy applies when a session is issued, so a deployment
+  change requires one final login for an already-issued short session.
 - Cookie mutations require the session-bound CSRF value and an exact allowed Origin.
   Production cookies are `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`.
 

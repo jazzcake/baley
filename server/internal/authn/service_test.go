@@ -3,7 +3,36 @@ package authn
 import (
 	"bytes"
 	"testing"
+	"time"
 )
+
+func TestDefaultSessionPolicySupportsLongLivedLogin(t *testing.T) {
+	policy := DefaultSessionPolicy()
+	if policy.IdleTTL != 30*24*time.Hour || policy.AbsoluteTTL != 90*24*time.Hour {
+		t.Fatalf("unexpected default session policy: %#v", policy)
+	}
+	service, err := NewServiceWithPolicy(nil, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.idleTTL != policy.IdleTTL || service.absoluteTTL != policy.AbsoluteTTL {
+		t.Fatalf("service policy = %s/%s, want %s/%s", service.idleTTL, service.absoluteTTL, policy.IdleTTL, policy.AbsoluteTTL)
+	}
+}
+
+func TestSessionPolicyRejectsUnsafeBounds(t *testing.T) {
+	tests := []SessionPolicy{
+		{IdleTTL: 0, AbsoluteTTL: time.Hour},
+		{IdleTTL: time.Hour, AbsoluteTTL: 0},
+		{IdleTTL: 2 * time.Hour, AbsoluteTTL: time.Hour},
+		{IdleTTL: 30 * 24 * time.Hour, AbsoluteTTL: 366 * 24 * time.Hour},
+	}
+	for _, policy := range tests {
+		if err := ValidateSessionPolicy(policy); err == nil {
+			t.Fatalf("unsafe policy accepted: %#v", policy)
+		}
+	}
+}
 
 func TestLoginRateKeysDoNotCreateSharedProxyLockout(t *testing.T) {
 	firstAccount := loginRateKeys("first-account", "127.0.0.1:41000")

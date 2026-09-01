@@ -14,6 +14,11 @@ services:
       BALEY_VIEWER_ORIGINS: https://jazzcake-home.tail87e929.ts.net
       BALEY_MCP_APPROVAL_ORIGIN: https://jazzcake-home.tail87e929.ts.net
       BALEY_COOKIE_SECURE: "true"
+      # Long-lived browser login remains server-revocable. Idle activity may
+      # extend only up to the absolute deadline; explicit logout and account,
+      # membership, Workspace, or credential revocation still win immediately.
+      BALEY_SESSION_IDLE_TTL: ${BALEY_SESSION_IDLE_TTL:-720h}
+      BALEY_SESSION_ABSOLUTE_TTL: ${BALEY_SESSION_ABSOLUTE_TTL:-2160h}
       # OAuth client ID is public configuration. The client secret is mounted
       # read-only from the ignored local secret path; it is never a Compose
       # literal, source-controlled value, or Codex Authorization header.

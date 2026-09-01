@@ -104,13 +104,50 @@ type Service struct {
 	absoluteTTL time.Duration
 }
 
+type SessionPolicy struct {
+	IdleTTL     time.Duration
+	AbsoluteTTL time.Duration
+}
+
+const maxSessionAbsoluteTTL = 365 * 24 * time.Hour
+
+func DefaultSessionPolicy() SessionPolicy {
+	return SessionPolicy{
+		IdleTTL:     30 * 24 * time.Hour,
+		AbsoluteTTL: 90 * 24 * time.Hour,
+	}
+}
+
+func ValidateSessionPolicy(policy SessionPolicy) error {
+	if policy.IdleTTL <= 0 {
+		return errors.New("session idle TTL must be positive")
+	}
+	if policy.AbsoluteTTL <= 0 {
+		return errors.New("session absolute TTL must be positive")
+	}
+	if policy.IdleTTL > policy.AbsoluteTTL {
+		return errors.New("session idle TTL must not exceed absolute TTL")
+	}
+	if policy.AbsoluteTTL > maxSessionAbsoluteTTL {
+		return errors.New("session absolute TTL must not exceed 365 days")
+	}
+	return nil
+}
+
 func NewService(store Store) (*Service, error) {
+	return NewServiceWithPolicy(store, DefaultSessionPolicy())
+}
+
+func NewServiceWithPolicy(store Store, policy SessionPolicy) (*Service, error) {
+	if err := ValidateSessionPolicy(policy); err != nil {
+		return nil, err
+	}
 	hasher := PasswordHasher{}
 	dummy, err := hasher.Hash("baley-dummy-password")
 	if err != nil {
 		return nil, err
 	}
-	return &Service{store: store, hasher: hasher, dummyPHC: dummy, now: time.Now, idleTTL: 30 * time.Minute, absoluteTTL: 12 * time.Hour}, nil
+	return &Service{store: store, hasher: hasher, dummyPHC: dummy, now: time.Now, idleTTL: policy.IdleTTL, absoluteTTL: policy.AbsoluteTTL}, nil
 }
 
 func (s *Service) Login(ctx context.Context, loginID, password, remoteAddress string) (LoginResult, error) {
