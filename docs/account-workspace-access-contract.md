@@ -94,10 +94,12 @@ bundles. Agents can only hold an active `operator` membership.
   Workspace are distinct operations.
 - A Workspace Owner cannot disable or reset an Account that has another active
   Workspace membership; Account authority never crosses a tenant boundary.
-- The Viewer exposes a human approval panel only to Approver/Owner members. It accepts
-  command JSON for a fresh preview and performs issue-and-execute in the same browser
-  session; it never displays a plaintext approval secret or asks the user to copy a
-  token, header, or environment variable.
+- The Viewer exposes human decision surfaces only to Approver/Owner members. An
+  implemented Task has a dedicated `Confirm task` action that creates a fresh preview
+  and performs issue-and-execute in the same browser session without asking for command
+  JSON. The generic JSON panel remains an advanced fallback for other human-only
+  commands. Neither surface displays a plaintext approval secret or asks the user to
+  copy a token, header, or environment variable.
 - Development traces cover user event, target Workspace, auth state, route, request
   generation, committed graph Workspace, and rendered `data-workspace-id`, without
   credentials or tokens.

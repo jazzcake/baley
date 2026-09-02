@@ -123,7 +123,7 @@ Gate 조건 또는 Gate entry Task를 자동 변경하지 않는다.
 - Gate entry binding은 `toPhase` Task만 explicit attach/detach하며 Gate readiness나 dependency를 바꾸지 않는다.
 - explicit entry가 없으면 `toPhase`의 same-Phase incoming dependency가 없는 DAG root를 public ID 순으로 read-only 투영한다.
 
-Query는 action, target, expected Workspace revision과 condition snapshot hash를 반환한다. 사람 전용 action은 Viewer의 Human approval panel에서 exact command JSON을 fresh preview하고 결과·warning·잔여 위험을 확인한다. Viewer는 같은 CSRF-protected browser session으로 command-specific grant를 발급한 뒤 즉시 실행하거나, Agent가 정확한 `approvalGrantId`를 참조해 실행할 수 있게 한다. 서버는 Agent bearer에서 승인 Actor를 파생하지 않는다. 하나의 grant는 하나의 command만 승인하므로 grouped `task.confirm` 실행은 지원하지 않는다.
+Query는 action, target, expected Workspace revision과 condition snapshot hash를 반환한다. `task.confirm`은 implemented Task의 Inspector에서 사람이 구현 결과와 evidence를 읽고 `Confirm task` 버튼을 명시적으로 누르는 전용 흐름을 기본으로 한다. 버튼은 내부적으로 exact command의 fresh preview를 만들고 warning과 잔여 위험을 보여준 뒤, 같은 CSRF-protected browser session으로 command-specific single-use grant를 발급해 즉시 실행한다. 사용자는 일반 Task 확인을 위해 command JSON을 작성하지 않는다. 범용 Human approval panel의 JSON 입력은 다른 사람 전용 명령을 위한 고급 진단 fallback으로만 유지한다. 서버는 Agent bearer에서 승인 Actor를 파생하지 않는다. 하나의 grant는 하나의 command만 승인하므로 grouped `task.confirm` 실행은 지원하지 않는다.
 
 Task 완료 확인은 Task별 Viewer approval로 수행한다. 여러 Task가 `implemented`여도 각각 fresh preview와 별도 browser grant가 필요하며, 앞 command의 revision 변화 뒤에는 다음 Task를 다시 preview해야 한다. `dangling_path` 같은 topology warning은 구현 품질 실패나 terminal 승인으로 표현하지 않으며, 사람이 exact warning을 확인하고 grant를 발급해야 한다.
 

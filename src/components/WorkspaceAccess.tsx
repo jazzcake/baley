@@ -812,7 +812,8 @@ function HumanApprovalPanel({
         {preview.result.errors.map((item) => <div className={item.code === "human_approval_required" ? "approval-required" : "form-error"} key={item.code}><strong>{item.code}</strong><span>{item.message}</span></div>)}
         {preview.result.warnings.length > 0 && <fieldset className="warning-list"><legend>Warning acknowledgement</legend>
           {preview.result.warnings.map((warning) => <label key={warning.code}><input type="checkbox" checked={acknowledgedWarnings.includes(warning.code)} onChange={(event) => {
-            setAcknowledgedWarnings((current) => event.currentTarget.checked ? [...new Set([...current, warning.code])] : current.filter((code) => code !== warning.code));
+            const checked = event.currentTarget.checked;
+            setAcknowledgedWarnings((current) => checked ? [...new Set([...current, warning.code])] : current.filter((code) => code !== warning.code));
           }} /><span><strong>{warning.code}</strong>{warning.message}</span></label>)}
         </fieldset>}
         {preview.result.warnings.length > 0 && <label className="command-input-label">Proceed reason<textarea className="proceed-reason" value={proceedReason} onChange={(event) => setProceedReason(event.currentTarget.value)} /></label>}

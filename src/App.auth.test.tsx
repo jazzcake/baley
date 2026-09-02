@@ -22,6 +22,10 @@ import {
   restoreWorkspace,
   transferWorkspaceOwnership,
   updateWorkspaceMember,
+  executeCommand,
+  issueApprovalGrant,
+  previewCommand,
+  revokeApprovalGrant,
 } from "./api/auth";
 import { APIError } from "./api/http";
 import { fetchGraph } from "./api/client";
@@ -50,6 +54,10 @@ vi.mock("./api/auth", () => ({
   approveMCPConnection: vi.fn(),
   disableMemberAccount: vi.fn(),
   resetMemberPassword: vi.fn(),
+  previewCommand: vi.fn(),
+  issueApprovalGrant: vi.fn(),
+  executeCommand: vi.fn(),
+  revokeApprovalGrant: vi.fn(),
 }));
 vi.mock("./api/client", () => ({ fetchGraph: vi.fn() }));
 vi.mock("./graph/layout", () => ({
@@ -120,6 +128,18 @@ describe("authenticated Workspace routing", () => {
     });
     vi.mocked(disableMemberAccount).mockResolvedValue(undefined);
     vi.mocked(resetMemberPassword).mockResolvedValue(undefined);
+    vi.mocked(previewCommand).mockResolvedValue({
+      commandHash: "sha256:confirm",
+      expectedWorkspaceRevision: 1,
+      requiredCapability: "task:approve",
+      projectedDiff: {},
+      errors: [{ code: "human_approval_required", message: "Human confirmation required" }],
+      warnings: [],
+      advisories: [],
+    });
+    vi.mocked(issueApprovalGrant).mockResolvedValue({ id: "grant", expiresAt: "2026-09-02T00:01:00Z", commandHash: "sha256:confirm", workspaceRevision: 1 });
+    vi.mocked(executeCommand).mockResolvedValue({ commandId: "command", workspaceRevision: 2, eventIds: [] });
+    vi.mocked(revokeApprovalGrant).mockResolvedValue(undefined);
     vi.mocked(fetchMCPConnection).mockResolvedValue({
       id: "connection-1",
       workspaceId: "w1",
@@ -219,6 +239,25 @@ describe("authenticated Workspace routing", () => {
 
     await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
     expect(screen.getByRole("status").textContent).toBe("UUID copied");
+  });
+
+  it("offers the explicit confirmation flow only for an implemented Task", async () => {
+    const implementedGraph = graph("w1", "Workspace One");
+    implementedGraph.tasks = implementedGraph.tasks.map((item) => item.id === "pilot-ui" ? {
+      ...item,
+      status: "implemented",
+      implementedAssessment: "Implementation and independent review passed.",
+    } : item);
+    vi.mocked(fetchGraph).mockResolvedValue(implementedGraph);
+    window.history.replaceState({}, "", "/workspaces/w1?task=pilot-ui");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm task once" }));
+
+    await waitFor(() => expect(executeCommand).toHaveBeenCalled());
+    expect(await screen.findByText("confirmed")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Confirm task" })).toBeNull();
   });
 
   it("offers Workspace creation from the account Workspace list", async () => {

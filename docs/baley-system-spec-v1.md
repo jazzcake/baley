@@ -878,7 +878,7 @@ Gate ready
 
 `task.get`, `gate.status`, `workspace.get`과 `decision.list`는 대상 action, 대상 ID, expected Workspace revision, 관련 criteria/condition snapshot hash와 warning을 반환한다. Viewer는 각각 “완료확인 대기”, “Gate 통과 승인 대기”, “Workspace 종료 가능”으로 표시한다.
 
-Operator는 사람 전용 action에 도달하면 실행을 멈추고 Viewer Human approval panel로 안내한다. 로그인한 사람은 exact command JSON을 fresh preview해 결과, 검증, warning과 잔여 위험을 확인하고 같은 browser session에서 grant를 발급해 실행한다. Task마다 별도 grant가 필요하고 Agent 대화의 긍정 응답 자체는 서버 authority가 아니다.
+Operator는 사람 전용 action에 도달하면 실행을 멈추고 Viewer의 해당 결정 surface로 안내한다. `task.confirm`의 기본 surface는 implemented Task Inspector의 `Confirm task` 버튼이다. 로그인한 사람은 구현 결과와 evidence를 읽고 버튼으로 fresh preview를 만든 뒤 warning과 잔여 위험을 확인하고, 최종 명시적 클릭으로 같은 browser session에서 grant를 발급해 실행한다. 일반 Task 확인에서 command JSON 입력을 요구하지 않으며 범용 Human approval panel은 고급 진단 fallback으로만 남긴다. Task마다 별도 grant가 필요하고 Agent 대화의 긍정 응답 자체는 서버 authority가 아니다.
 
 여러 Task를 한 번에 확인하는 공동 승인은 지원하지 않는다. 각 `task.confirm`은 현재 revision에서 Viewer가 fresh preview하고 별도 single-use grant를 발급해야 한다. 앞 command가 revision을 바꾸면 다음 command는 다시 preview한다.
 

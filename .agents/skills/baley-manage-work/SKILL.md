@@ -213,6 +213,8 @@ For one `task.confirm`, use this concise pattern:
 #<id>은 <delivered outcome>, <test/build verification>, <independent review result>를 완료했습니다. 완료로 확인할까요?
 ```
 
+When the signed-in Viewer provides a Task-specific confirmation action, direct the human to that Task's Inspector and its `Confirm task` button. The first click must create a fresh preview and the final explicit click must issue and consume the browser-bound single-use grant. Never ask the human to compose or paste command JSON for ordinary `task.confirm`; the generic command panel is an advanced diagnostic fallback, not the default Task workflow. After the Viewer confirms the Task, fresh-read its status before continuing.
+
 When several Tasks are already `implemented`, present them separately. Each Task requires its own Viewer preview, human decision, and command-specific grant. After one confirmation changes the Workspace revision, fresh-read and fresh-preview the next Task. Never treat a chat reply or a prior grant as authority for another Task.
 
 Do not present routine topology diagnostics as though they were implementation-quality failures. In particular, acknowledge `dangling_path` only as a warning when confirmation is otherwise approved; never invent or approve a terminal reason to suppress it. Surface the diagnostic in the decision brief only when it materially changes the human decision.
