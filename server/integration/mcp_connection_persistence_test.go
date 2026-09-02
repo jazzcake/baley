@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jazzcake/baley/server/internal/authz"
 	"github.com/jazzcake/baley/server/internal/persistence/postgres"
 )
 
@@ -61,14 +62,14 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if err != nil || request.Status != "pending" {
 		t.Fatalf("pending request was not recovered: %#v %v", request, err)
 	}
-	if _, err = restarted.ApproveMCPConnection(ctx, "restart-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(time.Minute)); err != nil {
+	if _, err = restarted.LinkMCPConnection(ctx, "restart-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	consumed, issued, gatewaySecret, err := restarted.PollMCPConnectionAndIssueAgentToken(ctx, "restart-request", postgres.DigestSecret(secret), now.Add(2*time.Minute))
+	consumed, issued, gatewaySecret, err := restarted.PollMCPLoginLinkAndIssueAgentToken(ctx, "restart-request", postgres.DigestSecret(secret), now.Add(2*time.Minute))
 	if err != nil || consumed.Status != "consumed" || issued.Token == "" || gatewaySecret == "" {
-		t.Fatalf("approved request was not consumed once: %#v issued=%#v err=%v", consumed, issued, err)
+		t.Fatalf("linked request was not consumed once: %#v issued=%#v err=%v", consumed, issued, err)
 	}
-	if _, _, _, err = restarted.PollMCPConnectionAndIssueAgentToken(ctx, "restart-request", postgres.DigestSecret(secret), now.Add(3*time.Minute)); !errors.Is(err, postgres.ErrMCPConnectionConsumed) {
+	if _, _, _, err = restarted.PollMCPLoginLinkAndIssueAgentToken(ctx, "restart-request", postgres.DigestSecret(secret), now.Add(3*time.Minute)); !errors.Is(err, postgres.ErrMCPConnectionConsumed) {
 		t.Fatalf("second poll issued another credential: %v", err)
 	}
 	var storedHash []byte
@@ -87,13 +88,13 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	}
 	// Codex runs one stdio MCP process per client session. A second process
 	// renewing through the same device gateway must not invalidate the first
-	// process and force it into a new browser approval flow.
+	// process and force it into a new browser login flow.
 	if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(issued.Token), now.Add(4*time.Minute)); err != nil {
 		t.Fatalf("gateway renewal invalidated an existing live MCP session: %v", err)
 	}
 	// Once a device has a Keychain-held registration for this signed-in Account,
 	// a second Workspace with active membership is enrolled without presenting a
-	// separate browser mcp-connect decision. The proof remains a registration
+	// separate browser login link. The proof remains a registration
 	// secret, not merely the copied gateway ID.
 	const autoWorkspaceID = "00000000-0000-4000-8000-000000000099"
 	if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspaces(id,name,state,revision) VALUES($1,'Auto enrollment target','active',1)`, autoWorkspaceID); err != nil {
@@ -133,29 +134,24 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspace_memberships(workspace_id,actor_id,role,active,created_by_actor_id) VALUES($1,$2,'owner',true,$2),($1,$3,$4,true,$2)`, target.id, otherOwnerActorID, postgres.DemoHumanActorID, target.role); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = restarted.AutoEnrollMCPGateway(ctx, target.id, consumed.GatewayID, postgres.DemoWorkspaceID, gatewaySecret, now.Add(4*time.Minute)); !errors.Is(err, postgres.ErrMCPGatewayNotFound) {
-			t.Fatalf("%s member auto-enrolled an Operator gateway: %v", target.role, err)
+		readonly, err := restarted.AutoEnrollMCPGateway(ctx, target.id, consumed.GatewayID, postgres.DemoWorkspaceID, gatewaySecret, now.Add(4*time.Minute))
+		if err != nil || readonly.AgentToken == "" {
+			t.Fatalf("%s member did not receive read-only MCP access: %#v %v", target.role, readonly, err)
 		}
-		var agentMemberships, agentTokens int
-		if err = restarted.Pool.QueryRow(ctx, `SELECT count(*) FROM workspace_memberships WHERE workspace_id=$1 AND actor_id=$2`, target.id, postgres.DemoAgentActorID).Scan(&agentMemberships); err != nil {
-			t.Fatal(err)
-		}
-		if err = restarted.Pool.QueryRow(ctx, `SELECT count(*) FROM agent_tokens WHERE workspace_id=$1`, target.id).Scan(&agentTokens); err != nil {
-			t.Fatal(err)
-		}
-		if agentMemberships != 0 || agentTokens != 0 {
-			t.Fatalf("rejected %s auto-enrollment minted agent access: memberships=%d tokens=%d", target.role, agentMemberships, agentTokens)
+		record, err := restarted.AgentByTokenHash(ctx, postgres.DigestSecret(readonly.AgentToken), now.Add(4*time.Minute))
+		if err != nil || len(record.Scopes) != 1 || record.Scopes[0] != authz.WorkspaceRead {
+			t.Fatalf("%s member scopes=%v err=%v, want workspace:read only", target.role, record.Scopes, err)
 		}
 	}
-	// A reapproved local gateway ID replaces the old registration generation.
+	// A newly linked local gateway ID replaces the old registration generation.
 	// No credential from the copied/old gateway store may survive that replacement.
 	if _, err = restarted.CreateMCPConnection(ctx, "replacement-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, consumed.GatewayID, postgres.DigestSecret("replacement-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = restarted.ApproveMCPConnection(ctx, "replacement-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(5*time.Minute)); err != nil {
+	if _, err = restarted.LinkMCPConnection(ctx, "replacement-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(5*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	_, replacement, replacementGatewaySecret, err := restarted.PollMCPConnectionAndIssueAgentToken(ctx, "replacement-request", postgres.DigestSecret("replacement-secret"), now.Add(6*time.Minute))
+	_, replacement, replacementGatewaySecret, err := restarted.PollMCPLoginLinkAndIssueAgentToken(ctx, "replacement-request", postgres.DigestSecret("replacement-secret"), now.Add(6*time.Minute))
 	if err != nil || replacement.Token == "" || replacementGatewaySecret == "" {
 		t.Fatalf("replacement gateway enrollment failed: %#v %v", replacement, err)
 	}
@@ -177,10 +173,10 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if _, err = restarted.CreateMCPConnection(ctx, "membership-change-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-membership-change", postgres.DigestSecret("membership-change-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = restarted.ApproveMCPConnection(ctx, "membership-change-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(8*time.Minute)); err != nil {
+	if _, err = restarted.LinkMCPConnection(ctx, "membership-change-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(8*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	_, _, membershipGatewaySecret, err := restarted.PollMCPConnectionAndIssueAgentToken(ctx, "membership-change-request", postgres.DigestSecret("membership-change-secret"), now.Add(9*time.Minute))
+	_, _, membershipGatewaySecret, err := restarted.PollMCPLoginLinkAndIssueAgentToken(ctx, "membership-change-request", postgres.DigestSecret("membership-change-secret"), now.Add(9*time.Minute))
 	if err != nil || membershipGatewaySecret == "" {
 		t.Fatalf("membership-change gateway enrollment failed: %v", err)
 	}
@@ -195,10 +191,10 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if _, err = restarted.CreateMCPConnection(ctx, "logout-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-logout", postgres.DigestSecret("logout-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = restarted.ApproveMCPConnection(ctx, "logout-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(11*time.Minute)); err != nil {
+	if _, err = restarted.LinkMCPConnection(ctx, "logout-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(11*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	_, logoutToken, logoutGatewaySecret, err := restarted.PollMCPConnectionAndIssueAgentToken(ctx, "logout-request", postgres.DigestSecret("logout-secret"), now.Add(12*time.Minute))
+	_, logoutToken, logoutGatewaySecret, err := restarted.PollMCPLoginLinkAndIssueAgentToken(ctx, "logout-request", postgres.DigestSecret("logout-secret"), now.Add(12*time.Minute))
 	if err != nil || logoutToken.Token == "" || logoutGatewaySecret == "" {
 		t.Fatalf("logout gateway enrollment failed: %#v %v", logoutToken, err)
 	}
@@ -217,14 +213,11 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 		t.Fatalf("logout gateway resumed: %v", err)
 	}
 
-	if _, err = restarted.CreateMCPConnection(ctx, "rejected-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-rejected-identity", postgres.DigestSecret("reject-secret"), now, now.Add(time.Hour)); err != nil {
+	if _, err = restarted.CreateMCPConnection(ctx, "abandoned-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-abandoned-identity", postgres.DigestSecret("abandoned-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if rejected, err := restarted.RejectMCPConnection(ctx, "rejected-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, now.Add(time.Minute)); err != nil || rejected.Status != "rejected" {
-		t.Fatalf("rejection did not persist: %#v %v", rejected, err)
-	}
-	if rejected, issued, _, err := restarted.PollMCPConnectionAndIssueAgentToken(ctx, "rejected-request", postgres.DigestSecret("reject-secret"), now.Add(2*time.Minute)); err != nil || rejected.Status != "rejected" || issued.Token != "" {
-		t.Fatalf("rejected request poll=%#v issued=%#v err=%v", rejected, issued, err)
+	if pending, issued, _, err := restarted.PollMCPLoginLinkAndIssueAgentToken(ctx, "abandoned-request", postgres.DigestSecret("abandoned-secret"), now.Add(2*time.Minute)); err != nil || pending.Status != "pending" || issued.Token != "" {
+		t.Fatalf("abandoned request poll=%#v issued=%#v err=%v", pending, issued, err)
 	}
 
 	if _, err = restarted.CreateMCPConnection(ctx, "expired-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-expired-identity", postgres.DigestSecret("expired-secret"), now.Add(-2*time.Minute), now.Add(-time.Minute)); err != nil {

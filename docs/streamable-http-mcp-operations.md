@@ -8,7 +8,7 @@ last_active: 2026-08-28
 
 On Windows, Baley uses one tokenless loopback MCP Gateway per signed-in user for
 Codex Desktop and CLI. Codex connects to `http://127.0.0.1:8090/mcp`; the
-Gateway alone receives the approved Tailnet HTTPS API URL and local
+Gateway alone receives the configured Tailnet HTTPS API URL and local
 credential-store path. `BALEY_MCP_GATEWAY_TOKEN` is not placed in
 `config.toml`, shell profiles, Codex Desktop environment, or an Authorization
 header.
@@ -32,10 +32,12 @@ that environment keep the tokenless stdio transport until Codex supports a
 per-user OS-authenticated local transport. No external network peer can reach
 the loopback endpoint.
 
-The first device enrollment remains Owner-approved. After that, the same
-registered device is automatically enrolled in any Workspace where its Account
-has active membership; no per-Workspace `mcp-connect` page is shown. Logout,
-membership removal, gateway replace,
+The first device is linked when an active member signs in at the short-lived
+`loginUrl`. The same registered device is then automatically enrolled in any
+Workspace where that Account has active membership; there is no separate
+Workspace connection decision. Owner/Operator roles receive ordinary Agent
+operation scopes, while Viewer/Approver roles receive read-only Agent scope.
+Logout, membership removal, gateway replace,
 suspected compromise, or server-side revoke invalidates the gateway and derived
 credentials. No path grants Task confirmation, Gate condition changes, Gate
 Task pass, or Gate pass authority.
@@ -69,7 +71,7 @@ codex mcp add baley --url http://127.0.0.1:8090/mcp
 
 Restart Codex Desktop fully after changing its registration. Only a first device
 or a device invalidated by logout, membership removal, replacement, or revoke
-uses the signed-in gateway enrollment flow.
+uses the signed-in gateway login flow.
 
 ## Workspace discovery payload
 
@@ -100,13 +102,13 @@ secret to disk. A 15-minute encrypted rollback copy is retained solely for a
 failed local migration; use `baley-mcp rollback-legacy` with the existing local
 value during that window. The rollback restores only the former local file and
 does not restore a revoked gateway or removed membership: the server still
-rejects its next renewal. After the window, enroll again while signed in to Baley
+rejects its next renewal. After the window, link again by signing in to Baley
 instead of retaining legacy material.
 
 Earlier plaintext stores are migrated directly into the OS keychain but are
 never copied back to disk for rollback; preserving a plaintext backup would
-violate the tokenless storage boundary. Their safe rollback is a fresh Owner
-approval, not revival of the old disk secret.
+violate the tokenless storage boundary. Their safe rollback is a fresh member
+login link, not revival of the old disk secret.
 
 Use `baley_mcp_diagnostics` for redacted state only:
 

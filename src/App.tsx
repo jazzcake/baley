@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentProps } from "react";
 import { Background, Panel, ReactFlow, ViewportPortal, useStore, useStoreApi, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ChevronRight, Copy, Maximize, Minus, PanelRightClose, PanelRightOpen, Plus, RotateCcw } from "lucide-react";
@@ -20,7 +21,7 @@ import { LaneAnchorColumn } from "./components/LaneAnchorColumn";
 import { TaskSearch } from "./components/TaskSearch";
 import { TaskConfirmation } from "./components/TaskConfirmation";
 import { laneColorMap } from "./components/lane-palette";
-import { LoginLanding, LoginScreen, MCPConnectionApproval, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
+import { isMCPLoginPath, LoginLanding, LoginScreen, MCPLoginLink, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
 import { traceViewer } from "./debug/viewer-trace";
 import type { BacklogItem, Task, WorkspaceFixture } from "./domain/model";
 
@@ -68,6 +69,7 @@ export default function App() {
 
 function AppRoutes() {
   const auth = useAuth();
+  const location = useLocation();
   if (auth.state.status === "booting") {
     return <main className="server-state" data-auth-state="booting"><h1>Baley</h1><p>계정과 Workspace를 확인하는 중입니다…</p></main>;
   }
@@ -81,12 +83,12 @@ function AppRoutes() {
     return <Routes>
 		<Route path="/" element={<LoginLanding />} />
       <Route path="/login" element={<LoginScreen />} />
-		<Route path="*" element={<Navigate to="/login" replace />} />
+		<Route path="*" element={<Navigate to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`} replace />} />
     </Routes>;
   }
   return <Routes>
     <Route path="/login" element={<Navigate to="/workspaces" replace />} />
-    <Route path="/workspaces" element={<WorkspaceChooser
+    <Route path="/workspaces" element={<WorkspaceChooserWithPostLogin
       account={auth.state.account}
       memberships={auth.state.memberships}
       csrfToken={auth.state.csrfToken}
@@ -97,6 +99,17 @@ function AppRoutes() {
     <Route path="/workspaces/:workspaceId/*" element={<WorkspaceRoute />} />
     <Route path="*" element={<Navigate to={auth.state.memberships.length === 1 ? `/workspaces/${encodeURIComponent(auth.state.memberships[0]!.id)}` : "/workspaces"} replace />} />
   </Routes>;
+}
+
+function WorkspaceChooserWithPostLogin(props: ComponentProps<typeof WorkspaceChooser>) {
+  const navigate = useNavigate();
+  useEffect(() => {
+    const returnTo = window.sessionStorage.getItem("baley:mcp-post-login-path");
+    if (!isMCPLoginPath(returnTo)) return;
+    window.sessionStorage.removeItem("baley:mcp-post-login-path");
+    navigate(returnTo, { replace: true });
+  }, [navigate]);
+  return <WorkspaceChooser {...props} />;
 }
 
 function WorkspaceRoute() {
@@ -156,7 +169,7 @@ function WorkspaceViewer({
   }, [graph.gates, routeView]);
   const selectedId = useMemo(() => new URLSearchParams(location.search).get("task") ?? undefined, [location.search]);
   const selectedBacklogId = useMemo(() => new URLSearchParams(location.search).get("backlog") ?? undefined, [location.search]);
-  const mcpConnectionId = useMemo(() => location.pathname.match(/\/mcp-connect\/([^/]+)$/)?.[1], [location.pathname]);
+  const mcpConnectionId = useMemo(() => location.pathname.match(/\/mcp-login\/([^/]+)$/)?.[1], [location.pathname]);
   const [layout, setLayout] = useState<GraphLayout | undefined>();
   const [layoutViewKey, setLayoutViewKey] = useState<string>();
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => readLayoutMode(workspaceId, window.localStorage));
@@ -660,7 +673,7 @@ function WorkspaceViewer({
           }} onLane={(id) => navigate({ kind: "lane", id })} onGate={(id) => navigate({ kind: "gate", id })} />
         </div>}
       </section>
-      {mcpConnectionId && <MCPConnectionApproval
+      {mcpConnectionId && <MCPLoginLink
         workspace={membership}
         connectionId={decodeURIComponent(mcpConnectionId)}
         csrfToken={csrfToken}

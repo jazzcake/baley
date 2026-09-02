@@ -111,13 +111,13 @@ func TestResolveRuntimeConfigCookieOverride(t *testing.T) {
 	}
 }
 
-func TestResolveApprovalOriginUsesConfiguredAllowedOrigin(t *testing.T) {
+func TestResolveMCPLoginOriginUsesConfiguredAllowedOrigin(t *testing.T) {
 	allowed := []string{"http://127.0.0.1:5174", "https://baley.example"}
-	if got, err := resolveApprovalOrigin("https://baley.example/", allowed); err != nil || got != "https://baley.example" {
-		t.Fatalf("resolveApprovalOrigin() = %q, %v", got, err)
+	if got, err := resolveMCPLoginOrigin("https://baley.example/", allowed); err != nil || got != "https://baley.example" {
+		t.Fatalf("resolveMCPLoginOrigin() = %q, %v", got, err)
 	}
-	if _, err := resolveApprovalOrigin("https://other.example", allowed); err == nil {
-		t.Fatal("expected an error for an approval origin outside the allowed origins")
+	if _, err := resolveMCPLoginOrigin("https://other.example", allowed); err == nil {
+		t.Fatal("expected an error for an MCP login origin outside the allowed origins")
 	}
 }
 

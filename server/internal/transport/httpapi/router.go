@@ -27,7 +27,7 @@ type API struct {
 	Service          *application.Service
 	Repo             *postgres.Repository
 	AllowedOrigins   []string
-	ApprovalOrigin   string
+	MCPLoginOrigin   string
 	Auth             *authn.Service
 	OIDC             *authn.OIDCService
 	OIDCPostLoginURL string
@@ -58,8 +58,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/auth/session", a.authSession)
 	mux.HandleFunc("POST /v1/auth/logout", a.logout)
 	mux.HandleFunc("POST /v1/auth/password", a.changePassword)
-	mux.HandleFunc("POST /v1/mcp/connections", a.createMCPConnection)
-	mux.HandleFunc("GET /v1/mcp/connections/{connectionId}", a.pollMCPConnection)
+	mux.HandleFunc("POST /v1/mcp/login-links", a.createMCPLoginLink)
+	mux.HandleFunc("GET /v1/mcp/login-links/{connectionId}", a.pollMCPLoginLink)
 	mux.HandleFunc("POST /v1/mcp/gateway-sessions", a.resumeMCPGateway)
 	mux.HandleFunc("POST /v1/mcp/gateway-enrollments", a.autoEnrollMCPGateway)
 	mux.HandleFunc("GET /v1/workspaces", a.workspaces)
@@ -77,9 +77,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/owner-transfer", a.ownerTransfer)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/agent-tokens", a.issueAgentToken)
 	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/agent-tokens/{tokenId}", a.revokeAgentToken)
-	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}", a.getMCPConnection)
-	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}/approve", a.approveMCPConnection)
-	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-connections/{connectionId}/reject", a.rejectMCPConnection)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/mcp-login-links/{connectionId}", a.getMCPLoginLink)
+	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-login-links/{connectionId}/link", a.linkMCPConnection)
 	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/mcp-gateways/{gatewayId}", a.revokeMCPGateway)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/approval-grants", a.approvalGrant)
 	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/approval-grants/{grantId}", a.revokeApprovalGrant)
@@ -493,11 +492,9 @@ func (a *API) requireLifecycleOwner(r *http.Request) (authContext, bool) {
 	return state, err == nil && membership != nil && membership.Active && membership.Role == authz.RoleOwner
 }
 
-// requireMCPGatewayMember keeps device enrollment within the normal Operator
-// boundary. The signed-in member is bound to the gateway; no separate Owner
-// approval action is required, and the resulting Agent credential still has
-// only the ordinary Operator capabilities.
-func (a *API) requireMCPGatewayMember(r *http.Request) (authContext, bool) {
+// requireMCPLinkMember binds the device to an active signed-in member. The
+// issued Agent scopes are derived separately from this member's Workspace role.
+func (a *API) requireMCPLinkMember(r *http.Request) (authContext, bool) {
 	state, ok := authState(r)
 	if !ok || state.Principal.AccountID == "" {
 		return authContext{}, false
@@ -510,7 +507,7 @@ func (a *API) requireMCPGatewayMember(r *http.Request) (authContext, bool) {
 	decision := authz.Authorize(authz.AuthorizationInput{
 		Subject: state.Principal.Subject, Membership: membership,
 		WorkspaceID: workspaceID, EntityWorkspaceID: workspaceID,
-		Capability: authz.WorkspaceOperate,
+		Capability: authz.WorkspaceRead,
 	})
 	return state, decision.Allowed
 }
@@ -739,7 +736,7 @@ func (a *API) authentication(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/versionz" || r.URL.Path == "/v1/auth/login" || r.URL.Path == "/v1/auth/oidc/providers" || strings.HasSuffix(r.URL.Path, "/start") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasSuffix(r.URL.Path, "/callback") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasPrefix(r.URL.Path, "/v1/mcp/connections") || r.URL.Path == "/v1/mcp/gateway-sessions" || r.URL.Path == "/v1/mcp/gateway-enrollments" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/versionz" || r.URL.Path == "/v1/auth/login" || r.URL.Path == "/v1/auth/oidc/providers" || strings.HasSuffix(r.URL.Path, "/start") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasSuffix(r.URL.Path, "/callback") && strings.HasPrefix(r.URL.Path, "/v1/auth/oidc/") || strings.HasPrefix(r.URL.Path, "/v1/mcp/login-links") || r.URL.Path == "/v1/mcp/gateway-sessions" || r.URL.Path == "/v1/mcp/gateway-enrollments" {
 			next.ServeHTTP(w, r)
 			return
 		}

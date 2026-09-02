@@ -16,10 +16,10 @@ var (
 )
 
 type MCPConnectionRequest struct {
-	ID, WorkspaceID, AgentActorID, GatewayID, Status, ApprovedByActorID string
-	SecretHash                                                          []byte
-	CreatedAt, ExpiresAt                                                time.Time
-	ApprovedAt, RejectedAt, ConsumedAt                                  *time.Time
+	ID, WorkspaceID, AgentActorID, GatewayID, Status, LinkedByActorID string
+	SecretHash                                                        []byte
+	CreatedAt, ExpiresAt                                              time.Time
+	LinkedAt, ConsumedAt                                              *time.Time
 }
 
 func (r *Repository) CreateMCPConnection(ctx context.Context, id, workspaceID, agentActorID, gatewayID string, secretHash []byte, now, expiresAt time.Time) (MCPConnectionRequest, error) {
@@ -37,14 +37,7 @@ func (r *Repository) MCPConnection(ctx context.Context, id string, now time.Time
 	return request, err
 }
 
-func (r *Repository) ApproveMCPConnection(ctx context.Context, id, workspaceID, ownerActorID string, now time.Time) (MCPConnectionRequest, error) {
-	return r.setMCPConnectionDecision(ctx, id, workspaceID, ownerActorID, now, "approved")
-}
-func (r *Repository) RejectMCPConnection(ctx context.Context, id, workspaceID, ownerActorID string, now time.Time) (MCPConnectionRequest, error) {
-	return r.setMCPConnectionDecision(ctx, id, workspaceID, ownerActorID, now, "rejected")
-}
-
-func (r *Repository) setMCPConnectionDecision(ctx context.Context, id, workspaceID, ownerActorID string, now time.Time, decision string) (MCPConnectionRequest, error) {
+func (r *Repository) LinkMCPConnection(ctx context.Context, id, workspaceID, memberActorID string, now time.Time) (MCPConnectionRequest, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
 		return MCPConnectionRequest{}, err
@@ -64,19 +57,10 @@ func (r *Repository) setMCPConnectionDecision(ctx context.Context, id, workspace
 		return MCPConnectionRequest{}, ErrMCPConnectionNotFound
 	}
 	if request.Status == "pending" {
-		column := "approved_at"
-		if decision == "rejected" {
-			column = "rejected_at"
-		}
-		if _, err = tx.Exec(ctx, "UPDATE mcp_connection_requests SET status=$1,approved_by_actor_id=$2,"+column+"=$3 WHERE id=$4", decision, ownerActorID, now, id); err != nil {
+		if _, err = tx.Exec(ctx, "UPDATE mcp_connection_requests SET status='linked',linked_by_actor_id=$1,linked_at=$2 WHERE id=$3", memberActorID, now, id); err != nil {
 			return MCPConnectionRequest{}, err
 		}
-		request.Status, request.ApprovedByActorID = decision, ownerActorID
-		if decision == "approved" {
-			request.ApprovedAt = &now
-		} else {
-			request.RejectedAt = &now
-		}
+		request.Status, request.LinkedByActorID, request.LinkedAt = "linked", memberActorID, &now
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return MCPConnectionRequest{}, err
@@ -84,7 +68,7 @@ func (r *Repository) setMCPConnectionDecision(ctx context.Context, id, workspace
 	return request, nil
 }
 
-func (r *Repository) PollMCPConnectionAndIssueAgentToken(ctx context.Context, id string, secretHash []byte, now time.Time) (MCPConnectionRequest, AgentTokenResult, string, error) {
+func (r *Repository) PollMCPLoginLinkAndIssueAgentToken(ctx context.Context, id string, secretHash []byte, now time.Time) (MCPConnectionRequest, AgentTokenResult, string, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
 		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
@@ -106,17 +90,21 @@ func (r *Repository) PollMCPConnectionAndIssueAgentToken(ctx context.Context, id
 	if request.Status == "consumed" {
 		return MCPConnectionRequest{}, AgentTokenResult{}, "", ErrMCPConnectionConsumed
 	}
-	if request.Status != "approved" {
+	if request.Status != "linked" {
 		if err = tx.Commit(ctx); err != nil {
 			return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 		}
 		return request, AgentTokenResult{}, "", nil
 	}
-	registration, gatewaySecret, err := r.enrollMCPGatewayTx(ctx, tx, request.WorkspaceID, request.ApprovedByActorID, request.AgentActorID, request.GatewayID, now)
+	registration, gatewaySecret, err := r.enrollMCPGatewayTx(ctx, tx, request.WorkspaceID, request.LinkedByActorID, request.AgentActorID, request.GatewayID, now)
 	if err != nil {
 		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 	}
-	issued, err := r.issueAgentTokenTx(ctx, tx, request.WorkspaceID, request.AgentActorID, "mcp-connect-"+request.ID, request.ApprovedByActorID, nil, nil, &registration.ID)
+	scopes, err := memberAgentScopesTx(ctx, tx, request.WorkspaceID, request.LinkedByActorID)
+	if err != nil {
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
+	}
+	issued, err := r.issueAgentTokenTx(ctx, tx, request.WorkspaceID, request.AgentActorID, "mcp-login-"+request.ID, request.LinkedByActorID, scopes, nil, &registration.ID)
 	if err != nil {
 		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
 	}
@@ -130,12 +118,12 @@ func (r *Repository) PollMCPConnectionAndIssueAgentToken(ctx context.Context, id
 	return request, issued, gatewaySecret, nil
 }
 
-const mcpConnectionSelect = `SELECT id,workspace_id,agent_actor_id,gateway_id,secret_hash,status,COALESCE(approved_by_actor_id,''),created_at,expires_at,approved_at,rejected_at,consumed_at FROM mcp_connection_requests`
+const mcpConnectionSelect = `SELECT id,workspace_id,agent_actor_id,gateway_id,secret_hash,status,COALESCE(linked_by_actor_id,''),created_at,expires_at,linked_at,consumed_at FROM mcp_connection_requests`
 
 type mcpRow interface{ Scan(...any) error }
 
 func scanMCPConnection(row mcpRow) (MCPConnectionRequest, error) {
 	var v MCPConnectionRequest
-	err := row.Scan(&v.ID, &v.WorkspaceID, &v.AgentActorID, &v.GatewayID, &v.SecretHash, &v.Status, &v.ApprovedByActorID, &v.CreatedAt, &v.ExpiresAt, &v.ApprovedAt, &v.RejectedAt, &v.ConsumedAt)
+	err := row.Scan(&v.ID, &v.WorkspaceID, &v.AgentActorID, &v.GatewayID, &v.SecretHash, &v.Status, &v.LinkedByActorID, &v.CreatedAt, &v.ExpiresAt, &v.LinkedAt, &v.ConsumedAt)
 	return v, err
 }

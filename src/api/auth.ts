@@ -47,11 +47,11 @@ export type CommandExecution = {
   eventIds: string[];
   approvalProtocol?: string;
 };
-export type MCPConnection = {
+export type MCPLoginLink = {
   id: string;
   workspaceId: string;
   agentActorId: string;
-  status: "pending" | "approved";
+  status: "pending" | "linked";
   expiresAt: string;
 };
 export type OIDCProvider = { id: string; label: string };
@@ -266,24 +266,24 @@ export function revokeApprovalGrant(workspaceId: string, grantId: string, csrfTo
   );
 }
 
-export function fetchMCPConnection(
+export function fetchMCPLoginLink(
   workspaceId: string,
   connectionId: string,
   signal?: AbortSignal,
-): Promise<MCPConnection> {
-  return requestJSON<MCPConnection>(
-    `/v1/workspaces/${encodeURIComponent(workspaceId)}/mcp-connections/${encodeURIComponent(connectionId)}`,
+): Promise<MCPLoginLink> {
+  return requestJSON<MCPLoginLink>(
+	`/v1/workspaces/${encodeURIComponent(workspaceId)}/mcp-login-links/${encodeURIComponent(connectionId)}`,
     { signal },
   );
 }
 
-export function approveMCPConnection(
+export function linkMCPGateway(
   workspaceId: string,
   connectionId: string,
   csrfToken: string,
 ): Promise<void> {
   return requestJSON<void>(
-    `/v1/workspaces/${encodeURIComponent(workspaceId)}/mcp-connections/${encodeURIComponent(connectionId)}/approve`,
+	`/v1/workspaces/${encodeURIComponent(workspaceId)}/mcp-login-links/${encodeURIComponent(connectionId)}/link`,
     { method: "POST", body: "{}" },
     csrfToken,
   );

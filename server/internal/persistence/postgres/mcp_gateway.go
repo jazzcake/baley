@@ -18,7 +18,7 @@ var (
 
 // MCPGatewayRegistration is the durable, Workspace-scoped relationship between
 // a human member and one local MCP gateway. Its secret is returned only at the
-// approved enrollment hand-off; only its hash is retained by the server.
+// signed-in login hand-off; only its hash is retained by the server.
 type MCPGatewayRegistration struct {
 	ID, WorkspaceID, AccountActorID, AgentActorID, GatewayID, Status string
 	SecretHash                                                       []byte
@@ -38,22 +38,14 @@ func (r *Repository) enrollMCPGatewayTx(ctx context.Context, tx pgx.Tx, workspac
 	if strings.TrimSpace(gatewayID) == "" {
 		return MCPGatewayRegistration{}, "", errors.New("MCP gateway identity is required")
 	}
-	var active bool
-	var role authz.Role
-	err := tx.QueryRow(ctx, `SELECT membership.active AND account.status='active',membership.role
-		FROM workspace_memberships membership
-		JOIN workspaces workspace ON workspace.id=membership.workspace_id AND workspace.state='active'
-		JOIN accounts account ON account.actor_id=membership.actor_id
-		JOIN actors actor ON actor.id=membership.actor_id AND actor.actor_type='human'
-		WHERE membership.workspace_id=$1 AND membership.actor_id=$2 FOR UPDATE`, workspaceID, accountActorID).Scan(&active, &role)
-	if err != nil || !active || !roleAllowsWorkspaceOperate(role) {
+	if _, err := memberAgentScopesTx(ctx, tx, workspaceID, accountActorID); err != nil {
 		return MCPGatewayRegistration{}, "", ErrMCPGatewayNotFound
 	}
 	// Serialize replacement with ResumeMCPGateway.  Without this lock, a resume
 	// can issue a token after the replacement revokes old tokens but before the
 	// registration's secret is rotated, leaving an old-secret token usable.
 	var existingRegistrationID string
-	err = tx.QueryRow(ctx, `SELECT id FROM mcp_gateway_registrations
+	err := tx.QueryRow(ctx, `SELECT id FROM mcp_gateway_registrations
 		WHERE workspace_id=$1 AND gateway_id=$2 FOR UPDATE`, workspaceID, gatewayID).Scan(&existingRegistrationID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return MCPGatewayRegistration{}, "", err
@@ -66,7 +58,7 @@ func (r *Repository) enrollMCPGatewayTx(ctx context.Context, tx pgx.Tx, workspac
 	if err != nil {
 		return MCPGatewayRegistration{}, "", err
 	}
-	// A newly approved gateway replaces prior gateways for that member in this
+	// A newly linked gateway replaces prior gateways for that member in this
 	// Workspace. Reusing an existing gateway ID also rotates its secret and
 	// invalidates every previously issued Agent token immediately.
 	if _, err = tx.Exec(ctx, `UPDATE agent_tokens SET revoked_at=$1
@@ -100,13 +92,36 @@ func (r *Repository) enrollMCPGatewayTx(ctx context.Context, tx pgx.Tx, workspac
 	return value, secret, nil
 }
 
-func roleAllowsWorkspaceOperate(role authz.Role) bool {
+func agentScopesForMemberRole(role authz.Role) []authz.Capability {
+	agentAllowed := map[authz.Capability]bool{}
+	for _, capability := range authz.DefaultCatalog.Roles[authz.RoleOperator] {
+		agentAllowed[capability] = true
+	}
+	var scopes []authz.Capability
 	for _, capability := range authz.DefaultCatalog.Roles[role] {
-		if capability == authz.WorkspaceOperate {
-			return true
+		if agentAllowed[capability] {
+			scopes = append(scopes, capability)
 		}
 	}
-	return false
+	return scopes
+}
+
+func memberAgentScopesTx(ctx context.Context, tx pgx.Tx, workspaceID, accountActorID string) ([]authz.Capability, error) {
+	var role authz.Role
+	err := tx.QueryRow(ctx, `SELECT membership.role
+		FROM workspace_memberships membership
+		JOIN workspaces workspace ON workspace.id=membership.workspace_id AND workspace.state='active'
+		JOIN accounts account ON account.actor_id=membership.actor_id AND account.status='active'
+		JOIN actors actor ON actor.id=membership.actor_id AND actor.actor_type='human'
+		WHERE membership.workspace_id=$1 AND membership.actor_id=$2 AND membership.active FOR UPDATE`, workspaceID, accountActorID).Scan(&role)
+	if err != nil {
+		return nil, err
+	}
+	scopes := agentScopesForMemberRole(role)
+	if len(scopes) == 0 {
+		return nil, ErrMCPGatewayNotFound
+	}
+	return scopes, nil
 }
 
 func (r *Repository) ResumeMCPGateway(ctx context.Context, workspaceID, gatewayID, secret string, now time.Time) (AgentTokenResult, error) {
@@ -116,15 +131,17 @@ func (r *Repository) ResumeMCPGateway(ctx context.Context, workspaceID, gatewayI
 	}
 	defer tx.Rollback(ctx)
 	var registration MCPGatewayRegistration
+	var memberRole authz.Role
 	err = tx.QueryRow(ctx, `SELECT registration.id,registration.workspace_id,registration.account_actor_id,registration.agent_actor_id,
 		registration.gateway_id,registration.gateway_secret_hash,registration.status,registration.generation,registration.created_at,registration.revoked_at
+		,membership.role
 		FROM mcp_gateway_registrations registration
 		JOIN workspaces workspace ON workspace.id=registration.workspace_id AND workspace.state='active'
 		JOIN workspace_memberships membership ON membership.workspace_id=registration.workspace_id
 		  AND membership.actor_id=registration.account_actor_id AND membership.active
 		JOIN accounts account ON account.actor_id=registration.account_actor_id AND account.status='active'
 		WHERE registration.workspace_id=$1 AND registration.gateway_id=$2 AND registration.status='active' FOR UPDATE`, workspaceID, gatewayID).
-		Scan(&registration.ID, &registration.WorkspaceID, &registration.AccountActorID, &registration.AgentActorID, &registration.GatewayID, &registration.SecretHash, &registration.Status, &registration.Generation, &registration.CreatedAt, &registration.RevokedAt)
+		Scan(&registration.ID, &registration.WorkspaceID, &registration.AccountActorID, &registration.AgentActorID, &registration.GatewayID, &registration.SecretHash, &registration.Status, &registration.Generation, &registration.CreatedAt, &registration.RevokedAt, &memberRole)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AgentTokenResult{}, ErrMCPGatewayNotFound
 	}
@@ -138,14 +155,14 @@ func (r *Repository) ResumeMCPGateway(ctx context.Context, workspaceID, gatewayI
 	// process per client session.  Renewing a session must therefore not revoke
 	// tokens held by the other live processes on the same registered device:
 	// doing so makes their next request look like a lost gateway credential and
-	// incorrectly sends the user back through browser approval.  Gateway
+	// incorrectly sends the user back through browser login. Gateway
 	// replacement, explicit revocation, logout, membership changes, and archive
 	// still revoke every token associated with this registration.
 	issuanceID, err := randomUUIDString()
 	if err != nil {
 		return AgentTokenResult{}, err
 	}
-	issued, err := r.issueAgentTokenTx(ctx, tx, workspaceID, registration.AgentActorID, "mcp-gateway-"+issuanceID, registration.AccountActorID, nil, nil, &registration.ID)
+	issued, err := r.issueAgentTokenTx(ctx, tx, workspaceID, registration.AgentActorID, "mcp-gateway-"+issuanceID, registration.AccountActorID, agentScopesForMemberRole(memberRole), nil, &registration.ID)
 	if err != nil {
 		return AgentTokenResult{}, err
 	}
@@ -155,11 +172,11 @@ func (r *Repository) ResumeMCPGateway(ctx context.Context, workspaceID, gatewayI
 	return issued, nil
 }
 
-// AutoEnrollMCPGateway derives the Account from a previously approved local
+// AutoEnrollMCPGateway derives the Account from a previously linked local
 // Gateway registration and enrolls that same device into a second Workspace
-// only when the Account has active membership there. It is deliberately not a
-// browser-session shortcut: possession of the Keychain-held source secret is
-// required and first-device enrollment continues to require browser approval.
+// only when the Account has active membership there. Possession of the
+// Keychain-held source secret is required; first-device enrollment is bound to
+// the signed-in browser Account.
 func (r *Repository) AutoEnrollMCPGateway(ctx context.Context, workspaceID, gatewayID, proofWorkspaceID, proofGatewaySecret string, now time.Time) (MCPGatewayEnrollment, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
@@ -189,11 +206,15 @@ func (r *Repository) AutoEnrollMCPGateway(ctx context.Context, workspaceID, gate
 	if err != nil {
 		return MCPGatewayEnrollment{}, err
 	}
+	scopes, err := memberAgentScopesTx(ctx, tx, workspaceID, accountActorID)
+	if err != nil {
+		return MCPGatewayEnrollment{}, err
+	}
 	issuanceID, err := randomUUIDString()
 	if err != nil {
 		return MCPGatewayEnrollment{}, err
 	}
-	issued, err := r.issueAgentTokenTx(ctx, tx, workspaceID, registration.AgentActorID, "mcp-gateway-auto-"+issuanceID, registration.AccountActorID, nil, nil, &registration.ID)
+	issued, err := r.issueAgentTokenTx(ctx, tx, workspaceID, registration.AgentActorID, "mcp-gateway-auto-"+issuanceID, registration.AccountActorID, scopes, nil, &registration.ID)
 	if err != nil {
 		return MCPGatewayEnrollment{}, err
 	}

@@ -12,7 +12,7 @@ import (
 )
 
 // Gateway enrollment crosses from an Agent surface to a signed-in browser.
-// Keep the one-time request long enough for that authentication hand-off.
+// Keep the one-time login link long enough for that authentication hand-off.
 const mcpConnectionTTL = 30 * time.Minute
 
 func connectionRandomID() (string, error) {
@@ -36,7 +36,7 @@ func mcpConnectionNotFound(w http.ResponseWriter) {
 	writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]string{"code": "mcp_connection_not_found", "message": "MCP connection request not found"}})
 }
 
-func (a *API) createMCPConnection(w http.ResponseWriter, r *http.Request) {
+func (a *API) createMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		WorkspaceID  string `json:"workspaceId"`
 		AgentActorID string `json:"agentActorId"`
@@ -66,19 +66,19 @@ func (a *API) createMCPConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	origin := strings.TrimRight(a.ApprovalOrigin, "/")
+	origin := strings.TrimRight(a.MCPLoginOrigin, "/")
 	if origin == "" && len(a.AllowedOrigins) > 0 {
 		origin = strings.TrimRight(a.AllowedOrigins[0], "/")
 	}
 	if origin == "" {
 		origin = "http://127.0.0.1:5174"
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": view.ID, "workspaceId": view.WorkspaceID, "status": view.Status, "expiresAt": view.ExpiresAt, "connectionSecret": secret, "approvalUrl": origin + "/workspaces/" + view.WorkspaceID + "/mcp-connect/" + view.ID})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": view.ID, "workspaceId": view.WorkspaceID, "status": view.Status, "expiresAt": view.ExpiresAt, "connectionSecret": secret, "loginUrl": origin + "/workspaces/" + view.WorkspaceID + "/mcp-login/" + view.ID})
 }
 
-func (a *API) pollMCPConnection(w http.ResponseWriter, r *http.Request) {
+func (a *API) pollMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 	secret := r.Header.Get("X-Baley-Connection-Secret")
-	view, issued, gatewaySecret, err := a.Repo.PollMCPConnectionAndIssueAgentToken(r.Context(), r.PathValue("connectionId"), postgres.DigestSecret(secret), time.Now().UTC())
+	view, issued, gatewaySecret, err := a.Repo.PollMCPLoginLinkAndIssueAgentToken(r.Context(), r.PathValue("connectionId"), postgres.DigestSecret(secret), time.Now().UTC())
 	if errors.Is(err, postgres.ErrMCPConnectionNotFound) || errors.Is(err, postgres.ErrMCPConnectionSecret) || errors.Is(err, postgres.ErrMCPConnectionConsumed) {
 		mcpConnectionNotFound(w)
 		return
@@ -112,7 +112,7 @@ func (a *API) resumeMCPGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	issued, err := a.Repo.ResumeMCPGateway(r.Context(), input.WorkspaceID, input.GatewayID, input.GatewaySecret, time.Now().UTC())
 	if errors.Is(err, postgres.ErrMCPGatewayNotFound) || errors.Is(err, postgres.ErrMCPGatewaySecret) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "mcp_gateway_reauthentication_required", "message": "Gateway registration is unavailable; reconnect while signed in to Baley"}})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "mcp_gateway_login_required", "message": "Gateway registration is unavailable; sign in to Baley on this device"}})
 		return
 	}
 	if err != nil {
@@ -123,10 +123,9 @@ func (a *API) resumeMCPGateway(w http.ResponseWriter, r *http.Request) {
 }
 
 // autoEnrollMCPGateway lets a locally registered device add another Workspace
-// without asking the signed-in user to approve every Workspace separately. The
-// proof is a secret from an already active registration, not an untrusted
-// gateway ID or an Agent identity. First-device onboarding still uses the
-// browser connection flow above.
+// from active membership. The proof is a secret from an already active
+// registration, not an untrusted gateway ID or an Agent identity. First-device
+// onboarding uses the signed-in browser link above.
 func (a *API) autoEnrollMCPGateway(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		WorkspaceID        string `json:"workspaceId"`
@@ -147,7 +146,7 @@ func (a *API) autoEnrollMCPGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := a.Repo.AutoEnrollMCPGateway(r.Context(), input.WorkspaceID, input.GatewayID, input.ProofWorkspaceID, input.ProofGatewaySecret, time.Now().UTC())
 	if errors.Is(err, postgres.ErrMCPGatewayNotFound) || errors.Is(err, postgres.ErrMCPGatewaySecret) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "mcp_gateway_reauthentication_required", "message": "A registered local gateway and active Workspace membership are required"}})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "mcp_gateway_login_required", "message": "A registered local gateway and active Workspace membership are required"}})
 		return
 	}
 	if err != nil {
@@ -185,9 +184,9 @@ func (a *API) revokeMCPGateway(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *API) getMCPConnection(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.requireMCPGatewayMember(r); !ok {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Operator capability required"}})
+func (a *API) getMCPLoginLink(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.requireMCPLinkMember(r); !ok {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Active Workspace membership required"}})
 		return
 	}
 	view, err := a.Repo.MCPConnection(r.Context(), r.PathValue("connectionId"), time.Now().UTC())
@@ -198,30 +197,19 @@ func (a *API) getMCPConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": view.ID, "workspaceId": view.WorkspaceID, "agentActorId": view.AgentActorID, "status": view.Status, "expiresAt": view.ExpiresAt})
 }
 
-func (a *API) approveMCPConnection(w http.ResponseWriter, r *http.Request) {
-	a.decideMCPConnection(w, r, true)
-}
-func (a *API) rejectMCPConnection(w http.ResponseWriter, r *http.Request) {
-	a.decideMCPConnection(w, r, false)
-}
-func (a *API) decideMCPConnection(w http.ResponseWriter, r *http.Request, approve bool) {
-	state, ok := a.requireMCPGatewayMember(r)
+func (a *API) linkMCPConnection(w http.ResponseWriter, r *http.Request) {
+	state, ok := a.requireMCPLinkMember(r)
 	if !ok {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Operator capability required"}})
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Active Workspace membership required"}})
 		return
 	}
-	var err error
-	if approve {
-		_, err = a.Repo.ApproveMCPConnection(r.Context(), r.PathValue("connectionId"), r.PathValue("workspaceId"), state.Principal.ActorID, time.Now().UTC())
-	} else {
-		_, err = a.Repo.RejectMCPConnection(r.Context(), r.PathValue("connectionId"), r.PathValue("workspaceId"), state.Principal.ActorID, time.Now().UTC())
-	}
+	_, err := a.Repo.LinkMCPConnection(r.Context(), r.PathValue("connectionId"), r.PathValue("workspaceId"), state.Principal.ActorID, time.Now().UTC())
 	if errors.Is(err, postgres.ErrMCPConnectionNotFound) {
 		mcpConnectionNotFound(w)
 		return
 	}
 	if err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]string{"code": "mcp_connection_approval_failed", "message": err.Error()}})
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]string{"code": "mcp_login_link_failed", "message": err.Error()}})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

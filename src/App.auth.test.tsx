@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachExistingAccount,
   archiveWorkspace,
-  approveMCPConnection,
+  linkMCPGateway,
   createWorkspace,
   createWorkspaceMember,
   disableMemberAccount,
   fetchSession,
-  fetchMCPConnection,
+  fetchMCPLoginLink,
   fetchWorkspaceMembers,
   fetchWorkspaces,
 	fetchOIDCProviders,
@@ -30,6 +30,7 @@ import {
 import { APIError } from "./api/http";
 import { fetchGraph } from "./api/client";
 import App from "./App";
+import { isMCPLoginPath } from "./components/WorkspaceAccess";
 import { pilotReadyFixture } from "./fixtures/pilot-ready";
 import { layoutGraph } from "./graph/layout";
 import type { WorkspaceFixture } from "./domain/model";
@@ -50,8 +51,8 @@ vi.mock("./api/auth", () => ({
 	renameWorkspace: vi.fn(),
 	restoreWorkspace: vi.fn(),
 	beginOIDCLink: vi.fn(),
-  fetchMCPConnection: vi.fn(),
-  approveMCPConnection: vi.fn(),
+  fetchMCPLoginLink: vi.fn(),
+  linkMCPGateway: vi.fn(),
   disableMemberAccount: vi.fn(),
   resetMemberPassword: vi.fn(),
   previewCommand: vi.fn(),
@@ -140,14 +141,14 @@ describe("authenticated Workspace routing", () => {
     vi.mocked(issueApprovalGrant).mockResolvedValue({ id: "grant", expiresAt: "2026-09-02T00:01:00Z", commandHash: "sha256:confirm", workspaceRevision: 1 });
     vi.mocked(executeCommand).mockResolvedValue({ commandId: "command", workspaceRevision: 2, eventIds: [] });
     vi.mocked(revokeApprovalGrant).mockResolvedValue(undefined);
-    vi.mocked(fetchMCPConnection).mockResolvedValue({
+    vi.mocked(fetchMCPLoginLink).mockResolvedValue({
       id: "connection-1",
       workspaceId: "w1",
       agentActorId: "codex-operator",
       status: "pending",
       expiresAt: "2026-08-03T13:00:00Z",
     });
-    vi.mocked(approveMCPConnection).mockResolvedValue(undefined);
+    vi.mocked(linkMCPGateway).mockResolvedValue(undefined);
     vi.mocked(layoutGraph).mockResolvedValue({
       taskPositions: new Map(),
       gatePositions: new Map(),
@@ -183,6 +184,12 @@ describe("authenticated Workspace routing", () => {
     expect(screen.queryByLabelText("암호")).toBeNull();
   });
 
+  it("preserves only an exact MCP login-link path across OIDC login", () => {
+    expect(isMCPLoginPath("/workspaces/00000000-0000-4000-8000-000000000001/mcp-login/link-1")).toBe(true);
+    expect(isMCPLoginPath("https://example.test/workspaces/00000000-0000-4000-8000-000000000001/mcp-login/link-1")).toBe(false);
+    expect(isMCPLoginPath("/workspaces/00000000-0000-4000-8000-000000000001/tasks/1")).toBe(false);
+  });
+
   it("offers configured internal OIDC providers alongside Google", async () => {
     vi.mocked(fetchSession).mockRejectedValueOnce(new APIError("authentication required", 401, "unauthenticated"));
     vi.mocked(fetchOIDCProviders).mockResolvedValueOnce([{ id: "internal", label: "Keycloak" }, { id: "google", label: "Google" }]);
@@ -216,15 +223,15 @@ describe("authenticated Workspace routing", () => {
     await waitFor(() => expect(restoreWorkspace).toHaveBeenCalledWith("w1", "csrf"));
   });
 
-  it("automatically connects a signed-in Operator's local Codex gateway", async () => {
-    window.history.replaceState({}, "", "/workspaces/w1/mcp-connect/connection-1");
+  it("links a signed-in member's local Codex gateway without a separate decision", async () => {
+	window.history.replaceState({}, "", "/workspaces/w1/mcp-login/connection-1");
     vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Codex Operator 연결" })).toBeTruthy();
-    await waitFor(() => expect(approveMCPConnection).toHaveBeenCalledWith("w1", "connection-1", "csrf"));
-    expect(await screen.findByText("연결되었습니다.")).toBeTruthy();
+	expect(await screen.findByRole("heading", { name: "로그인 계정으로 Codex 연결" })).toBeTruthy();
+	await waitFor(() => expect(linkMCPGateway).toHaveBeenCalledWith("w1", "connection-1", "csrf"));
+	expect(await screen.findByText("로그인 계정에 연결되었습니다.")).toBeTruthy();
   });
 
   it("copies the Workspace UUID with the HTTP selection fallback and acknowledges it", async () => {

@@ -113,35 +113,41 @@ args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", 'D:\Project_AI\bale
 
 The human logs in, creates or selects a Workspace, and sends its Viewer URL to the
 project LLM. The LLM extracts the Workspace UUID and makes its first typed MCP
-read. For a new local gateway, Baley returns a short-lived connection URL. A
-signed-in Operator opens that URL and Baley binds the gateway automatically—there
-is no approval button, token copy, or Owner-only hand-off. Retrying the same MCP
+read. For a new local gateway, Baley returns a short-lived `loginUrl`. An active
+Workspace member signs in there and Baley binds the gateway to that Account;
+there is no separate Workspace connection decision, token copy, or Owner-only
+hand-off. Retrying the same MCP
 call completes the connection and stores the Workspace-scoped credential in the
 OS credential manager; the local file keeps only a key reference. The store is
 read at call time, so new Workspace connections do not require a new thread or
 schema reload.
 
-The granted identity has only the Operator capability catalog. Human-only Task
-confirmation, Gate passage, and policy approval remain unavailable to it. Raw
+The Agent scope is the intersection of the member's Workspace role and the
+Agent-safe capability catalog. Owner/Operator receive normal operation scopes;
+Viewer/Approver receive read-only scope. Human-only Task confirmation, Gate
+passage, and policy changes remain unavailable to it. Raw
 tokens never enter chat, `config.toml`, command JSON, Task Records, browser
 storage, Git, or logs. `scripts/prepare-local-pilot-agent.ps1` is retired for
 Codex access; use the tokenless migration diagnostics instead.
 
-## 6. Approve a human-only Agent command
+## 6. Confirm a human-only command
 
 1. The Agent fresh-reads the target and prepares an internal typed preview.
 2. The Agent presents an outcome-first decision brief in chat. Transport fields such
    as revision, command hash, and capability remain internal unless a mismatch needs
    explanation.
-3. The human approves or rejects that specific outcome in the same conversation.
-4. On approval, the Agent immediately creates a command-specific chat attestation,
-   repeats exact warning acknowledgements when needed, and executes the MCP command.
-5. The server derives the approving Actor from the human who connected the current
-   Agent credential and rechecks that person's active Workspace role and capability.
+3. The signed-in human opens the Task Inspector (or the equivalent dedicated
+   Viewer action), reviews a fresh preview, and explicitly confirms that exact
+   command.
+4. The browser issues and consumes a short-lived, single-use grant bound to the
+   human session, Workspace, command hash, target, snapshot, warnings, and
+   revision. The MCP Agent never creates this grant or derives a human Actor.
+5. The server rechecks the issuing human's active membership and capability at
+   execution time.
 
-No Viewer panel, command JSON paste, grant issuance, token copy, or second approval
-channel exists. Stale revisions, changed hashes or snapshots, revoked roles,
-cross-Workspace credentials, and approval-Actor mismatches are rejected.
+No command JSON paste or copied token is needed for ordinary Task confirmation.
+Stale revisions, changed hashes or snapshots, revoked roles, cross-Workspace
+credentials, expired/reused grants, and Actor mismatches are rejected.
 
 ## 7. Recovery and rollback
 

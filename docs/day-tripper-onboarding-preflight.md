@@ -38,8 +38,8 @@ $backup = .\scripts\local-pilot-db.ps1 backup
 
 Workspace별 `.env` 생성, Agent token 복사, 별도 `codex mcp add`는 하지 않는다.
 프로젝트 LLM에는 Viewer의 Workspace URL만 전달한다. 최초 typed MCP read가
-`workspace_login_required`를 반환하면 로그인된 Operator가 그 connection URL을 열고,
-Baley가 local gateway를 자동 연결한 뒤 LLM은 같은 read를 재시도한다.
+`workspace_login_required`를 반환하면 활성 멤버가 `loginUrl`에서 로그인하고,
+Baley가 local gateway를 그 Account에 연결한 뒤 LLM은 같은 read를 재시도한다.
 
 승인 후 Workspace-scoped credential은 Git-ignored
 `.tmp/baley-mcp/credentials.json`에 보관되며 다음 호출부터 자동 선택된다. 이 권한은
@@ -50,8 +50,9 @@ Operator 전용이고 Workspace 관리, Task 확인, Gate 통과 같은 사람 �
 - #124: `confirmed`
 - G#4: `passed`
 - active Phase: `embedding-pilot`
-- Owner 계정: Workspace 관리와 MCP 연결 승인 가능
-- MCP Agent: 대상 Workspace read/operate 가능, 다른 Workspace와 관리자 API 접근 불가
+- Owner 계정: Workspace 관리 가능
+- MCP Agent: 로그인한 멤버의 Workspace 역할에서 파생된 read/operate 범위만 사용하며,
+  다른 Workspace와 사람 전용·관리자 권한에는 접근 불가
 - runtime: API `127.0.0.1:8080`, Viewer `127.0.0.1:5174`
 
 모든 항목을 통과한 뒤에만 #125 Run과 실제 Day Tripper 구조 등록을 시작한다.

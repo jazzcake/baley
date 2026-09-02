@@ -105,7 +105,7 @@ func TestKeychainStoreResumesGatewayWithoutGatewayToken(t *testing.T) {
 	}
 }
 
-func TestKeychainRegisteredGatewayAutoEnrollsMemberWorkspaceWithoutBrowserApproval(t *testing.T) {
+func TestKeychainRegisteredGatewayAutoEnrollsMemberWorkspaceWithoutExtraLoginLink(t *testing.T) {
 	const proofWorkspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
 	const targetWorkspaceID = "510f335e-ddb2-443f-be3c-7d1d18ccd534"
 	const proofSecret = "registered-device-proof"
@@ -125,9 +125,9 @@ func TestKeychainRegisteredGatewayAutoEnrollsMemberWorkspaceWithoutBrowserApprov
 				t.Fatalf("unexpected auto-enrollment proof: %#v", input)
 			}
 			_, _ = w.Write([]byte(`{"workspaceId":"` + targetWorkspaceID + `","agentToken":"` + agentToken + `","gatewayId":"device-1","gatewaySecret":"` + targetSecret + `"}`))
-		case "/v1/mcp/connections":
+		case "/v1/mcp/login-links":
 			browserRequests++
-			http.Error(w, "browser approval should not be needed", http.StatusInternalServerError)
+			http.Error(w, "another browser login link should not be needed", http.StatusInternalServerError)
 		case "/v1/workspaces/" + targetWorkspaceID:
 			if r.Header.Get("Authorization") != "Bearer "+agentToken {
 				t.Fatalf("authorization=%q", r.Header.Get("Authorization"))

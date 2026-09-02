@@ -15,11 +15,11 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
 4. Do not interpret a bare ambiguous number as a Task ID without contextual evidence.
 5. When the user provides a Viewer URL shaped as `/workspaces/<uuid>`, use that UUID
    as the target Workspace. If the first typed MCP call returns
-   `workspace_connection_required`, show its `approvalUrl` and ask the signed-in
-   Workspace Owner to approve the one-time Operator connection. After approval,
-   retry the same MCP call in the same thread. Do not request a Workspace-specific
-   env file, raw token, MCP registration, or new thread. This connection grants
-   Operator capability only and never supplies human approval authority.
+   `workspace_login_required`, show its `loginUrl`; the member signs in and Baley
+   links the local gateway to that Account. Retry the same MCP call in the same
+   thread. Do not request a Workspace-specific env file, raw token, MCP
+   registration, or new thread. MCP scopes come from that member's Workspace role
+   and never include human-only authority.
 6. Inspect the target Task, Lane, Phase, dependency, and Gate context before preparing a write command.
 7. Select exactly one command from `contracts/v1/commands.json` when possible. Read `references/commands.md` for payload patterns. Prefer relationship-aware `task.create` or `dependency.patch` over a multi-command sequence that can partially succeed.
 8. Validate obvious invariants before preview:

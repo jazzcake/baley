@@ -28,12 +28,12 @@ type workspaceCredential struct {
 }
 
 type credentialStore struct {
-	Version            int                                   `json:"version"`
-	ServerURL          string                                `json:"serverUrl"`
-	KeyRef             string                                `json:"-"`
-	GatewayID          string                                `json:"gatewayId,omitempty"`
-	Workspaces         map[string]workspaceCredential        `json:"workspaces"`
-	PendingConnections map[string]pendingWorkspaceConnection `json:"pendingConnections,omitempty"`
+	Version      int                             `json:"version"`
+	ServerURL    string                          `json:"serverUrl"`
+	KeyRef       string                          `json:"-"`
+	GatewayID    string                          `json:"gatewayId,omitempty"`
+	Workspaces   map[string]workspaceCredential  `json:"workspaces"`
+	PendingLinks map[string]pendingWorkspaceLink `json:"pendingLinks,omitempty"`
 }
 
 // credentialStoreDisk keeps only non-secret routing metadata and a random
@@ -53,8 +53,8 @@ type legacyMigrationMarker struct {
 
 const legacyRollbackWindow = 15 * time.Minute
 
-type pendingWorkspaceConnection struct {
-	ID, Secret, ApprovalURL string
+type pendingWorkspaceLink struct {
+	ID, Secret, LoginURL string
 }
 
 type connectionHTTPStatusError struct {
@@ -71,7 +71,7 @@ type connectionResponse struct {
 	Status           string    `json:"status"`
 	ExpiresAt        time.Time `json:"expiresAt"`
 	ConnectionSecret string    `json:"connectionSecret"`
-	ApprovalURL      string    `json:"approvalUrl"`
+	LoginURL         string    `json:"loginUrl"`
 	AgentToken       string    `json:"agentToken"`
 	GatewayID        string    `json:"gatewayId"`
 	GatewaySecret    string    `json:"gatewaySecret"`
@@ -139,11 +139,11 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 		}
 	}
 	// A device that was already registered for this Account does not need a
-	// separate browser approval for every Workspace. Prove possession of one
+	// separate browser login for every Workspace. Prove possession of one
 	// active Keychain-held registration; the Baley API derives its Account and
 	// checks active membership in the target Workspace before issuing a new
 	// Workspace-scoped registration. A first device (or every revoked proof)
-	// still falls through to the explicit browser enrollment below.
+	// falls through to the signed-in browser link below.
 	if store.GatewayID != "" {
 		for proofWorkspaceID, credential := range store.Workspaces {
 			if proofWorkspaceID == workspaceID || credential.GatewaySecret == "" {
@@ -165,14 +165,14 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 		}
 	}
 
-	if pending, ok := store.PendingConnections[workspaceID]; ok {
-		response, err := c.pollWorkspaceConnection(ctx, pending)
+	if pending, ok := store.PendingLinks[workspaceID]; ok {
+		response, err := c.pollWorkspaceLink(ctx, pending)
 		if err != nil {
 			var statusError connectionHTTPStatusError
 			if !errors.As(err, &statusError) || statusError.StatusCode != http.StatusNotFound {
 				return "", nil, err
 			}
-			delete(store.PendingConnections, workspaceID)
+			delete(store.PendingLinks, workspaceID)
 			if writeErr := c.writeCredentialStore(ctx, &store); writeErr != nil {
 				return "", nil, writeErr
 			}
@@ -180,18 +180,18 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			// a replacement in this call rather than leaving this MCP process stuck.
 		} else if response.AgentToken != "" {
 			// Polling issues a one-time Agent token and atomically marks the
-			// connection consumed. The response can therefore be either approved
+			// connection consumed. The response can therefore be either linked
 			// (before a repository implementation marks consumption) or consumed.
 			// The token itself is the authoritative successful hand-off.
 			store.Workspaces[workspaceID] = workspaceCredential{GatewaySecret: response.GatewaySecret, ConnectedAt: time.Now().UTC()}
-			delete(store.PendingConnections, workspaceID)
+			delete(store.PendingLinks, workspaceID)
 			if err = c.writeCredentialStore(ctx, &store); err != nil {
 				return "", nil, err
 			}
 			c.rememberSessionToken(workspaceID, response.AgentToken)
 			return response.AgentToken, nil, nil
 		} else {
-			return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
+			return "", loginRequired(workspaceID, pending.LoginURL), nil
 		}
 	}
 
@@ -201,15 +201,15 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			return "", nil, err
 		}
 	}
-	pending, err := c.createWorkspaceConnection(ctx, workspaceID, store.GatewayID)
+	pending, err := c.createWorkspaceLink(ctx, workspaceID, store.GatewayID)
 	if err != nil {
 		return "", nil, err
 	}
-	store.PendingConnections[workspaceID] = pending
+	store.PendingLinks[workspaceID] = pending
 	if err = c.writeCredentialStore(ctx, &store); err != nil {
 		return "", nil, err
 	}
-	return "", connectionRequired(workspaceID, pending.ApprovalURL), nil
+	return "", loginRequired(workspaceID, pending.LoginURL), nil
 }
 
 func (c *client) rememberSessionToken(workspaceID, token string) {
@@ -222,24 +222,24 @@ func (c *client) rememberSessionToken(workspaceID, token string) {
 	c.sessionTokens[workspaceID] = token
 }
 
-func (c *client) createWorkspaceConnection(ctx context.Context, workspaceID, gatewayID string) (pendingWorkspaceConnection, error) {
+func (c *client) createWorkspaceLink(ctx context.Context, workspaceID, gatewayID string) (pendingWorkspaceLink, error) {
 	raw, err := json.Marshal(map[string]string{"workspaceId": workspaceID, "agentActorId": c.agentActorID, "gatewayId": gatewayID})
 	if err != nil {
-		return pendingWorkspaceConnection{}, err
+		return pendingWorkspaceLink{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/v1/mcp/connections", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/v1/mcp/login-links", bytes.NewReader(raw))
 	if err != nil {
-		return pendingWorkspaceConnection{}, err
+		return pendingWorkspaceLink{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	var response connectionResponse
 	if err = c.connectionRequest(req, http.StatusCreated, &response); err != nil {
-		return pendingWorkspaceConnection{}, err
+		return pendingWorkspaceLink{}, err
 	}
-	if response.ID == "" || response.ConnectionSecret == "" || response.ApprovalURL == "" {
-		return pendingWorkspaceConnection{}, errors.New("Baley returned an incomplete Workspace connection request")
+	if response.ID == "" || response.ConnectionSecret == "" || response.LoginURL == "" {
+		return pendingWorkspaceLink{}, errors.New("Baley returned an incomplete Workspace login link")
 	}
-	return pendingWorkspaceConnection{ID: response.ID, Secret: response.ConnectionSecret, ApprovalURL: response.ApprovalURL}, nil
+	return pendingWorkspaceLink{ID: response.ID, Secret: response.ConnectionSecret, LoginURL: response.LoginURL}, nil
 }
 
 func (c *client) resumeWorkspaceGateway(ctx context.Context, workspaceID, gatewayID, gatewaySecret string) (connectionResponse, error) {
@@ -283,8 +283,8 @@ func newGatewayID() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-func (c *client) pollWorkspaceConnection(ctx context.Context, pending pendingWorkspaceConnection) (connectionResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/mcp/connections/"+pending.ID, nil)
+func (c *client) pollWorkspaceLink(ctx context.Context, pending pendingWorkspaceLink) (connectionResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/mcp/login-links/"+pending.ID, nil)
 	if err != nil {
 		return connectionResponse{}, err
 	}
@@ -313,16 +313,16 @@ func (c *client) connectionRequest(req *http.Request, expected int, target any) 
 	return nil
 }
 
-func connectionRequired(workspaceID, approvalURL string) *mcp.CallToolResult {
+func loginRequired(workspaceID, loginURL string) *mcp.CallToolResult {
 	structured := map[string]any{
 		"code":        "workspace_login_required",
 		"workspaceId": workspaceID,
 		"status":      "pending",
-		"approvalUrl": approvalURL,
-		"message":     "Open the connection URL while signed in to Baley. The local gateway will be linked automatically, then retry this request.",
+		"loginUrl":    loginURL,
+		"message":     "Sign in to Baley at the login URL. Active Workspace membership determines MCP access, then retry this request.",
 	}
 	return &mcp.CallToolResult{
-		Content:           []mcp.Content{&mcp.TextContent{Text: "Sign in to Baley to link this local gateway automatically: " + approvalURL + ". Then retry the same request."}},
+		Content:           []mcp.Content{&mcp.TextContent{Text: "Sign in to Baley to link this local gateway: " + loginURL + ". Workspace membership determines access; then retry the same request."}},
 		StructuredContent: structured,
 		IsError:           true,
 	}
@@ -336,7 +336,7 @@ func pendingStructured(result *mcp.CallToolResult) any {
 }
 
 func (c *client) readCredentialStore(ctx context.Context) (credentialStore, error) {
-	store := credentialStore{Version: 6, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingConnections: map[string]pendingWorkspaceConnection{}}
+	store := credentialStore{Version: 7, ServerURL: c.base, Workspaces: map[string]workspaceCredential{}, PendingLinks: map[string]pendingWorkspaceLink{}}
 	path := c.credentialStorePath
 	if path == "" {
 		return store, errors.New("Baley credential store is not configured")
@@ -398,13 +398,20 @@ func (c *client) readCredentialStore(ctx context.Context) (credentialStore, erro
 		// support is active.
 		migrateToKeychain = c.secretStore != nil
 	}
-	store.Version = 6
+	loadedVersion := store.Version
+	store.Version = 7
 	store.ServerURL = c.base
 	if store.Workspaces == nil {
 		store.Workspaces = map[string]workspaceCredential{}
 	}
-	if store.PendingConnections == nil {
-		store.PendingConnections = map[string]pendingWorkspaceConnection{}
+	if store.PendingLinks == nil {
+		store.PendingLinks = map[string]pendingWorkspaceLink{}
+	}
+	// Version 6 could contain an abandoned browser decision request. Unknown
+	// legacy fields are intentionally dropped and the next request creates a
+	// fresh login-bound link instead.
+	if loadedVersion < 7 && c.secretStore != nil {
+		migrateToKeychain = true
 	}
 	if migrateToKeychain || (disk.Ciphertext == "" && disk.KeyRef == "" && c.gatewayToken != "" && c.secretStore == nil) {
 		if err = c.writeCredentialStore(ctx, &store); err != nil {
@@ -565,7 +572,7 @@ func (c *client) writeCredentialStore(ctx context.Context, store *credentialStor
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create Baley credential directory: %w", err)
 	}
-	store.Version = 6
+	store.Version = 7
 	store.ServerURL = c.base
 	raw, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
@@ -585,7 +592,7 @@ func (c *client) writeCredentialStore(ctx context.Context, store *credentialStor
 		if err = c.secretStore.Set(credentialKeychainService, store.KeyRef, base64.RawURLEncoding.EncodeToString(raw)); err != nil {
 			return fmt.Errorf("write Baley device secret to OS keychain: %w", err)
 		}
-		raw, err = json.MarshalIndent(credentialStoreDisk{Version: 6, ServerURL: c.base, KeyRef: store.KeyRef}, "", "  ")
+		raw, err = json.MarshalIndent(credentialStoreDisk{Version: 7, ServerURL: c.base, KeyRef: store.KeyRef}, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -674,7 +681,7 @@ func (c *client) removeWorkspaceCredential(ctx context.Context, workspaceID stri
 		}
 	}
 	delete(c.sessionTokens, workspaceID)
-	delete(store.PendingConnections, workspaceID)
+	delete(store.PendingLinks, workspaceID)
 	return c.writeCredentialStore(ctx, &store)
 }
 

@@ -140,7 +140,7 @@ global revision은 소수 사용자의 안전성을 우선한 선택이다. 서�
 5. 마지막 Owner 두 명을 동시에 비활성화해도 한 명은 남음
 6. 같은 invite를 동시에 수락해도 Account/membership이 하나만 생김
 7. invite 수락과 Owner revoke가 경쟁할 때 권한 없는 membership이 생기지 않음
-8. 채팅 승인 뒤 revision 또는 연결된 사람의 Approver 역할이 바뀌면 execute가 실패함
+8. 브라우저 단발성 grant 발급 뒤 revision 또는 issuing human의 Approver 역할이 바뀌면 execute가 실패함
 9. Workspace 생성 응답 손실 뒤 exact retry는 동일 Workspace를 반환함
 10. 한 Workspace 탈퇴·폐기가 global Account나 다른 Workspace membership을 바꾸지 않음
 

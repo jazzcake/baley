@@ -27,7 +27,7 @@ import (
 	"golang.org/x/term"
 )
 
-const expectedSchemaVersion int64 = 23
+const expectedSchemaVersion int64 = 24
 
 var (
 	buildVersion = "dev"
@@ -66,7 +66,7 @@ func main() {
 	}
 	var runtimeConfig runtimeConfig
 	var origins []string
-	var approvalOrigin string
+	var mcpLoginOrigin string
 	var oidcPostLoginURL string
 	if os.Args[1] == "serve" {
 		runtimeConfig, err = resolveRuntimeConfig(environment, os.Getenv("BALEY_AUTH_MODE"), os.Getenv("BALEY_COOKIE_SECURE"))
@@ -77,7 +77,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		approvalOrigin, err = resolveApprovalOrigin(os.Getenv("BALEY_MCP_APPROVAL_ORIGIN"), origins)
+		mcpLoginOrigin, err = resolveMCPLoginOrigin(os.Getenv("BALEY_MCP_LOGIN_ORIGIN"), origins)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -180,7 +180,7 @@ func main() {
 		}
 	}()
 	api := &httpapi.API{
-		Service: service, Repo: repo, AllowedOrigins: origins, ApprovalOrigin: approvalOrigin, Auth: authService, OIDC: oidcService, OIDCPostLoginURL: oidcPostLoginURL,
+		Service: service, Repo: repo, AllowedOrigins: origins, MCPLoginOrigin: mcpLoginOrigin, Auth: authService, OIDC: oidcService, OIDCPostLoginURL: oidcPostLoginURL,
 		AuthMode: runtimeConfig.AuthMode, CookieSecure: runtimeConfig.CookieSecure,
 		Build: httpapi.BuildInfo{Version: buildVersion, Commit: buildCommit, BuiltAt: buildTime, SchemaVersion: expectedSchemaVersion},
 		ReadyCheck: func(readyCtx context.Context) (int64, error) {
@@ -405,7 +405,7 @@ func resolveViewerOrigins(environment string) ([]string, error) {
 	return origins, nil
 }
 
-func resolveApprovalOrigin(raw string, allowedOrigins []string) (string, error) {
+func resolveMCPLoginOrigin(raw string, allowedOrigins []string) (string, error) {
 	origin := strings.TrimSuffix(strings.TrimSpace(raw), "/")
 	if origin == "" {
 		return "", nil
@@ -415,5 +415,5 @@ func resolveApprovalOrigin(raw string, allowedOrigins []string) (string, error) 
 			return origin, nil
 		}
 	}
-	return "", fmt.Errorf("BALEY_MCP_APPROVAL_ORIGIN %q must be one of BALEY_VIEWER_ORIGINS", origin)
+	return "", fmt.Errorf("BALEY_MCP_LOGIN_ORIGIN %q must be one of BALEY_VIEWER_ORIGINS", origin)
 }

@@ -17,10 +17,10 @@ Run, Record, Task confirmation, and Gate approval rules.
    Workspace dropdown. Creation atomically binds that account as Owner and
    installs the Intake Phase, Adoption Lane, counters, and human-required
    acceptance baseline. Do not invent membership by direct SQL.
-4. Verify that the account is an Owner or Participant and that the Operator
-   credential is scoped to the exact Workspace.
-   When the first typed MCP read returns `workspace_connection_required`, give
-   the Owner its approval URL and retry that same read after approval. Do not
+4. Verify that the Account has active membership and that the MCP credential is
+   scoped to the exact Workspace and derived from that member's role.
+   When the first typed MCP read returns `workspace_login_required`, give the
+   member its `loginUrl` and retry that same read after sign-in. Do not
    create a per-Workspace env file, copy a token, register another MCP server,
    or request a new thread.
 5. Never put passwords, agent tokens, Run lease tokens, or

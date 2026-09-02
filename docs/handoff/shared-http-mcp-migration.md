@@ -19,8 +19,10 @@ For this project:
 1. Keep its baley.yaml Workspace binding unchanged.
 2. Start a new Codex thread and make a read-only Baley request for that
    Workspace.
-3. If the response requests Workspace connection approval, have the signed-in
-   Workspace Owner approve the normal URL and retry the same request.
+3. If the response returns `workspace_login_required`, open its `loginUrl`, sign
+   in with an active Workspace member, and retry the same request. Baley derives
+   MCP scopes from that member's Workspace role; there is no separate Workspace
+   connection decision.
 4. If it is forbidden or not found, treat that as the genuine Workspace,
    membership, or gateway-revocation boundary. Do not bypass it with direct
    HTTP, a database, or a token.

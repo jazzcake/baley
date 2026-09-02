@@ -145,11 +145,11 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 		defer upstreamMu.Unlock()
 		upstreamAuthorizations = append(upstreamAuthorizations, r.Header.Get("Authorization"))
 		switch r.URL.Path {
-		case "/v1/mcp/connections":
+		case "/v1/mcp/login-links":
 			connectionCreated++
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"connection","workspaceId":"workspace","status":"pending","connectionSecret":"secret","approvalUrl":"http://viewer/approve"}`))
-		case "/v1/mcp/connections/connection":
+			_, _ = w.Write([]byte(`{"id":"connection","workspaceId":"workspace","status":"pending","connectionSecret":"secret","loginUrl":"http://viewer/login"}`))
+		case "/v1/mcp/login-links/connection":
 			connectionPolled++
 			if r.Header.Get("X-Baley-Connection-Secret") != "secret" {
 				http.Error(w, "missing connection secret", http.StatusForbidden)
@@ -195,7 +195,7 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 	second, err := secondSession.CallTool(context.Background(), &mcp.CallToolParams{Name: "baley_workspace_get", Arguments: map[string]any{"workspaceId": "workspace"}})
 	_ = secondSession.Close()
 	if err != nil || second.IsError {
-		t.Fatalf("approved connection did not persist into next MCP session: result=%#v err=%v", second, err)
+		t.Fatalf("linked connection did not persist into next MCP session: result=%#v err=%v", second, err)
 	}
 
 	thirdSession, err := newSession()
@@ -284,11 +284,11 @@ func TestClientRenewsWorkspaceCredentialInFreshProcessWithoutPersistingToken(t *
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/mcp/connections":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/mcp/login-links":
 			connectionCreated = true
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"pending","connectionSecret":"secret","approvalUrl":"http://viewer/workspaces/` + workspaceID + `/mcp-connect/c1"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/mcp/connections/c1":
+			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"pending","connectionSecret":"secret","loginUrl":"http://viewer/workspaces/` + workspaceID + `/mcp-login/c1"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/mcp/login-links/c1":
 			if r.Header.Get("X-Baley-Connection-Secret") != "secret" {
 				http.Error(w, "missing connection secret", http.StatusForbidden)
 				return
@@ -320,11 +320,11 @@ func TestClientRenewsWorkspaceCredentialInFreshProcessWithoutPersistingToken(t *
 		t.Fatalf("expected one-time connection request: result=%#v err=%v", result, err)
 	}
 	structured, ok := result.StructuredContent.(map[string]any)
-	if !ok || structured["code"] != "workspace_login_required" || structured["approvalUrl"] == "" {
+	if !ok || structured["code"] != "workspace_login_required" || structured["loginUrl"] == "" {
 		t.Fatalf("missing actionable login result: %#v", result.StructuredContent)
 	}
 
-	// A new MCP process may consume the approved connection but must not write
+	// A new MCP process may consume the signed-in link but must not write
 	// the issued Agent credential into the local store.
 	restarted := &client{
 		base: server.URL, http: server.Client(), credentialStorePath: storePath,
@@ -332,7 +332,7 @@ func TestClientRenewsWorkspaceCredentialInFreshProcessWithoutPersistingToken(t *
 	}
 	result, _, err = restarted.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
 	if err != nil || result.IsError || !workspaceRead {
-		t.Fatalf("approved request did not continue automatically: result=%#v err=%v", result, err)
+		t.Fatalf("linked request did not continue automatically: result=%#v err=%v", result, err)
 	}
 	raw, err := os.ReadFile(storePath)
 	if err != nil {
@@ -345,12 +345,12 @@ func TestClientRenewsWorkspaceCredentialInFreshProcessWithoutPersistingToken(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := store.PendingConnections[workspaceID]; exists {
-		t.Fatal("approved pending connection was not removed")
+	if _, exists := store.PendingLinks[workspaceID]; exists {
+		t.Fatal("completed pending login link was not removed")
 	}
 
 	// A third client models a new process: it must renew from the registered
-	// gateway, not reuse the Agent token returned while consuming approval.
+	// gateway, not reuse the Agent token returned while consuming the link.
 	freshProcess := &client{base: server.URL, http: server.Client(), credentialStorePath: storePath, agentActorID: "agent"}
 	result, _, err = freshProcess.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
 	if err != nil || result.IsError || !workspaceRead || renewals != 1 {
@@ -378,7 +378,7 @@ func TestClientPreservesStoredCredentialForMissingWorkspaceResource(t *testing.T
 				t.Fatalf("unexpected validation credential: %q", r.Header.Get("Authorization"))
 			}
 			_, _ = w.Write([]byte(`{"id":"` + workspaceID + `"}`))
-		case "/v1/mcp/connections":
+		case "/v1/mcp/login-links":
 			connectionCreated = true
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"unexpected","workspaceId":"` + workspaceID + `"}`))
@@ -432,10 +432,10 @@ func TestClientReplacesStoredCredentialWhenWorkspaceReadIsConcealedAsNotFound(t 
 			_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"workspace not found"}}`))
 			return
 		}
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/mcp/connections" {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/mcp/login-links" {
 			connectionCreated = true
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"replacement","workspaceId":"` + workspaceID + `","status":"pending","connectionSecret":"secret","approvalUrl":"http://viewer/workspaces/` + workspaceID + `/mcp-connect/replacement"}`))
+			_, _ = w.Write([]byte(`{"id":"replacement","workspaceId":"` + workspaceID + `","status":"pending","connectionSecret":"secret","loginUrl":"http://viewer/workspaces/` + workspaceID + `/mcp-login/replacement"}`))
 			return
 		}
 		http.NotFound(w, r)

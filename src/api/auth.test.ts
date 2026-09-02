@@ -5,8 +5,10 @@ import {
   createWorkspace,
   disableMemberAccount,
   executeCommand,
+  fetchMCPLoginLink,
   fetchOIDCProviders,
   issueApprovalGrant,
+  linkMCPGateway,
   login,
   logout,
   renameWorkspace,
@@ -148,6 +150,26 @@ describe("credentialed account API", () => {
     for (const [, init] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
       expect((init.headers as Headers).get("X-Baley-CSRF")).toBe("csrf");
     }
+  });
+
+  it("uses membership-bound MCP login-link endpoints", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        id: "link", workspaceId: "workspace", agentActorId: "agent",
+        status: "pending", expiresAt: "2026-09-02T12:00:00Z",
+      }))
+      .mockResolvedValueOnce(jsonResponse(undefined, 204));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchMCPLoginLink("workspace", "link");
+    await linkMCPGateway("workspace", "link", "csrf");
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      expect.stringContaining("/v1/workspaces/workspace/mcp-login-links/link"),
+      expect.stringContaining("/v1/workspaces/workspace/mcp-login-links/link/link"),
+    ]);
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe("POST");
+    expect(((fetchMock.mock.calls[1]?.[1] as RequestInit).headers as Headers).get("X-Baley-CSRF")).toBe("csrf");
   });
 
   it("issues, references, and revokes a non-secret browser approval grant with CSRF", async () => {

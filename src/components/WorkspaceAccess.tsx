@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { Archive, Check, ChevronDown, Ellipsis, KeyRound, LayoutGrid, LogOut, Pencil, Plus, RotateCcw, Settings, ShieldCheck, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
 	attachExistingAccount,
 	archiveWorkspace,
 	beginOIDCLink,
-  approveMCPConnection,
+  linkMCPGateway,
   createWorkspace,
 	createWorkspaceMember,
   disableMemberAccount,
 	executeCommand,
 	fetchOIDCProviders,
 	fetchWorkspaceMembers,
-  fetchMCPConnection,
+  fetchMCPLoginLink,
 	issueApprovalGrant,
 	previewCommand,
   removeWorkspaceMember,
@@ -24,7 +24,7 @@ import {
 	updateWorkspaceMember,
 	oidcLoginURL,
 } from "../api/auth";
-import type { CommandExecution, CommandPreview, CommandRequest, MCPConnection, OIDCProvider } from "../api/auth";
+import type { CommandExecution, CommandPreview, CommandRequest, MCPLoginLink, OIDCProvider } from "../api/auth";
 import { APIError } from "../api/http";
 import { traceViewer } from "../debug/viewer-trace";
 import type {
@@ -34,7 +34,7 @@ import type {
   WorkspaceRole,
 } from "../auth/model";
 
-export function MCPConnectionApproval({
+export function MCPLoginLink({
   workspace,
   connectionId,
   csrfToken,
@@ -45,38 +45,38 @@ export function MCPConnectionApproval({
   csrfToken: string;
   onClose: () => void;
 }) {
-  const [connection, setConnection] = useState<MCPConnection>();
+  const [connection, setConnection] = useState<MCPLoginLink>();
   const [busy, setBusy] = useState(false);
-  const [approved, setApproved] = useState(false);
+  const [linked, setLinked] = useState(false);
   const [error, setError] = useState<string>();
   const activationStarted = useRef(false);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    traceViewer("mcp-connect:request", {
+    traceViewer("mcp-login:request", {
       event: "load",
       targetWorkspaceId: workspace.id,
       connectionId,
       authState: "authenticated",
     });
-    void fetchMCPConnection(workspace.id, connectionId, controller.signal)
+    void fetchMCPLoginLink(workspace.id, connectionId, controller.signal)
       .then((next) => {
         setConnection(next);
-        setApproved(next.status === "approved");
-        traceViewer("mcp-connect:state", {
+        setLinked(next.status === "linked");
+        traceViewer("mcp-login:state", {
           targetWorkspaceId: workspace.id,
           connectionId,
           status: next.status,
         });
-        window.requestAnimationFrame(() => traceViewer("mcp-connect:dom", {
+        window.requestAnimationFrame(() => traceViewer("mcp-login:dom", {
           targetWorkspaceId: workspace.id,
           connectionId,
-          dialogPresent: Boolean(document.querySelector("[data-mcp-connection-id]")),
+          dialogPresent: Boolean(document.querySelector("[data-mcp-login-link-id]")),
         }));
         if (next.status === "pending" && !activationStarted.current) {
           activationStarted.current = true;
-          void approve(next.status);
+          void link(next.status);
         }
       })
       .catch((reason: unknown) => {
@@ -86,43 +86,43 @@ export function MCPConnectionApproval({
     return () => controller.abort();
   }, [workspace.id, connectionId]);
 
-  const approve = async (currentStatus = connection?.status) => {
+  const link = async (currentStatus = connection?.status) => {
     setBusy(true);
     setError(undefined);
-    traceViewer("mcp-connect:approve", {
+    traceViewer("mcp-login:link", {
       event: "authenticated-page-load",
       targetWorkspaceId: workspace.id,
       connectionId,
-      calculatedTargetState: "approved",
+      calculatedTargetState: "linked",
       currentState: currentStatus,
     });
     try {
-      await approveMCPConnection(workspace.id, connectionId, csrfToken);
-      setApproved(true);
-      setConnection((current) => current ? { ...current, status: "approved" } : current);
+      await linkMCPGateway(workspace.id, connectionId, csrfToken);
+      setLinked(true);
+      setConnection((current) => current ? { ...current, status: "linked" } : current);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "연결을 승인하지 못했습니다.");
+      setError(reason instanceof Error ? reason.message : "로그인한 계정에 로컬 Gateway를 연결하지 못했습니다.");
     } finally {
       setBusy(false);
     }
   };
 
   return <div className="admin-overlay">
-    <section className="mcp-connect-dialog" role="dialog" aria-modal="true" aria-labelledby="mcp-connect-title" data-mcp-connection-id={connectionId}>
+    <section className="mcp-login-dialog" role="dialog" aria-modal="true" aria-labelledby="mcp-login-title" data-mcp-login-link-id={connectionId}>
       <header>
-        <div><span>WORKSPACE CONNECTION</span><h2 id="mcp-connect-title">Codex Operator 연결</h2></div>
+        <div><span>MCP LOGIN</span><h2 id="mcp-login-title">로그인 계정으로 Codex 연결</h2></div>
         <button ref={closeRef} className="icon-button" type="button" aria-label="연결 창 닫기" onClick={onClose}><X size={18} /></button>
       </header>
       {error && <div className="form-error" role="alert">{error}</div>}
       {!error && !connection && <p>연결 요청을 확인하는 중입니다.</p>}
-      {connection && !approved && <>
-        <p><strong>{workspace.name}</strong>에 Codex를 Operator로 연결합니다.</p>
-        <p className="mcp-connect-scope">Task와 Backlog를 실행할 수 있지만, Task 확인이나 Gate 통과 같은 사람 전용 승인은 할 수 없습니다.</p>
-        <dl><div><dt>권한</dt><dd>Operator</dd></div><div><dt>Agent</dt><dd><code>{connection.agentActorId}</code></dd></div></dl>
+      {connection && !linked && <>
+		<p><strong>{workspace.name}</strong>의 로그인 계정에 로컬 Codex를 연결합니다.</p>
+		<p className="mcp-login-scope">MCP 접근 범위는 이 Workspace의 사용자 역할에서 결정되며, 사람 전용 확인 권한은 Agent에 전달되지 않습니다.</p>
+		<dl><div><dt>사용자 역할</dt><dd>{workspace.role}</dd></div><div><dt>Agent</dt><dd><code>{connection.agentActorId}</code></dd></div></dl>
         <p role="status">{busy ? "Connecting local gateway…" : "Checking gateway connection…"}</p>
       </>}
-      {approved && <div className="mcp-connect-success" role="status">
-        <Check size={22} /><div><strong>연결되었습니다.</strong><p>LLM 세션으로 돌아가 같은 요청을 다시 실행하면 됩니다.</p></div>
+      {linked && <div className="mcp-login-success" role="status">
+		<Check size={22} /><div><strong>로그인 계정에 연결되었습니다.</strong><p>LLM 세션으로 돌아가 같은 요청을 다시 실행하면 됩니다.</p></div>
       </div>}
     </section>
   </div>;
@@ -150,6 +150,7 @@ function moveMenuFocus(event: React.KeyboardEvent<HTMLElement>) {
 }
 
 export function LoginScreen() {
+  const location = useLocation();
   const [oidcProviders, setOIDCProviders] = useState<OIDCProvider[]>();
 
   useEffect(() => {
@@ -168,6 +169,10 @@ export function LoginScreen() {
     return left.label.localeCompare(right.label);
   }) : [];
   const startOIDC = (provider: OIDCProvider) => {
+    const returnTo = new URLSearchParams(location.search).get("returnTo");
+    if (isMCPLoginPath(returnTo)) {
+      window.sessionStorage.setItem("baley:mcp-post-login-path", returnTo);
+    }
     traceViewer("oidc-login:event", { providerId: provider.id, authState: "anonymous", calculatedTarget: "authorization-redirect" });
     window.location.assign(oidcLoginURL(provider.id));
   };
@@ -187,6 +192,10 @@ export function LoginScreen() {
       <p className="login-security-note"><ShieldCheck size={15} aria-hidden="true" /> OIDC 인증은 Workspace 권한이나 사람 전용 승인 권한을 변경하지 않습니다.</p>
     </section>
   </main>;
+}
+
+export function isMCPLoginPath(value: string | null | undefined): value is string {
+  return Boolean(value && /^\/workspaces\/[0-9a-f-]{36}\/mcp-login\/[^/?#]+$/i.test(value));
 }
 
 export function LoginLanding() {

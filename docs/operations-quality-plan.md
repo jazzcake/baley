@@ -111,7 +111,7 @@ disk full이 서비스 전체를 연쇄 중단시키지 않는지도 테스트�
 6. login, 두 Workspace 생성·전환·재로그인·격리 browser E2E
 7. Google verifier의 signature/audience/issuer/expiry/CSRF/invite replay 회귀 테스트
 8. staging의 실제 Sign in with Google smoke test
-9. Agent token과 연결된 사람의 채팅 승인 E2E
+9. Agent token의 사람 권한 차단과 브라우저 단발성 human grant E2E
 10. `git diff --check`, secret scan과 dependency vulnerability scan
 11. production image build와 non-root/runtime config smoke test
 12. backup artifact 생성과 주기적인 restore workflow

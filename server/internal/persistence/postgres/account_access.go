@@ -645,9 +645,8 @@ func (r *Repository) ArchiveOwnedWorkspace(ctx context.Context, workspaceID, act
 		WHERE workspace_id=$3 AND status='active'`, now, actorID, workspaceID); err != nil {
 		return WorkspaceAccess{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE mcp_connection_requests
-		SET status='rejected',rejected_at=$1,approved_by_actor_id=$2
-		WHERE workspace_id=$3 AND status='pending'`, now, actorID, workspaceID); err != nil {
+	if _, err = tx.Exec(ctx, `DELETE FROM mcp_connection_requests
+		WHERE workspace_id=$1 AND status='pending'`, workspaceID); err != nil {
 		return WorkspaceAccess{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE account_sessions session SET revoked_at=COALESCE(session.revoked_at,$1)
