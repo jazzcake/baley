@@ -42,9 +42,10 @@ Workspace별 `.env` 생성, Agent token 복사, 별도 `codex mcp add`는 하지
 `Connect local Gateway`를 누른다. Baley는 브라우저 일회용 코드와 같은 PC의 pending
 device secret을 함께 검증해 Account에 연결하며, LLM은 같은 read를 재시도한다.
 
-승인 후 Workspace-scoped credential은 Git-ignored
-`.tmp/baley-mcp/credentials.json`에 보관되며 다음 호출부터 자동 선택된다. 이 권한은
-Operator 전용이고 Workspace 관리, Task 확인, Gate 통과 같은 사람 전용 행위는 할 수 없다.
+기기 연결 후 device credential은 OS credential store에 보관되며 다음 호출부터 자동
+선택된다. Workspace 접근 범위는 로그인한 Account의 현재 membership과 역할에서 매번
+파생된다. 이 권한은 Agent-safe 범위만 포함하고 Workspace 관리, Task 확인, Gate 통과
+같은 사람 전용 행위는 할 수 없다.
 
 ## 확인 항목
 

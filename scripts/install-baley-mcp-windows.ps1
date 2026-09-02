@@ -55,18 +55,37 @@ if ($legacyStdio.Count -gt 0) {
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
   Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 }
+$allowedBuildRoot = [IO.Path]::GetFullPath($buildRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+$allowedInstallRoot = [IO.Path]::GetFullPath($installRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 foreach ($pidFile in @($gatewayPidFile, $legacyGatewayPidFile)) {
   if (Test-Path -LiteralPath $pidFile -PathType Leaf) {
-    $gatewayPid = [int](Get-Content -Raw -LiteralPath $pidFile)
-    $gatewayProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$gatewayPid" -ErrorAction SilentlyContinue
-    if ($null -ne $gatewayProcess -and $gatewayProcess.CommandLine -like "*baley-mcp.exe*serve-http*") {
-      Stop-Process -Id $gatewayPid -Force
-      Wait-Process -Id $gatewayPid -Timeout 10 -ErrorAction SilentlyContinue
+    $gatewayPid = 0
+    $gatewayPidText = [string](Get-Content -Raw -LiteralPath $pidFile)
+    $gatewayPidText = $gatewayPidText.Trim()
+    if ([int]::TryParse($gatewayPidText, [ref]$gatewayPid) -and $gatewayPid -gt 0) {
+      $gatewayProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$gatewayPid" -ErrorAction SilentlyContinue
+      $gatewayListener = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8090 -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.OwningProcess -eq $gatewayPid } |
+        Select-Object -First 1
+      $gatewayPath = if ($null -ne $gatewayProcess -and ![string]::IsNullOrWhiteSpace($gatewayProcess.ExecutablePath)) {
+        [IO.Path]::GetFullPath($gatewayProcess.ExecutablePath)
+      } else {
+        ""
+      }
+      $gatewayPathAllowed = [IO.Path]::GetFileName($gatewayPath) -ieq 'baley-mcp.exe' -and (
+        $gatewayPath.StartsWith($allowedBuildRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $gatewayPath.StartsWith($allowedInstallRoot, [StringComparison]::OrdinalIgnoreCase)
+      )
+      $isGatewayCommand = $null -ne $gatewayProcess -and $gatewayProcess.CommandLine -match '(?i)(?:^|\s)serve-http(?:\s|$)'
+      if ($gatewayPathAllowed -and $isGatewayCommand -and $null -ne $gatewayListener) {
+        Stop-Process -Id $gatewayPid -Force
+        Wait-Process -Id $gatewayPid -Timeout 10 -ErrorAction SilentlyContinue
+      }
     }
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
   }
 }
-$listener = Get-NetTCPConnection -LocalPort 8090 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+$listener = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8090 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($null -ne $listener) {
   $listenerProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
   $listenerPath = if ($null -ne $listenerProcess -and ![string]::IsNullOrWhiteSpace($listenerProcess.ExecutablePath)) {
@@ -74,8 +93,12 @@ if ($null -ne $listener) {
   } else {
     ""
   }
-  $allowedBuildRoot = [IO.Path]::GetFullPath($buildRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-  if ($null -eq $listenerProcess -or !$listenerPath.StartsWith($allowedBuildRoot, [StringComparison]::OrdinalIgnoreCase) -or $listenerProcess.CommandLine -notlike "*serve-http*") {
+  $listenerPathAllowed = [IO.Path]::GetFileName($listenerPath) -ieq 'baley-mcp.exe' -and (
+    $listenerPath.StartsWith($allowedBuildRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    $listenerPath.StartsWith($allowedInstallRoot, [StringComparison]::OrdinalIgnoreCase)
+  )
+  $isListenerGatewayCommand = $null -ne $listenerProcess -and $listenerProcess.CommandLine -match '(?i)(?:^|\s)serve-http(?:\s|$)'
+  if ($null -eq $listenerProcess -or !$listenerPathAllowed -or !$isListenerGatewayCommand) {
     throw "Port 8090 is owned by an unexpected process; refusing to stop it"
   }
   Stop-Process -Id $listener.OwningProcess -Force

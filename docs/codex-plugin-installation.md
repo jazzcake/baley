@@ -45,8 +45,9 @@ Once a fresh project session lists both `baley:` Skills:
 
 1. give the LLM the Baley Workspace Viewer URL;
 2. when a new local gateway is first used, open its loopback Baley link, sign in,
-   and click `Connect local Gateway`; this is device-link intent rather than a
-   Workspace approval decision, and no token copy is required;
+   and click `Connect local Gateway`; this records explicit device-link intent
+   without creating a Workspace-specific connection decision, and no token copy
+   is required;
 3. use `repository.register` and `baley-project-init` to create `baley.yaml` and
    Task Record templates;
 4. add the project's concise Baley operating entry point to its durable agent

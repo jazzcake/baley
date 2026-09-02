@@ -102,14 +102,18 @@ changing another Workspace's global Account access.
 
 ## 5. Connect an Agent
 
-Register the tokenless Baley MCP loader once. Individual Workspaces do not need
-separate MCP registrations, gateway tokens, or Codex threads:
+Install and register the single per-user tokenless Baley MCP Gateway once.
+Individual Workspaces do not need separate MCP registrations, gateway tokens,
+or Codex threads:
 
-```toml
-[mcp_servers.baley]
-command = "powershell.exe"
-args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", 'D:\Project_AI\baley\scripts\run-baley-mcp.ps1']
+```powershell
+.\scripts\install-baley-mcp-windows.ps1
 ```
+
+The installer builds a versioned executable under `C:\dev-bin\baley\`, runs one
+loopback-only Gateway at `127.0.0.1:8090`, and registers Codex with
+`http://127.0.0.1:8090/mcp`. It never writes a bearer token or Authorization
+header to `config.toml`.
 
 The human logs in, creates or selects a Workspace, and sends its Viewer URL to the
 project LLM. The LLM extracts the Workspace UUID and makes its first typed MCP
@@ -117,13 +121,12 @@ read. For a new local gateway, Baley returns a short-lived loopback `loginUrl`.
 An active Workspace member signs in and explicitly clicks `Connect local
 Gateway`. The browser receives a two-minute one-time code, while only the local
 gateway that holds the matching pending connection secret can redeem it. Baley
-then binds the gateway to that Account;
-there is no separate Workspace connection decision, token copy, or Owner-only
-hand-off. Retrying the same MCP
-call completes the connection and stores the Workspace-scoped credential in the
-OS credential manager; the local file keeps only a key reference. The store is
-read at call time, so new Workspace connections do not require a new thread or
-schema reload.
+then binds the gateway to that Account. There is no Workspace-specific connection
+step, token copy, or Owner-only hand-off. Retrying the same MCP call completes the
+connection and stores the device credential in the OS credential manager; the
+local file keeps only a key reference. Workspace access is recalculated from the
+Account's active membership and role at call time, so newly joined Workspaces do
+not require a new thread or schema reload.
 
 The Agent scope is the intersection of the member's Workspace role and the
 Agent-safe capability catalog. Owner/Operator receive normal operation scopes;

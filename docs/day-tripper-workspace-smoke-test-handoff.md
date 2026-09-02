@@ -47,6 +47,7 @@ Day Tripper repository 파일과 기존 dirty worktree는 변경하지 마세요
 
 ## Expected operator experience
 
-최초 Workspace에서만 Owner 승인 링크가 한 번 나타난다. 승인 이후에는 같은 LLM 세션이
-같은 요청을 재시도해 즉시 작업을 계속한다. 다음 Workspace도 동일한 MCP 등록을 쓰며,
-해당 Workspace Owner의 최초 승인만 추가된다.
+등록되지 않은 로컬 Gateway에서만 loopback 로그인 링크가 한 번 나타난다. 로그인한
+멤버가 `Connect local Gateway`를 누르면 같은 LLM 세션이 요청을 재시도해 즉시 작업을
+계속한다. 다음 Workspace도 동일한 MCP 등록과 device credential을 사용하며, 활성
+membership과 역할이 있으면 Workspace별 추가 연결 절차 없이 접근한다.
