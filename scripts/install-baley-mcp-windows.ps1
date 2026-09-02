@@ -22,6 +22,7 @@ $loopbackAddress = "127.0.0.1:8090"
 $loopbackURL = "http://$loopbackAddress/mcp"
 $launcher = Join-Path $installRoot "start-loopback-gateway.ps1"
 $gatewayPidFile = Join-Path $installRoot "loopback-gateway.pid"
+$legacyGatewayPidFile = Join-Path $buildRoot "loopback-gateway.pid"
 $taskName = "Baley MCP Gateway"
 New-Item -ItemType Directory -Force (Split-Path -Parent $binary) | Out-Null
 # Desktop/CLI starts this binary per stdio session. Strip DWARF and symbol
@@ -54,14 +55,31 @@ if ($legacyStdio.Count -gt 0) {
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
   Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 }
-if (Test-Path -LiteralPath $gatewayPidFile -PathType Leaf) {
-  $gatewayPid = [int](Get-Content -Raw -LiteralPath $gatewayPidFile)
-  $gatewayProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$gatewayPid" -ErrorAction SilentlyContinue
-  if ($null -ne $gatewayProcess -and $gatewayProcess.CommandLine -like "*baley-mcp.exe*serve-http*") {
-    Stop-Process -Id $gatewayPid -Force
-    Wait-Process -Id $gatewayPid -Timeout 10 -ErrorAction SilentlyContinue
+foreach ($pidFile in @($gatewayPidFile, $legacyGatewayPidFile)) {
+  if (Test-Path -LiteralPath $pidFile -PathType Leaf) {
+    $gatewayPid = [int](Get-Content -Raw -LiteralPath $pidFile)
+    $gatewayProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$gatewayPid" -ErrorAction SilentlyContinue
+    if ($null -ne $gatewayProcess -and $gatewayProcess.CommandLine -like "*baley-mcp.exe*serve-http*") {
+      Stop-Process -Id $gatewayPid -Force
+      Wait-Process -Id $gatewayPid -Timeout 10 -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
   }
-  Remove-Item -LiteralPath $gatewayPidFile -Force -ErrorAction SilentlyContinue
+}
+$listener = Get-NetTCPConnection -LocalPort 8090 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -ne $listener) {
+  $listenerProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+  $listenerPath = if ($null -ne $listenerProcess -and ![string]::IsNullOrWhiteSpace($listenerProcess.ExecutablePath)) {
+    [IO.Path]::GetFullPath($listenerProcess.ExecutablePath)
+  } else {
+    ""
+  }
+  $allowedBuildRoot = [IO.Path]::GetFullPath($buildRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+  if ($null -eq $listenerProcess -or !$listenerPath.StartsWith($allowedBuildRoot, [StringComparison]::OrdinalIgnoreCase) -or $listenerProcess.CommandLine -notlike "*serve-http*") {
+    throw "Port 8090 is owned by an unexpected process; refusing to stop it"
+  }
+  Stop-Process -Id $listener.OwningProcess -Force
+  Wait-Process -Id $listener.OwningProcess -Timeout 10 -ErrorAction SilentlyContinue
 }
 $stopDeadline = (Get-Date).AddSeconds(10)
 while ((Get-Date) -lt $stopDeadline -and (Get-NetTCPConnection -LocalPort 8090 -State Listen -ErrorAction SilentlyContinue)) {
