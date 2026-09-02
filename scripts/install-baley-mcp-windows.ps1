@@ -49,7 +49,7 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 $legacyStdio = @(Get-CimInstance Win32_Process -Filter "Name='baley-mcp.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -notlike "*serve-http*" })
 if ($legacyStdio.Count -gt 0) {
-  throw "Close the existing Codex Desktop/CLI sessions before switching Baley MCP transport. The current registration was left unchanged to prevent concurrent credential-store writes."
+  Write-Warning "$($legacyStdio.Count) existing Codex session(s) still use stdio Baley MCP. They may finish naturally; new sessions will use the single loopback Gateway. Cross-process credential-store locking remains enforced during the transition."
 }
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
   Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
