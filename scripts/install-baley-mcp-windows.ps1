@@ -122,9 +122,32 @@ while ((Get-Date) -lt $readyDeadline) {
 }
 if (!$ready) { throw "Baley loopback Gateway did not become ready; existing Codex MCP registration was left unchanged" }
 
-# `codex mcp add` replaces the named registration atomically. Codex speaks
-# Streamable HTTP to the local-only Gateway; no environment variable or
-# plaintext Authorization header is retained in config.toml.
-codex mcp add baley --url $loopbackURL
-if ($LASTEXITCODE -ne 0) { throw "Codex MCP registration failed" }
-Write-Output "Baley MCP is registered through the tokenless loopback Gateway at $loopbackURL. Restart Codex Desktop or begin a new CLI session."
+# `codex mcp add` replaces the named registration atomically. Orca supplies a
+# private CODEX_HOME to its sessions, while standalone Codex Desktop/CLI use the
+# default profile. Register both homes so a reboot or restored Desktop session
+# cannot fall back to the retired per-session stdio binary.
+$originalCodexHome = [Environment]::GetEnvironmentVariable("CODEX_HOME", "Process")
+$defaultCodexHome = Join-Path $env:USERPROFILE ".codex"
+$codexHomes = [System.Collections.Generic.List[string]]::new()
+foreach ($candidate in @($originalCodexHome, $defaultCodexHome)) {
+  if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+  $resolvedCandidate = [IO.Path]::GetFullPath($candidate)
+  if (!($codexHomes | Where-Object { $_.Equals($resolvedCandidate, [StringComparison]::OrdinalIgnoreCase) })) {
+    $codexHomes.Add($resolvedCandidate)
+  }
+}
+try {
+  foreach ($codexHome in $codexHomes) {
+    New-Item -ItemType Directory -Force $codexHome | Out-Null
+    $env:CODEX_HOME = $codexHome
+    codex mcp add baley --url $loopbackURL
+    if ($LASTEXITCODE -ne 0) { throw "Codex MCP registration failed for $codexHome" }
+  }
+} finally {
+  if ([string]::IsNullOrWhiteSpace($originalCodexHome)) {
+    Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue
+  } else {
+    $env:CODEX_HOME = $originalCodexHome
+  }
+}
+Write-Output "Baley MCP is registered through the tokenless loopback Gateway at $loopbackURL for: $($codexHomes -join ', '). Restart Codex Desktop or begin a new CLI session."
