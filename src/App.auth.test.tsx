@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachExistingAccount,
   archiveWorkspace,
-  linkMCPGateway,
+  completeMCPGatewayLogin,
   createWorkspace,
   createWorkspaceMember,
   disableMemberAccount,
@@ -52,7 +52,7 @@ vi.mock("./api/auth", () => ({
 	restoreWorkspace: vi.fn(),
 	beginOIDCLink: vi.fn(),
   fetchMCPLoginLink: vi.fn(),
-  linkMCPGateway: vi.fn(),
+  completeMCPGatewayLogin: vi.fn(),
   disableMemberAccount: vi.fn(),
   resetMemberPassword: vi.fn(),
   previewCommand: vi.fn(),
@@ -148,7 +148,7 @@ describe("authenticated Workspace routing", () => {
       status: "pending",
       expiresAt: "2026-08-03T13:00:00Z",
     });
-    vi.mocked(linkMCPGateway).mockResolvedValue(undefined);
+    vi.mocked(completeMCPGatewayLogin).mockResolvedValue(undefined);
     vi.mocked(layoutGraph).mockResolvedValue({
       taskPositions: new Map(),
       gatePositions: new Map(),
@@ -230,9 +230,22 @@ describe("authenticated Workspace routing", () => {
     render(<App />);
 
 	expect(await screen.findByRole("heading", { name: "로그인 계정으로 Codex 연결" })).toBeTruthy();
-	await waitFor(() => expect(linkMCPGateway).toHaveBeenCalledWith("w1", "connection-1", "csrf"));
+	fireEvent.click(screen.getByRole("button", { name: "Connect local Gateway" }));
+	await waitFor(() => expect(completeMCPGatewayLogin).toHaveBeenCalledWith("w1", "connection-1", "csrf"));
 	expect(await screen.findByText("로그인 계정에 연결되었습니다.")).toBeTruthy();
   });
+
+	it("shows a consumed MCP login link as already connected", async () => {
+		vi.mocked(fetchMCPLoginLink).mockResolvedValueOnce({
+			id: "connection-1", workspaceId: "w1", agentActorId: "codex-operator", status: "consumed", expiresAt: "2026-08-03T13:00:00Z",
+		});
+		window.history.replaceState({}, "", "/workspaces/w1/mcp-login/connection-1");
+		vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
+		render(<App />);
+		expect(await screen.findByText("로그인 계정에 연결되었습니다.")).toBeTruthy();
+		expect(screen.queryByRole("button", { name: "Connect local Gateway" })).toBeNull();
+		expect(completeMCPGatewayLogin).not.toHaveBeenCalled();
+	});
 
   it("copies the Workspace UUID with the HTTP selection fallback and acknowledges it", async () => {
     vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));

@@ -38,8 +38,9 @@ $backup = .\scripts\local-pilot-db.ps1 backup
 
 Workspace별 `.env` 생성, Agent token 복사, 별도 `codex mcp add`는 하지 않는다.
 프로젝트 LLM에는 Viewer의 Workspace URL만 전달한다. 최초 typed MCP read가
-`workspace_login_required`를 반환하면 활성 멤버가 `loginUrl`에서 로그인하고,
-Baley가 local gateway를 그 Account에 연결한 뒤 LLM은 같은 read를 재시도한다.
+`workspace_login_required`를 반환하면 활성 멤버가 loopback `loginUrl`에서 로그인하고
+`Connect local Gateway`를 누른다. Baley는 브라우저 일회용 코드와 같은 PC의 pending
+device secret을 함께 검증해 Account에 연결하며, LLM은 같은 read를 재시도한다.
 
 승인 후 Workspace-scoped credential은 Git-ignored
 `.tmp/baley-mcp/credentials.json`에 보관되며 다음 호출부터 자동 선택된다. 이 권한은

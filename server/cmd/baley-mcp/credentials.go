@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -191,7 +192,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			c.rememberSessionToken(workspaceID, response.AgentToken)
 			return response.AgentToken, nil, nil
 		} else {
-			return "", loginRequired(workspaceID, pending.LoginURL), nil
+			return "", loginRequired(workspaceID, c.localWorkspaceLoginURL(pending)), nil
 		}
 	}
 
@@ -209,7 +210,35 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 	if err = c.writeCredentialStore(ctx, &store); err != nil {
 		return "", nil, err
 	}
-	return "", loginRequired(workspaceID, pending.LoginURL), nil
+	return "", loginRequired(workspaceID, c.localWorkspaceLoginURL(pending)), nil
+}
+
+func (c *client) localWorkspaceLoginURL(pending pendingWorkspaceLink) string {
+	origin := strings.TrimRight(c.localGatewayOrigin, "/")
+	if origin == "" {
+		origin = "http://127.0.0.1:8090"
+	}
+	return origin + "/mcp-login/start?" + url.Values{"connectionId": {pending.ID}}.Encode()
+}
+
+func (c *client) pendingWorkspaceLoginURL(ctx context.Context, connectionID string) (string, error) {
+	c.connectionMu.Lock()
+	defer c.connectionMu.Unlock()
+	releaseStoreLock, err := c.lockCredentialStore(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer releaseStoreLock()
+	store, err := c.readCredentialStore(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, pending := range store.PendingLinks {
+		if pending.ID == connectionID && pending.LoginURL != "" {
+			return pending.LoginURL, nil
+		}
+	}
+	return "", errors.New("MCP login link is not pending on this local Gateway")
 }
 
 func (c *client) rememberSessionToken(workspaceID, token string) {
@@ -292,6 +321,51 @@ func (c *client) pollWorkspaceLink(ctx context.Context, pending pendingWorkspace
 	var response connectionResponse
 	err = c.connectionRequest(req, http.StatusOK, &response)
 	return response, err
+}
+
+func (c *client) completeWorkspaceLink(ctx context.Context, connectionID, code string) (string, error) {
+	c.connectionMu.Lock()
+	defer c.connectionMu.Unlock()
+	releaseStoreLock, err := c.lockCredentialStore(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer releaseStoreLock()
+	store, err := c.readCredentialStore(ctx)
+	if err != nil {
+		return "", err
+	}
+	workspaceID := ""
+	var pending pendingWorkspaceLink
+	for candidateWorkspaceID, candidate := range store.PendingLinks {
+		if candidate.ID == connectionID {
+			workspaceID, pending = candidateWorkspaceID, candidate
+			break
+		}
+	}
+	if workspaceID == "" || pending.Secret == "" {
+		return "", errors.New("this local Gateway did not initiate the MCP login link")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/v1/mcp/login-links/"+url.PathEscape(connectionID)+"/redeem", http.NoBody)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("X-Baley-Connection-Secret", pending.Secret)
+	req.Header.Set("X-Baley-Login-Code", code)
+	var response connectionResponse
+	if err = c.connectionRequest(req, http.StatusOK, &response); err != nil {
+		return "", err
+	}
+	if response.WorkspaceID != workspaceID || response.AgentToken == "" || response.GatewaySecret == "" {
+		return "", errors.New("Baley returned an incomplete local Gateway login completion")
+	}
+	store.Workspaces[workspaceID] = workspaceCredential{GatewaySecret: response.GatewaySecret, ConnectedAt: time.Now().UTC()}
+	delete(store.PendingLinks, workspaceID)
+	if err = c.writeCredentialStore(ctx, &store); err != nil {
+		return "", err
+	}
+	c.rememberSessionToken(workspaceID, response.AgentToken)
+	return workspaceID, nil
 }
 
 func (c *client) connectionRequest(req *http.Request, expected int, target any) error {

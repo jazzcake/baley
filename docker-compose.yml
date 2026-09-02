@@ -13,6 +13,7 @@ services:
       BALEY_DATABASE_URL: postgres://baley_app:${BALEY_DB_PASSWORD}@local-dev-postgres:5432/baley?sslmode=disable
       BALEY_VIEWER_ORIGINS: https://jazzcake-home.tail87e929.ts.net
       BALEY_MCP_LOGIN_ORIGIN: https://jazzcake-home.tail87e929.ts.net
+      BALEY_MCP_LOOPBACK_CALLBACK_ORIGIN: http://127.0.0.1:8090
       BALEY_COOKIE_SECURE: "true"
       # Long-lived browser login remains server-revocable. Idle activity may
       # extend only up to the absolute deadline; explicit logout and account,

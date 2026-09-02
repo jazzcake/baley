@@ -28,9 +28,12 @@ The installer:
 4. validates both Skills and the plugin manifest;
 5. installs `baley@personal` and verifies that it is enabled.
 
-Raw MCP credentials are not copied into the plugin. A signed-in Operator opens
-the one-time gateway URL only when a new local device must be linked; Baley
-completes that link automatically and keeps the credential in the OS store.
+Raw MCP credentials are not copied into the plugin. An Operator opens the
+one-time MCP-visible loopback gateway URL, which verifies the pending local
+request before redirecting to Baley. The Operator then signs in and explicitly
+clicks `Connect local Gateway`. Baley completes the link only
+when the browser's short-lived code returns to the same PC gateway that created
+the request, then keeps the device credential in the OS store.
 
 Start one new Codex thread after installation or update. This reload is for the
 plugin catalog itself; adding another Baley Workspace afterward does not require
@@ -41,8 +44,9 @@ another thread, MCP registration, env file, or token copy.
 Once a fresh project session lists both `baley:` Skills:
 
 1. give the LLM the Baley Workspace Viewer URL;
-2. when a new local gateway is first used, open its Baley link while signed in;
-   no approval button or token copy is required;
+2. when a new local gateway is first used, open its loopback Baley link, sign in,
+   and click `Connect local Gateway`; this is device-link intent rather than a
+   Workspace approval decision, and no token copy is required;
 3. use `repository.register` and `baley-project-init` to create `baley.yaml` and
    Task Record templates;
 4. add the project's concise Baley operating entry point to its durable agent

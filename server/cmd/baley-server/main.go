@@ -67,6 +67,7 @@ func main() {
 	var runtimeConfig runtimeConfig
 	var origins []string
 	var mcpLoginOrigin string
+	var mcpLoopbackCallbackOrigin string
 	var oidcPostLoginURL string
 	if os.Args[1] == "serve" {
 		runtimeConfig, err = resolveRuntimeConfig(environment, os.Getenv("BALEY_AUTH_MODE"), os.Getenv("BALEY_COOKIE_SECURE"))
@@ -78,6 +79,10 @@ func main() {
 			log.Fatal(err)
 		}
 		mcpLoginOrigin, err = resolveMCPLoginOrigin(os.Getenv("BALEY_MCP_LOGIN_ORIGIN"), origins)
+		if err != nil {
+			log.Fatal(err)
+		}
+		mcpLoopbackCallbackOrigin, err = resolveMCPLoopbackCallbackOrigin(os.Getenv("BALEY_MCP_LOOPBACK_CALLBACK_ORIGIN"))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -180,7 +185,7 @@ func main() {
 		}
 	}()
 	api := &httpapi.API{
-		Service: service, Repo: repo, AllowedOrigins: origins, MCPLoginOrigin: mcpLoginOrigin, Auth: authService, OIDC: oidcService, OIDCPostLoginURL: oidcPostLoginURL,
+		Service: service, Repo: repo, AllowedOrigins: origins, MCPLoginOrigin: mcpLoginOrigin, MCPLoopbackCallbackOrigin: mcpLoopbackCallbackOrigin, Auth: authService, OIDC: oidcService, OIDCPostLoginURL: oidcPostLoginURL,
 		AuthMode: runtimeConfig.AuthMode, CookieSecure: runtimeConfig.CookieSecure,
 		Build: httpapi.BuildInfo{Version: buildVersion, Commit: buildCommit, BuiltAt: buildTime, SchemaVersion: expectedSchemaVersion},
 		ReadyCheck: func(readyCtx context.Context) (int64, error) {
@@ -416,4 +421,20 @@ func resolveMCPLoginOrigin(raw string, allowedOrigins []string) (string, error) 
 		}
 	}
 	return "", fmt.Errorf("BALEY_MCP_LOGIN_ORIGIN %q must be one of BALEY_VIEWER_ORIGINS", origin)
+}
+
+func resolveMCPLoopbackCallbackOrigin(raw string) (string, error) {
+	origin := strings.TrimSuffix(strings.TrimSpace(raw), "/")
+	if origin == "" {
+		origin = "http://127.0.0.1:8090"
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" {
+		return "", fmt.Errorf("BALEY_MCP_LOOPBACK_CALLBACK_ORIGIN must be an HTTP loopback origin")
+	}
+	host := parsed.Hostname()
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() || parsed.Port() == "" {
+		return "", fmt.Errorf("BALEY_MCP_LOOPBACK_CALLBACK_ORIGIN must include a loopback IP and port")
+	}
+	return origin, nil
 }

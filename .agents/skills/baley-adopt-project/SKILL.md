@@ -20,7 +20,10 @@ Run, Record, Task confirmation, and Gate approval rules.
 4. Verify that the Account has active membership and that the MCP credential is
    scoped to the exact Workspace and derived from that member's role.
    When the first typed MCP read returns `workspace_login_required`, give the
-   member its `loginUrl` and retry that same read after sign-in. Do not
+   member its MCP-visible loopback `loginUrl`; it verifies the pending local
+   request before redirecting to Baley. Have them sign in and click `Connect local
+   Gateway`, then retry that same read. The server must require both the
+   browser's one-time code and the initiating local gateway secret. Do not
    create a per-Workspace env file, copy a token, register another MCP server,
    or request a new thread.
 5. Never put passwords, agent tokens, Run lease tokens, or

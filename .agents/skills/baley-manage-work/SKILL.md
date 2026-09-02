@@ -15,8 +15,12 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
 4. Do not interpret a bare ambiguous number as a Task ID without contextual evidence.
 5. When the user provides a Viewer URL shaped as `/workspaces/<uuid>`, use that UUID
    as the target Workspace. If the first typed MCP call returns
-   `workspace_login_required`, show its `loginUrl`; the member signs in and Baley
-   links the local gateway to that Account. Retry the same MCP call in the same
+   `workspace_login_required`, show its MCP-visible loopback `loginUrl`. That
+   local start endpoint verifies the pending device request before redirecting
+   to Baley. The member signs in and explicitly clicks `Connect local Gateway`.
+   Baley completes the link only
+   when the browser's short-lived code and that PC gateway's pending device
+   secret both match. Retry the same MCP call in the same
    thread. Do not request a Workspace-specific env file, raw token, MCP
    registration, or new thread. MCP scopes come from that member's Workspace role
    and never include human-only authority.

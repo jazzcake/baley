@@ -113,8 +113,11 @@ args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", 'D:\Project_AI\bale
 
 The human logs in, creates or selects a Workspace, and sends its Viewer URL to the
 project LLM. The LLM extracts the Workspace UUID and makes its first typed MCP
-read. For a new local gateway, Baley returns a short-lived `loginUrl`. An active
-Workspace member signs in there and Baley binds the gateway to that Account;
+read. For a new local gateway, Baley returns a short-lived loopback `loginUrl`.
+An active Workspace member signs in and explicitly clicks `Connect local
+Gateway`. The browser receives a two-minute one-time code, while only the local
+gateway that holds the matching pending connection secret can redeem it. Baley
+then binds the gateway to that Account;
 there is no separate Workspace connection decision, token copy, or Owner-only
 hand-off. Retrying the same MCP
 call completes the connection and stores the Workspace-scoped credential in the

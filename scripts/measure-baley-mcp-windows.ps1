@@ -7,11 +7,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($Binary)) {
-  $installRoot = Join-Path $env:LOCALAPPDATA "Baley\mcp"
-  $latestRelease = Get-ChildItem -LiteralPath (Join-Path $installRoot "releases") -Filter "baley-mcp.exe" -Recurse -File -ErrorAction SilentlyContinue |
+  $buildRoot = "C:\dev-bin\baley"
+  $latestRelease = Get-ChildItem -LiteralPath (Join-Path $buildRoot "releases") -Filter "baley-mcp.exe" -Recurse -File -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTimeUtc -Descending |
     Select-Object -First 1
-  $Binary = if ($null -ne $latestRelease) { $latestRelease.FullName } else { Join-Path $installRoot "baley-mcp.exe" }
+  $Binary = if ($null -ne $latestRelease) { $latestRelease.FullName } else { Join-Path $buildRoot "baley-mcp.exe" }
 }
 
 if (!(Test-Path -LiteralPath $Binary -PathType Leaf)) {

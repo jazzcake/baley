@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 // Gateway enrollment crosses from an Agent surface to a signed-in browser.
 // Keep the one-time login link long enough for that authentication hand-off.
 const mcpConnectionTTL = 30 * time.Minute
+const mcpLoginCodeTTL = 2 * time.Minute
 
 func connectionRandomID() (string, error) {
 	raw := make([]byte, 16)
@@ -94,6 +96,25 @@ func (a *API) pollMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 		result["gatewaySecret"] = gatewaySecret
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *API) redeemMCPLoginLink(w http.ResponseWriter, r *http.Request) {
+	secret := strings.TrimSpace(r.Header.Get("X-Baley-Connection-Secret"))
+	code := strings.TrimSpace(r.Header.Get("X-Baley-Login-Code"))
+	if secret == "" || code == "" {
+		mcpConnectionNotFound(w)
+		return
+	}
+	view, issued, gatewaySecret, err := a.Repo.RedeemMCPLoginLinkAndIssueAgentToken(r.Context(), r.PathValue("connectionId"), postgres.DigestSecret(secret), postgres.DigestSecret(code), time.Now().UTC())
+	if errors.Is(err, postgres.ErrMCPConnectionNotFound) || errors.Is(err, postgres.ErrMCPConnectionSecret) || errors.Is(err, postgres.ErrMCPConnectionConsumed) || errors.Is(err, postgres.ErrMCPLoginCode) {
+		mcpConnectionNotFound(w)
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": view.ID, "workspaceId": view.WorkspaceID, "status": view.Status, "agentToken": issued.Token, "gatewayId": view.GatewayID, "gatewaySecret": gatewaySecret})
 }
 
 func (a *API) resumeMCPGateway(w http.ResponseWriter, r *http.Request) {
@@ -197,14 +218,20 @@ func (a *API) getMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": view.ID, "workspaceId": view.WorkspaceID, "agentActorId": view.AgentActorID, "status": view.Status, "expiresAt": view.ExpiresAt})
 }
 
-func (a *API) linkMCPConnection(w http.ResponseWriter, r *http.Request) {
+func (a *API) completeMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 	state, ok := a.requireMCPLinkMember(r)
 	if !ok {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": map[string]string{"code": "forbidden", "message": "Active Workspace membership required"}})
 		return
 	}
-	_, err := a.Repo.LinkMCPConnection(r.Context(), r.PathValue("connectionId"), r.PathValue("workspaceId"), state.Principal.ActorID, time.Now().UTC())
-	if errors.Is(err, postgres.ErrMCPConnectionNotFound) {
+	code, err := connectionRandomSecret()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	now := time.Now().UTC()
+	_, err = a.Repo.BeginMCPLoginLink(r.Context(), r.PathValue("connectionId"), r.PathValue("workspaceId"), state.Principal.ActorID, postgres.DigestSecret(code), now, now.Add(mcpLoginCodeTTL))
+	if errors.Is(err, postgres.ErrMCPConnectionNotFound) || errors.Is(err, postgres.ErrMCPConnectionConsumed) {
 		mcpConnectionNotFound(w)
 		return
 	}
@@ -212,5 +239,10 @@ func (a *API) linkMCPConnection(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]string{"code": "mcp_login_link_failed", "message": err.Error()}})
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	origin := strings.TrimRight(a.MCPLoopbackCallbackOrigin, "/")
+	if origin == "" {
+		origin = "http://127.0.0.1:8090"
+	}
+	query := url.Values{"connectionId": {r.PathValue("connectionId")}, "code": {code}}
+	writeJSON(w, http.StatusOK, map[string]any{"callbackUrl": origin + "/mcp-login/callback?" + query.Encode()})
 }

@@ -8,7 +8,7 @@ import {
   fetchMCPLoginLink,
   fetchOIDCProviders,
   issueApprovalGrant,
-  linkMCPGateway,
+  completeMCPGatewayLogin,
   login,
   logout,
   renameWorkspace,
@@ -158,19 +158,29 @@ describe("credentialed account API", () => {
         id: "link", workspaceId: "workspace", agentActorId: "agent",
         status: "pending", expiresAt: "2026-09-02T12:00:00Z",
       }))
-      .mockResolvedValueOnce(jsonResponse(undefined, 204));
+      .mockResolvedValueOnce(jsonResponse({ callbackUrl: "http://127.0.0.1:8090/mcp-login/callback?connectionId=link&code=one-time" }))
+      .mockResolvedValueOnce(jsonResponse({ status: "linked" }));
     vi.stubGlobal("fetch", fetchMock);
 
     await fetchMCPLoginLink("workspace", "link");
-    await linkMCPGateway("workspace", "link", "csrf");
+    await completeMCPGatewayLogin("workspace", "link", "csrf");
 
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
       expect.stringContaining("/v1/workspaces/workspace/mcp-login-links/link"),
-      expect.stringContaining("/v1/workspaces/workspace/mcp-login-links/link/link"),
+      expect.stringContaining("/v1/workspaces/workspace/mcp-login-links/link/complete"),
+      "http://127.0.0.1:8090/mcp-login/callback?connectionId=link&code=one-time",
     ]);
     expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe("POST");
     expect(((fetchMock.mock.calls[1]?.[1] as RequestInit).headers as Headers).get("X-Baley-CSRF")).toBe("csrf");
+		expect((fetchMock.mock.calls[2]?.[1] as RequestInit).credentials).toBe("omit");
   });
+
+	it("rejects non-loopback MCP completion callbacks", async () => {
+		const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ callbackUrl: "https://attacker.example/mcp-login/callback?code=stolen" }));
+		vi.stubGlobal("fetch", fetchMock);
+		await expect(completeMCPGatewayLogin("workspace", "link", "csrf")).rejects.toThrow("unsafe local Gateway callback URL");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
 
   it("issues, references, and revokes a non-secret browser approval grant with CSRF", async () => {
     const command = {

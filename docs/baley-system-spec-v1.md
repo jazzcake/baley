@@ -137,7 +137,7 @@ V1에는 회원가입, 로그인 UI와 다중 사용자 인증을 구현하지 �
 - 외부 서버는 Tailscale, VPN, reverse proxy 인증 또는 동등한 배포 계층으로 보호한다.
 - 인증 token과 secret은 repository의 `baley.yaml`에 저장하지 않는다.
 
-제품 인증과 Workspace membership enforcement를 적용한다. 로컬 MCP Gateway는 로그인한 Account에 연결되며 별도의 Workspace 연결 승인 결정을 만들지 않는다. Agent token scope는 해당 Account의 Workspace 역할과 Agent-safe capability의 교집합으로 계산하고, 사람 전용 capability는 절대 포함하지 않는다. 사람 전용 command는 로그인한 브라우저 세션이 fresh preview에 결속된 단기·단발성 grant를 발급·소비해야 하며, Agent token이나 MCP body가 승인 Actor를 만들 수 없다. 서버는 실행 시 grant의 session, Workspace, command hash, target, snapshot, revision과 issuing human의 현재 membership·capability를 다시 검사한다.
+제품 인증과 Workspace membership enforcement를 적용한다. 로컬 MCP Gateway는 로그인한 Account에 연결되며 별도의 Workspace 연결 승인 결정을 만들지 않는다. 최초 기기 연결은 loopback 시작 URL과 명시적 `Connect local Gateway` 클릭을 사용하며, 서버는 2분 browser code와 해당 PC에만 남은 pending connection secret을 한 transaction에서 검증한 뒤 membership을 다시 확인한다. Agent token scope는 해당 Account의 Workspace 역할과 Agent-safe capability의 교집합으로 계산하고, 사람 전용 capability는 절대 포함하지 않는다. 사람 전용 command는 로그인한 브라우저 세션이 fresh preview에 결속된 단기·단발성 grant를 발급·소비해야 하며, Agent token이나 MCP body가 승인 Actor를 만들 수 없다. 서버는 실행 시 grant의 session, Workspace, command hash, target, snapshot, revision과 issuing human의 현재 membership·capability를 다시 검사한다.
 
 ## 5. 프로젝트 통합
 

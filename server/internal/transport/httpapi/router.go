@@ -24,17 +24,18 @@ import (
 )
 
 type API struct {
-	Service          *application.Service
-	Repo             *postgres.Repository
-	AllowedOrigins   []string
-	MCPLoginOrigin   string
-	Auth             *authn.Service
-	OIDC             *authn.OIDCService
-	OIDCPostLoginURL string
-	AuthMode         string
-	CookieSecure     bool
-	Build            BuildInfo
-	ReadyCheck       func(context.Context) (int64, error)
+	Service                   *application.Service
+	Repo                      *postgres.Repository
+	AllowedOrigins            []string
+	MCPLoginOrigin            string
+	MCPLoopbackCallbackOrigin string
+	Auth                      *authn.Service
+	OIDC                      *authn.OIDCService
+	OIDCPostLoginURL          string
+	AuthMode                  string
+	CookieSecure              bool
+	Build                     BuildInfo
+	ReadyCheck                func(context.Context) (int64, error)
 }
 
 type BuildInfo struct {
@@ -60,6 +61,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/auth/password", a.changePassword)
 	mux.HandleFunc("POST /v1/mcp/login-links", a.createMCPLoginLink)
 	mux.HandleFunc("GET /v1/mcp/login-links/{connectionId}", a.pollMCPLoginLink)
+	mux.HandleFunc("POST /v1/mcp/login-links/{connectionId}/redeem", a.redeemMCPLoginLink)
 	mux.HandleFunc("POST /v1/mcp/gateway-sessions", a.resumeMCPGateway)
 	mux.HandleFunc("POST /v1/mcp/gateway-enrollments", a.autoEnrollMCPGateway)
 	mux.HandleFunc("GET /v1/workspaces", a.workspaces)
@@ -78,7 +80,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/agent-tokens", a.issueAgentToken)
 	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/agent-tokens/{tokenId}", a.revokeAgentToken)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/mcp-login-links/{connectionId}", a.getMCPLoginLink)
-	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-login-links/{connectionId}/link", a.linkMCPConnection)
+	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/mcp-login-links/{connectionId}/complete", a.completeMCPLoginLink)
 	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/mcp-gateways/{gatewayId}", a.revokeMCPGateway)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/approval-grants", a.approvalGrant)
 	mux.HandleFunc("DELETE /v1/workspaces/{workspaceId}/approval-grants/{grantId}", a.revokeApprovalGrant)

@@ -5,7 +5,7 @@ import {
 	attachExistingAccount,
 	archiveWorkspace,
 	beginOIDCLink,
-  linkMCPGateway,
+	completeMCPGatewayLogin,
   createWorkspace,
 	createWorkspaceMember,
   disableMemberAccount,
@@ -49,7 +49,6 @@ export function MCPLoginLink({
   const [busy, setBusy] = useState(false);
   const [linked, setLinked] = useState(false);
   const [error, setError] = useState<string>();
-  const activationStarted = useRef(false);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -63,7 +62,7 @@ export function MCPLoginLink({
     void fetchMCPLoginLink(workspace.id, connectionId, controller.signal)
       .then((next) => {
         setConnection(next);
-        setLinked(next.status === "linked");
+		setLinked(next.status === "linked" || next.status === "consumed");
         traceViewer("mcp-login:state", {
           targetWorkspaceId: workspace.id,
           connectionId,
@@ -74,10 +73,6 @@ export function MCPLoginLink({
           connectionId,
           dialogPresent: Boolean(document.querySelector("[data-mcp-login-link-id]")),
         }));
-        if (next.status === "pending" && !activationStarted.current) {
-          activationStarted.current = true;
-          void link(next.status);
-        }
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "연결 요청을 불러올 수 없습니다.");
@@ -86,18 +81,18 @@ export function MCPLoginLink({
     return () => controller.abort();
   }, [workspace.id, connectionId]);
 
-  const link = async (currentStatus = connection?.status) => {
+  const complete = async (currentStatus = connection?.status) => {
     setBusy(true);
     setError(undefined);
-    traceViewer("mcp-login:link", {
-      event: "authenticated-page-load",
+    traceViewer("mcp-login:complete", {
+	  event: "connect-button-click",
       targetWorkspaceId: workspace.id,
       connectionId,
       calculatedTargetState: "linked",
       currentState: currentStatus,
     });
     try {
-      await linkMCPGateway(workspace.id, connectionId, csrfToken);
+	  await completeMCPGatewayLogin(workspace.id, connectionId, csrfToken);
       setLinked(true);
       setConnection((current) => current ? { ...current, status: "linked" } : current);
     } catch (reason) {
@@ -119,7 +114,7 @@ export function MCPLoginLink({
 		<p><strong>{workspace.name}</strong>의 로그인 계정에 로컬 Codex를 연결합니다.</p>
 		<p className="mcp-login-scope">MCP 접근 범위는 이 Workspace의 사용자 역할에서 결정되며, 사람 전용 확인 권한은 Agent에 전달되지 않습니다.</p>
 		<dl><div><dt>사용자 역할</dt><dd>{workspace.role}</dd></div><div><dt>Agent</dt><dd><code>{connection.agentActorId}</code></dd></div></dl>
-        <p role="status">{busy ? "Connecting local gateway…" : "Checking gateway connection…"}</p>
+		<button className="primary-action" type="button" disabled={busy} onClick={() => void complete()}>{busy ? "Connecting local gateway…" : "Connect local Gateway"}</button>
       </>}
       {linked && <div className="mcp-login-success" role="status">
 		<Check size={22} /><div><strong>로그인 계정에 연결되었습니다.</strong><p>LLM 세션으로 돌아가 같은 요청을 다시 실행하면 됩니다.</p></div>

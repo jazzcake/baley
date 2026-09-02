@@ -32,8 +32,11 @@ that environment keep the tokenless stdio transport until Codex supports a
 per-user OS-authenticated local transport. No external network peer can reach
 the loopback endpoint.
 
-The first device is linked when an active member signs in at the short-lived
-`loginUrl`. The same registered device is then automatically enrolled in any
+The first device is linked through an MCP-visible loopback `loginUrl` that
+verifies the pending local request before redirecting to Baley. An active
+member signs in and explicitly clicks `Connect local Gateway`; the browser gets
+a two-minute one-time code, and only the local gateway holding the matching
+pending connection secret may redeem it. The same registered device is then automatically enrolled in any
 Workspace where that Account has active membership; there is no separate
 Workspace connection decision. Owner/Operator roles receive ordinary Agent
 operation scopes, while Viewer/Approver roles receive read-only Agent scope.
@@ -58,9 +61,10 @@ On Windows, run from the repository checkout:
 
 The Windows installer builds a stripped (`-trimpath -ldflags "-s -w"`) release
 binary in a Git-revisioned path, registers a per-user logon task that owns one
-loopback Gateway, and changes Codex atomically to its local HTTP endpoint. No
-firewall rule is required or created. The macOS installer remains tokenless
-stdio until its platform packaging work is complete.
+loopback Gateway, and changes Codex atomically to its local HTTP endpoint. The
+macOS installer provides the same single-Gateway model through a per-user
+LaunchAgent and macOS Keychain. No firewall rule is required or created on
+either platform.
 
 The equivalent CLI registration is:
 

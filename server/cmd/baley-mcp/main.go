@@ -27,6 +27,7 @@ type client struct {
 	secretStore         secretStore
 	credentialStorePath string
 	agentActorID        string
+	localGatewayOrigin  string
 	connectionMu        sync.Mutex
 	// sessionTokens are intentionally process-local. The persisted credential
 	// store contains only a gateway registration and must never resurrect an
@@ -791,6 +792,7 @@ func serveHTTP(c *client) {
 	if err := validateLoopbackMCPAddress(addr); err != nil {
 		log.Fatal(err)
 	}
+	c.localGatewayOrigin = "http://" + addr
 	// Workspace credentials are scoped to this local gateway identity and the
 	// target Workspace, not to an ephemeral MCP transport session. A new Codex
 	// chat or the HTTP session timeout must not require a new gateway login.
@@ -800,11 +802,75 @@ func serveHTTP(c *client) {
 	// configuration: the local Gateway reads the device binding from the OS
 	// Keychain and obtains short-lived Workspace-scoped Agent tokens itself.
 	mux.Handle("/mcp", streamable)
+	mux.HandleFunc("/mcp-login/start", c.handleMCPLoginStart)
+	mux.HandleFunc("/mcp-login/callback", c.handleMCPLoginCallback)
 	httpServer := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 70 * time.Second, MaxHeaderBytes: 1 << 20}
 	log.Printf("Baley Streamable HTTP MCP listening on http://%s/mcp", addr)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func (c *client) handleMCPLoginStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	connectionID := strings.TrimSpace(r.URL.Query().Get("connectionId"))
+	if len(connectionID) < 20 || len(connectionID) > 128 {
+		http.Error(w, "invalid MCP login link", http.StatusUnprocessableEntity)
+		return
+	}
+	loginURL, err := c.pendingWorkspaceLoginURL(r.Context(), connectionID)
+	if err != nil {
+		http.Error(w, "this local Gateway did not initiate the MCP login link", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(w, r, loginURL, http.StatusFound)
+}
+
+func (c *client) handleMCPLoginCallback(w http.ResponseWriter, r *http.Request) {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if !sameOriginAsServer(c.base, origin) {
+		http.Error(w, "Baley viewer origin required", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Access-Control-Allow-Methods", http.MethodGet)
+	w.Header().Set("Access-Control-Allow-Headers", "Accept")
+	w.Header().Set("Access-Control-Allow-Private-Network", "true")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Vary", "Origin")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	connectionID, code := strings.TrimSpace(r.URL.Query().Get("connectionId")), strings.TrimSpace(r.URL.Query().Get("code"))
+	if len(connectionID) < 20 || len(connectionID) > 128 || len(code) < 32 || len(code) > 128 {
+		http.Error(w, "invalid MCP login callback", http.StatusUnprocessableEntity)
+		return
+	}
+	workspaceID, err := c.completeWorkspaceLink(r.Context(), connectionID, code)
+	if err != nil {
+		log.Printf("MCP login callback rejected for connection %q: %v", connectionID, err)
+		http.Error(w, "local Gateway could not complete MCP login", http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "linked", "workspaceId": workspaceID})
+}
+
+func sameOriginAsServer(serverURL, origin string) bool {
+	server, serverErr := url.Parse(strings.TrimSpace(serverURL))
+	candidate, originErr := url.Parse(strings.TrimSpace(origin))
+	return serverErr == nil && originErr == nil && (server.Scheme == "http" || server.Scheme == "https") &&
+		candidate.Scheme == server.Scheme && candidate.Host == server.Host && candidate.Path == "" && candidate.RawQuery == "" && candidate.Fragment == "" && candidate.User == nil
 }
 
 func validateLoopbackMCPAddress(addr string) error {

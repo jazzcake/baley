@@ -51,7 +51,7 @@ export type MCPLoginLink = {
   id: string;
   workspaceId: string;
   agentActorId: string;
-  status: "pending" | "linked";
+  status: "pending" | "linked" | "consumed";
   expiresAt: string;
 };
 export type OIDCProvider = { id: string; label: string };
@@ -277,14 +277,22 @@ export function fetchMCPLoginLink(
   );
 }
 
-export function linkMCPGateway(
+export async function completeMCPGatewayLogin(
   workspaceId: string,
   connectionId: string,
   csrfToken: string,
 ): Promise<void> {
-  return requestJSON<void>(
-	`/v1/workspaces/${encodeURIComponent(workspaceId)}/mcp-login-links/${encodeURIComponent(connectionId)}/link`,
+  const completion = await requestJSON<{ callbackUrl: string }>(
+	`/v1/workspaces/${encodeURIComponent(workspaceId)}/mcp-login-links/${encodeURIComponent(connectionId)}/complete`,
     { method: "POST", body: "{}" },
     csrfToken,
   );
+	const callback = new URL(completion.callbackUrl);
+	if (callback.protocol !== "http:" || (callback.hostname !== "127.0.0.1" && callback.hostname !== "[::1]" && callback.hostname !== "::1") || callback.pathname !== "/mcp-login/callback" || callback.username || callback.password || callback.hash) {
+		throw new Error("Baley returned an unsafe local Gateway callback URL");
+	}
+	const response = await fetch(callback.toString(), { method: "GET", credentials: "omit", headers: { Accept: "application/json" } });
+	if (!response.ok) {
+		throw new Error(`Local Baley Gateway could not complete login (HTTP ${response.status})`);
+	}
 }

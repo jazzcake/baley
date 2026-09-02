@@ -234,6 +234,77 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 	}
 }
 
+func TestMCPLoginCallbackRequiresMatchingLocalPendingLink(t *testing.T) {
+	const workspaceID = "410f335e-ddb2-443f-be3c-7d1d18ccd534"
+	const connectionID = "connection-id-1234567890"
+	const code = "one-time-login-code-12345678901234567890"
+	var redemptions int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/mcp/login-links/"+connectionID+"/redeem" {
+			http.NotFound(w, r)
+			return
+		}
+		redemptions++
+		if r.Header.Get("X-Baley-Connection-Secret") != "connection-secret" || r.Header.Get("X-Baley-Login-Code") != code {
+			t.Fatalf("redeem headers were not bound to both local and browser secrets")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"` + connectionID + `","workspaceId":"` + workspaceID + `","status":"consumed","agentToken":"agent-token","gatewayId":"gateway","gatewaySecret":"gateway-secret"}`))
+	}))
+	defer upstream.Close()
+
+	c := &client{base: upstream.URL, http: upstream.Client(), credentialStorePath: filepath.Join(t.TempDir(), "credentials.json")}
+	if err := c.writeCredentialStore(context.Background(), &credentialStore{
+		GatewayID: "gateway", Workspaces: map[string]workspaceCredential{},
+		PendingLinks: map[string]pendingWorkspaceLink{workspaceID: {ID: connectionID, Secret: "connection-secret", LoginURL: "https://viewer/login"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	startRequest := httptest.NewRequest(http.MethodGet, "/mcp-login/start?connectionId="+connectionID, nil)
+	startResponse := httptest.NewRecorder()
+	c.handleMCPLoginStart(startResponse, startRequest)
+	if startResponse.Code != http.StatusFound || startResponse.Header().Get("Location") != "https://viewer/login" {
+		t.Fatalf("local login start did not verify and redirect pending link: status=%d location=%q", startResponse.Code, startResponse.Header().Get("Location"))
+	}
+	request := httptest.NewRequest(http.MethodGet, "/mcp-login/callback?connectionId="+connectionID+"&code="+code, nil)
+	request.Header.Set("Origin", upstream.URL)
+	response := httptest.NewRecorder()
+	c.handleMCPLoginCallback(response, request)
+	if response.Code != http.StatusOK || redemptions != 1 {
+		t.Fatalf("legitimate local callback status=%d redemptions=%d body=%s", response.Code, redemptions, response.Body.String())
+	}
+	store, err := c.readCredentialStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, pending := store.PendingLinks[workspaceID]; pending || store.Workspaces[workspaceID].GatewaySecret != "gateway-secret" {
+		t.Fatalf("completed callback did not atomically replace pending local state: %#v", store)
+	}
+
+	phished := &client{base: upstream.URL, http: upstream.Client(), credentialStorePath: filepath.Join(t.TempDir(), "credentials.json")}
+	if err = phished.writeCredentialStore(context.Background(), &credentialStore{Workspaces: map[string]workspaceCredential{}, PendingLinks: map[string]pendingWorkspaceLink{}}); err != nil {
+		t.Fatal(err)
+	}
+	startResponse = httptest.NewRecorder()
+	phished.handleMCPLoginStart(startResponse, startRequest)
+	if startResponse.Code != http.StatusNotFound {
+		t.Fatalf("foreign login start status=%d, want 404", startResponse.Code)
+	}
+	response = httptest.NewRecorder()
+	phished.handleMCPLoginCallback(response, request)
+	if response.Code != http.StatusConflict || redemptions != 1 {
+		t.Fatalf("foreign login link reached upstream: status=%d redemptions=%d", response.Code, redemptions)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/mcp-login/callback?connectionId="+connectionID+"&code="+code, nil)
+	request.Header.Set("Origin", "https://attacker.example")
+	response = httptest.NewRecorder()
+	phished.handleMCPLoginCallback(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("foreign browser origin status=%d, want 403", response.Code)
+	}
+}
+
 func TestLoopbackMCPAddressRejectsExternalBindings(t *testing.T) {
 	for _, addr := range []string{"0.0.0.0:8090", "localhost:8090", "192.168.0.10:8090", "[fd7a:115c:a1e0::1]:8090", "bad"} {
 		if err := validateLoopbackMCPAddress(addr); err == nil {
@@ -320,7 +391,8 @@ func TestClientRenewsWorkspaceCredentialInFreshProcessWithoutPersistingToken(t *
 		t.Fatalf("expected one-time connection request: result=%#v err=%v", result, err)
 	}
 	structured, ok := result.StructuredContent.(map[string]any)
-	if !ok || structured["code"] != "workspace_login_required" || structured["loginUrl"] == "" {
+	loginURL, _ := structured["loginUrl"].(string)
+	if !ok || structured["code"] != "workspace_login_required" || !strings.HasPrefix(loginURL, "http://127.0.0.1:8090/mcp-login/start?connectionId=") {
 		t.Fatalf("missing actionable login result: %#v", result.StructuredContent)
 	}
 

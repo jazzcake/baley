@@ -121,6 +121,20 @@ func TestResolveMCPLoginOriginUsesConfiguredAllowedOrigin(t *testing.T) {
 	}
 }
 
+func TestResolveMCPLoopbackCallbackOriginRejectsExternalOrigins(t *testing.T) {
+	if got, err := resolveMCPLoopbackCallbackOrigin(""); err != nil || got != "http://127.0.0.1:8090" {
+		t.Fatalf("default callback origin = %q, %v", got, err)
+	}
+	if got, err := resolveMCPLoopbackCallbackOrigin("http://[::1]:8090/"); err != nil || got != "http://[::1]:8090" {
+		t.Fatalf("IPv6 callback origin = %q, %v", got, err)
+	}
+	for _, value := range []string{"https://127.0.0.1:8090", "http://0.0.0.0:8090", "http://example.com:8090", "http://127.0.0.1", "http://127.0.0.1:8090/path"} {
+		if _, err := resolveMCPLoopbackCallbackOrigin(value); err == nil {
+			t.Fatalf("external or malformed callback origin %q accepted", value)
+		}
+	}
+}
+
 func TestResolveOIDCProvidersUsesGoogleDefaultAndSecretSource(t *testing.T) {
 	t.Setenv("BALEY_OIDC_PROVIDERS", "")
 	t.Setenv("BALEY_GOOGLE_OIDC_CLIENT_ID", "google-client")
