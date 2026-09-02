@@ -30,6 +30,7 @@ const task: Task = {
   implementedAssessment: "Tests, deployment, and live session verification passed.",
   status: "implemented",
 };
+const otherTask: Task = { ...task, id: "other-task", publicId: 160, title: "Other Task" };
 
 const baseProps = {
   workspaceId: "workspace",
@@ -79,7 +80,7 @@ describe("TaskConfirmation", () => {
     expect(screen.getByText("Tests, deployment, and live session verification passed.")).toBeTruthy();
     expect(screen.getByText("1 succeeded")).toBeTruthy();
     expect(screen.getByText("1 indexed")).toBeTruthy();
-    expect(screen.getByText("1 passed")).toBeTruthy();
+    expect(screen.getByText("v1 passed / review pass")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Confirm task" })).toBeNull();
     expect(screen.getByText(/Approver or Owner/)).toBeTruthy();
   });
@@ -144,5 +145,71 @@ describe("TaskConfirmation", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("revision changed");
     await waitFor(() => expect(revokeApprovalGrant).toHaveBeenCalledWith("workspace", "grant", "csrf"));
+  });
+
+  it("ignores a Task preview that arrives after the selected target changes", async () => {
+    let resolvePreview!: (value: Awaited<ReturnType<typeof previewCommand>>) => void;
+    vi.mocked(previewCommand).mockImplementationOnce(() => new Promise((resolve) => { resolvePreview = resolve; }));
+    const { rerender } = render(<TaskConfirmation {...baseProps} onConfirmed={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm task" }));
+    rerender(<TaskConfirmation {...baseProps} task={otherTask} workspaceRevision={13} onConfirmed={vi.fn()} />);
+    resolvePreview({
+      commandHash: "sha256:stale",
+      expectedWorkspaceRevision: 12,
+      requiredCapability: "task:approve",
+      projectedDiff: {},
+      errors: [{ code: "human_approval_required", message: "Human confirmation is required." }],
+      warnings: [],
+      advisories: [],
+      entityType: "task",
+      entityId: task.id,
+    });
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm task once" })).toBeNull());
+    const currentButton = screen.getByRole("button", { name: "Confirm task" });
+    expect((currentButton as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(currentButton);
+    await screen.findByRole("button", { name: "Confirm task once" });
+    expect(vi.mocked(previewCommand).mock.calls[1]![0].arguments.taskId).toBe(160);
+  });
+
+  it("revokes a grant if the selected Task changes while it is being issued", async () => {
+    let resolveGrant!: (value: Awaited<ReturnType<typeof issueApprovalGrant>>) => void;
+    vi.mocked(issueApprovalGrant).mockImplementationOnce(() => new Promise((resolve) => { resolveGrant = resolve; }));
+    const { rerender } = render(<TaskConfirmation {...baseProps} onConfirmed={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm task once" }));
+    rerender(<TaskConfirmation {...baseProps} task={otherTask} workspaceRevision={13} onConfirmed={vi.fn()} />);
+    resolveGrant({ id: "stale-grant", expiresAt: "2026-09-02T00:01:00Z", commandHash: "sha256:command", workspaceRevision: 12 });
+
+    await waitFor(() => expect(revokeApprovalGrant).toHaveBeenCalledWith("workspace", "stale-grant", "csrf"));
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("shows only the latest acceptance evidence verdict", () => {
+    render(<TaskConfirmation {...baseProps} acceptanceEvidence={[
+      baseProps.acceptanceEvidence[0]!,
+      { ...baseProps.acceptanceEvidence[0]!, id: "latest", version: 2, verificationVerdict: "failed", reviewVerdict: "fail", unresolvedBlockingCount: 2 },
+    ]} onConfirmed={vi.fn()} />);
+
+    expect(screen.getByText("v2 failed / review fail / 2 blockers")).toBeTruthy();
+    expect(screen.queryByText("v1 passed / review pass")).toBeNull();
+  });
+
+  it("discards an open preview and blocks execution when approval capability is removed", async () => {
+    const { rerender } = render(<TaskConfirmation {...baseProps} onConfirmed={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm task" }));
+    await screen.findByRole("button", { name: "Confirm task once" });
+
+    rerender(<TaskConfirmation {...baseProps} canApprove={false} onConfirmed={vi.fn()} />);
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm task once" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Confirm task" })).toBeNull();
+    expect(screen.getByText(/Approver or Owner/)).toBeTruthy();
+    expect(issueApprovalGrant).not.toHaveBeenCalled();
+    expect(executeCommand).not.toHaveBeenCalled();
   });
 });
