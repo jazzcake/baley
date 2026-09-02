@@ -3,8 +3,10 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,6 +48,43 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
+	const browserSessionID = "00000000-0000-4000-8000-000000000011"
+	if _, err = repo.Pool.Exec(ctx, `INSERT INTO account_sessions(id,account_id,token_hash,csrf_token_hash,created_at,last_seen_at,idle_expires_at,absolute_expires_at)
+		VALUES ($1,'00000000-0000-4000-8000-000000000010',
+		decode(repeat('01',32),'hex'),decode(repeat('02',32),'hex'),$2,$2,$3,$3)`, browserSessionID, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	const otherActorID = "00000000-0000-4000-8000-000000000012"
+	const otherAccountID = "00000000-0000-4000-8000-000000000013"
+	const otherSessionID = "00000000-0000-4000-8000-000000000014"
+	const expiredSessionID = "00000000-0000-4000-8000-000000000015"
+	if _, err = repo.Pool.Exec(ctx, `INSERT INTO actors(id,display_name,actor_type) VALUES($1,'Other Owner','human')`, otherActorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.Pool.Exec(ctx, `INSERT INTO accounts(id,actor_id,login_id,normalized_login_id,display_name,status)
+		VALUES ($1,$2,'other-owner','other-owner','Other Owner','active')`, otherAccountID, otherActorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.Pool.Exec(ctx, `INSERT INTO account_sessions(id,account_id,token_hash,csrf_token_hash,created_at,last_seen_at,idle_expires_at,absolute_expires_at)
+		VALUES ($1,$2,$3,$4,$5,$5,$6,$6),($7,'00000000-0000-4000-8000-000000000010',$8,$9,$5,$5,$10,$10)`,
+		otherSessionID, otherAccountID, postgres.DigestSecret("other-session-token"), postgres.DigestSecret("other-session-csrf"), now,
+		now.Add(time.Hour), expiredSessionID, postgres.DigestSecret("expired-session-token"), postgres.DigestSecret("expired-session-csrf"), now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []struct {
+		requestID string
+		sessionID string
+	}{
+		{requestID: "wrong-actor-session-request", sessionID: otherSessionID},
+		{requestID: "expired-session-request", sessionID: expiredSessionID},
+	} {
+		if _, err = repo.CreateMCPConnection(ctx, invalid.requestID, postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-"+invalid.requestID, postgres.DigestSecret("secret-"+invalid.requestID), now, now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = repo.BeginMCPLoginLink(ctx, invalid.requestID, postgres.DemoWorkspaceID, postgres.DemoHumanActorID, invalid.sessionID, postgres.DigestSecret("code-"+invalid.requestID), now, now.Add(time.Minute)); !errors.Is(err, postgres.ErrMCPLoginSession) {
+			t.Fatalf("invalid browser session %s bound an MCP link: %v", invalid.sessionID, err)
+		}
+	}
 	secret := "restart-safe-secret"
 	if _, err = repo.CreateMCPConnection(ctx, "restart-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-restart-safe-identity", postgres.DigestSecret(secret), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
@@ -62,7 +101,7 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if err != nil || request.Status != "pending" {
 		t.Fatalf("pending request was not recovered: %#v %v", request, err)
 	}
-	if _, err = restarted.BeginMCPLoginLink(ctx, "restart-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, postgres.DigestSecret("login-code"), now.Add(time.Minute), now.Add(3*time.Minute)); err != nil {
+	if _, err = restarted.BeginMCPLoginLink(ctx, "restart-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, browserSessionID, postgres.DigestSecret("login-code"), now.Add(time.Minute), now.Add(3*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err = restarted.RedeemMCPLoginLinkAndIssueAgentToken(ctx, "restart-request", postgres.DigestSecret(secret), postgres.DigestSecret("stolen-code"), now.Add(90*time.Second)); !errors.Is(err, postgres.ErrMCPLoginCode) {
@@ -72,7 +111,7 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if err != nil || consumed.Status != "consumed" || issued.Token == "" || gatewaySecret == "" {
 		t.Fatalf("linked request was not consumed once: %#v issued=%#v err=%v", consumed, issued, err)
 	}
-	if _, _, _, err = restarted.PollMCPLoginLinkAndIssueAgentToken(ctx, "restart-request", postgres.DigestSecret(secret), now.Add(3*time.Minute)); !errors.Is(err, postgres.ErrMCPConnectionConsumed) {
+	if _, err = restarted.PollMCPLoginLink(ctx, "restart-request", postgres.DigestSecret(secret), now.Add(3*time.Minute)); !errors.Is(err, postgres.ErrMCPConnectionConsumed) {
 		t.Fatalf("second poll issued another credential: %v", err)
 	}
 	var storedHash []byte
@@ -89,9 +128,8 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(resumed.Token), now.Add(4*time.Minute)); err != nil {
 		t.Fatalf("resumed gateway credential was not accepted: %v", err)
 	}
-	// Codex runs one stdio MCP process per client session. A second process
-	// renewing through the same device gateway must not invalidate the first
-	// process and force it into a new browser login flow.
+	// Multiple clients sharing the single local Gateway may hold concurrent
+	// session credentials. Renewing one must not invalidate the others.
 	if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(issued.Token), now.Add(4*time.Minute)); err != nil {
 		t.Fatalf("gateway renewal invalidated an existing live MCP session: %v", err)
 	}
@@ -123,18 +161,10 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 		{id: "00000000-0000-4000-8000-000000000097", role: "viewer"},
 		{id: "00000000-0000-4000-8000-000000000096", role: "approver"},
 	} {
-		const otherOwnerActorID = "00000000-0000-4000-8000-000000000012"
-		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO actors(id,display_name,actor_type) VALUES($1,'Other Owner','human') ON CONFLICT DO NOTHING`, otherOwnerActorID); err != nil {
-			t.Fatal(err)
-		}
-		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO accounts(id,actor_id,login_id,normalized_login_id,display_name,status)
-			VALUES ('00000000-0000-4000-8000-000000000013',$1,'other-owner','other-owner','Other Owner','active') ON CONFLICT DO NOTHING`, otherOwnerActorID); err != nil {
-			t.Fatal(err)
-		}
 		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspaces(id,name,state,revision) VALUES($1,'Non-operating member target','active',1)`, target.id); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspace_memberships(workspace_id,actor_id,role,active,created_by_actor_id) VALUES($1,$2,'owner',true,$2),($1,$3,$4,true,$2)`, target.id, otherOwnerActorID, postgres.DemoHumanActorID, target.role); err != nil {
+		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspace_memberships(workspace_id,actor_id,role,active,created_by_actor_id) VALUES($1,$2,'owner',true,$2),($1,$3,$4,true,$2)`, target.id, otherActorID, postgres.DemoHumanActorID, target.role); err != nil {
 			t.Fatal(err)
 		}
 		readonly, err := restarted.AutoEnrollMCPGateway(ctx, target.id, consumed.GatewayID, postgres.DemoWorkspaceID, gatewaySecret, now.Add(4*time.Minute))
@@ -146,12 +176,33 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 			t.Fatalf("%s member scopes=%v err=%v, want workspace:read only", target.role, record.Scopes, err)
 		}
 	}
+	const removedMemberWorkspaceID = "00000000-0000-4000-8000-000000000095"
+	if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspaces(id,name,state,revision) VALUES($1,'Removed member target','active',1)`, removedMemberWorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = restarted.Pool.Exec(ctx, `INSERT INTO workspace_memberships(workspace_id,actor_id,role,active,created_by_actor_id)
+		VALUES($1,$2,'owner',true,$2),($1,$3,'operator',true,$2),($1,$4,'operator',true,$2)`, removedMemberWorkspaceID, otherActorID, postgres.DemoHumanActorID, postgres.DemoAgentActorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = restarted.CreateMCPConnection(ctx, "removed-member-request", removedMemberWorkspaceID, postgres.DemoAgentActorID, "gateway-removed-member", postgres.DigestSecret("removed-member-secret"), now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = restarted.BeginMCPLoginLink(ctx, "removed-member-request", removedMemberWorkspaceID, postgres.DemoHumanActorID, browserSessionID, postgres.DigestSecret("removed-member-code"), now.Add(4*time.Minute), now.Add(6*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	removed := false
+	if err = restarted.UpdateMember(ctx, removedMemberWorkspaceID, postgres.DemoHumanActorID, otherActorID, nil, &removed); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err = restarted.RedeemMCPLoginLinkAndIssueAgentToken(ctx, "removed-member-request", postgres.DigestSecret("removed-member-secret"), postgres.DigestSecret("removed-member-code"), now.Add(5*time.Minute)); !errors.Is(err, postgres.ErrMCPGatewayNotFound) {
+		t.Fatalf("removed human member redeemed a pending MCP link: %v", err)
+	}
 	// A newly linked local gateway ID replaces the old registration generation.
 	// No credential from the copied/old gateway store may survive that replacement.
 	if _, err = restarted.CreateMCPConnection(ctx, "replacement-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, consumed.GatewayID, postgres.DigestSecret("replacement-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = restarted.BeginMCPLoginLink(ctx, "replacement-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, postgres.DigestSecret("replacement-code"), now.Add(5*time.Minute), now.Add(7*time.Minute)); err != nil {
+	if _, err = restarted.BeginMCPLoginLink(ctx, "replacement-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, browserSessionID, postgres.DigestSecret("replacement-code"), now.Add(5*time.Minute), now.Add(7*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	_, replacement, replacementGatewaySecret, err := restarted.RedeemMCPLoginLinkAndIssueAgentToken(ctx, "replacement-request", postgres.DigestSecret("replacement-secret"), postgres.DigestSecret("replacement-code"), now.Add(6*time.Minute))
@@ -176,7 +227,7 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if _, err = restarted.CreateMCPConnection(ctx, "membership-change-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-membership-change", postgres.DigestSecret("membership-change-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = restarted.BeginMCPLoginLink(ctx, "membership-change-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, postgres.DigestSecret("membership-code"), now.Add(8*time.Minute), now.Add(10*time.Minute)); err != nil {
+	if _, err = restarted.BeginMCPLoginLink(ctx, "membership-change-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, browserSessionID, postgres.DigestSecret("membership-code"), now.Add(8*time.Minute), now.Add(10*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	_, _, membershipGatewaySecret, err := restarted.RedeemMCPLoginLinkAndIssueAgentToken(ctx, "membership-change-request", postgres.DigestSecret("membership-change-secret"), postgres.DigestSecret("membership-code"), now.Add(9*time.Minute))
@@ -194,20 +245,24 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if _, err = restarted.CreateMCPConnection(ctx, "logout-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-logout", postgres.DigestSecret("logout-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = restarted.BeginMCPLoginLink(ctx, "logout-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, postgres.DigestSecret("logout-code"), now.Add(11*time.Minute), now.Add(13*time.Minute)); err != nil {
+	if _, err = restarted.BeginMCPLoginLink(ctx, "logout-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, browserSessionID, postgres.DigestSecret("logout-code"), now.Add(11*time.Minute), now.Add(13*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	_, logoutToken, logoutGatewaySecret, err := restarted.RedeemMCPLoginLinkAndIssueAgentToken(ctx, "logout-request", postgres.DigestSecret("logout-secret"), postgres.DigestSecret("logout-code"), now.Add(12*time.Minute))
 	if err != nil || logoutToken.Token == "" || logoutGatewaySecret == "" {
 		t.Fatalf("logout gateway enrollment failed: %#v %v", logoutToken, err)
 	}
-	if _, err = restarted.Pool.Exec(ctx, `INSERT INTO account_sessions(id,account_id,token_hash,csrf_token_hash,created_at,last_seen_at,idle_expires_at,absolute_expires_at)
-		VALUES ('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000010',
-		decode(repeat('01',32),'hex'),decode(repeat('02',32),'hex'),$1,$1,$2,$2)`, now, now.Add(time.Hour)); err != nil {
+	if _, err = restarted.CreateMCPConnection(ctx, "logout-pending-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-logout-pending", postgres.DigestSecret("logout-pending-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted.RevokeSession(ctx, "00000000-0000-4000-8000-000000000011", now.Add(13*time.Minute)); err != nil {
+	if _, err = restarted.BeginMCPLoginLink(ctx, "logout-pending-request", postgres.DemoWorkspaceID, postgres.DemoHumanActorID, browserSessionID, postgres.DigestSecret("logout-pending-code"), now.Add(12*time.Minute), now.Add(14*time.Minute)); err != nil {
 		t.Fatal(err)
+	}
+	if err = restarted.RevokeSession(ctx, browserSessionID, now.Add(13*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err = restarted.RedeemMCPLoginLinkAndIssueAgentToken(ctx, "logout-pending-request", postgres.DigestSecret("logout-pending-secret"), postgres.DigestSecret("logout-pending-code"), now.Add(13*time.Minute)); !errors.Is(err, postgres.ErrMCPConnectionNotFound) && !errors.Is(err, postgres.ErrMCPLoginSession) {
+		t.Fatalf("logout allowed a pending browser link to issue a new gateway credential: %v", err)
 	}
 	if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(logoutToken.Token), now.Add(13*time.Minute)); err == nil {
 		t.Fatal("logout left its gateway Agent credential valid")
@@ -219,8 +274,8 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	if _, err = restarted.CreateMCPConnection(ctx, "abandoned-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-abandoned-identity", postgres.DigestSecret("abandoned-secret"), now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if pending, issued, _, err := restarted.PollMCPLoginLinkAndIssueAgentToken(ctx, "abandoned-request", postgres.DigestSecret("abandoned-secret"), now.Add(2*time.Minute)); err != nil || pending.Status != "pending" || issued.Token != "" {
-		t.Fatalf("abandoned request poll=%#v issued=%#v err=%v", pending, issued, err)
+	if pending, err := restarted.PollMCPLoginLink(ctx, "abandoned-request", postgres.DigestSecret("abandoned-secret"), now.Add(2*time.Minute)); err != nil || pending.Status != "pending" {
+		t.Fatalf("abandoned request poll=%#v err=%v", pending, err)
 	}
 
 	if _, err = restarted.CreateMCPConnection(ctx, "expired-request", postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-expired-identity", postgres.DigestSecret("expired-secret"), now.Add(-2*time.Minute), now.Add(-time.Minute)); err != nil {
@@ -228,5 +283,56 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 	}
 	if _, err = restarted.MCPConnection(ctx, "expired-request", now); !errors.Is(err, postgres.ErrMCPConnectionNotFound) {
 		t.Fatalf("expired request was recoverable: %v", err)
+	}
+
+	// Exercise the exact logout/callback race repeatedly. Both transactions use
+	// request-before-session locking, so neither may be selected as a PostgreSQL
+	// deadlock victim. If redeem wins, the completed logout must still revoke
+	// the newly issued Agent credential before either goroutine is observed here.
+	for i := 0; i < 8; i++ {
+		sessionID := fmt.Sprintf("10000000-0000-4000-8000-%012d", i)
+		requestID := fmt.Sprintf("logout-race-request-%d", i)
+		secret, code := "logout-race-secret-"+requestID, "logout-race-code-"+requestID
+		if _, err = restarted.Pool.Exec(ctx, `INSERT INTO account_sessions(id,account_id,token_hash,csrf_token_hash,created_at,last_seen_at,idle_expires_at,absolute_expires_at)
+			VALUES($1,'00000000-0000-4000-8000-000000000010',$2,$3,$4,$4,$5,$5)`, sessionID,
+			postgres.DigestSecret("token-"+sessionID), postgres.DigestSecret("csrf-"+sessionID), now, now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = restarted.CreateMCPConnection(ctx, requestID, postgres.DemoWorkspaceID, postgres.DemoAgentActorID, "gateway-"+requestID, postgres.DigestSecret(secret), now, now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = restarted.BeginMCPLoginLink(ctx, requestID, postgres.DemoWorkspaceID, postgres.DemoHumanActorID, sessionID, postgres.DigestSecret(code), now, now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+
+		start := make(chan struct{})
+		var wait sync.WaitGroup
+		var logoutErr, redeemErr error
+		var raceToken string
+		wait.Add(2)
+		go func() {
+			defer wait.Done()
+			<-start
+			logoutErr = restarted.RevokeSession(ctx, sessionID, now.Add(20*time.Minute))
+		}()
+		go func() {
+			defer wait.Done()
+			<-start
+			_, issued, _, redeem := restarted.RedeemMCPLoginLinkAndIssueAgentToken(ctx, requestID, postgres.DigestSecret(secret), postgres.DigestSecret(code), now.Add(20*time.Minute))
+			redeemErr, raceToken = redeem, issued.Token
+		}()
+		close(start)
+		wait.Wait()
+		if logoutErr != nil {
+			t.Fatalf("concurrent logout %d failed: %v", i, logoutErr)
+		}
+		if redeemErr != nil && !errors.Is(redeemErr, postgres.ErrMCPConnectionNotFound) && !errors.Is(redeemErr, postgres.ErrMCPLoginSession) {
+			t.Fatalf("concurrent redeem %d failed unexpectedly: %v", i, redeemErr)
+		}
+		if raceToken != "" {
+			if _, err = restarted.AgentByTokenHash(ctx, postgres.DigestSecret(raceToken), now.Add(20*time.Minute)); err == nil {
+				t.Fatalf("concurrent logout %d left the redeemed Agent credential active", i)
+			}
+		}
 	}
 }

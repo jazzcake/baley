@@ -32,7 +32,7 @@ $checks += Add-Check "recent-restore-verification" $recentVerification $(if ($la
 $worktree = @(& git -C $repoRoot status --porcelain)
 $checks += Add-Check "clean-worktree" ($worktree.Count -eq 0) $(if ($worktree.Count -eq 0) { "clean" } else { "$($worktree.Count) pending entries" })
 
-$mcpStdioRegistration = $false
+$mcpLoopbackRegistration = $false
 $mcpTokenFree = $false
 $codexCLI = $null
 try { $codexCLI = Resolve-CodexCLI } catch {}
@@ -41,14 +41,15 @@ if ($null -ne $codexCLI) {
     $mcpConfigJSON = (& $codexCLI mcp get baley --json 2>$null | Out-String)
     if ($LASTEXITCODE -eq 0) {
       $mcpConfig = $mcpConfigJSON | ConvertFrom-Json
-      $envProperties = @($mcpConfig.env.PSObject.Properties.Name)
-      $mcpStdioRegistration = $mcpConfig.transport.type -eq "stdio" -and $envProperties -contains "BALEY_SERVER_URL" -and $envProperties -contains "BALEY_MCP_CREDENTIAL_STORE"
-      $mcpTokenFree = -not ($envProperties -contains "BALEY_MCP_GATEWAY_TOKEN") -and -not ($envProperties -contains "BALEY_AGENT_TOKEN")
+      $topProperties = @($mcpConfig.PSObject.Properties.Name)
+      $transportProperties = @($mcpConfig.transport.PSObject.Properties.Name)
+      $mcpLoopbackRegistration = $mcpConfig.transport.type -eq "streamable_http" -and $mcpConfig.transport.url -eq "http://127.0.0.1:8090/mcp" -and -not ($topProperties -contains "command") -and -not ($topProperties -contains "env")
+      $mcpTokenFree = $mcpConfig.transport.bearer_token_env_var -eq $null -and $mcpConfig.transport.http_headers -eq $null -and $mcpConfig.transport.env_http_headers -eq $null -and -not ($transportProperties -contains "authorization")
     }
   } catch {}
 }
-$checks += Add-Check "codex-mcp-tokenless-stdio" $mcpStdioRegistration "direct stdio with server URL and credential-store path"
-$checks += Add-Check "codex-mcp-no-token-environment" $mcpTokenFree "no Baley gateway or Agent token in Codex MCP environment"
+$checks += Add-Check "codex-mcp-loopback-gateway" $mcpLoopbackRegistration "streamable HTTP at http://127.0.0.1:8090/mcp with no command registration"
+$checks += Add-Check "codex-mcp-no-token-or-header" $mcpTokenFree "no bearer-token environment variable or HTTP Authorization header"
 
 $baleyPluginInstalled = $false
 $baleyPluginSkills = $false

@@ -605,7 +605,7 @@ Wave 1~3은 Phase 2 통합의 직접 선행 작업이다. Wave 4~7은 앞 타입
 5. migration up/down/up
 6. 실제 PostgreSQL integration test에서 skip 0건
 7. HTTP contract test
-8. MCP stdio E2E에서 skip 0건
+8. MCP Streamable HTTP E2E에서 skip 0건
 9. `npm test -- --reporter=dot`, typecheck와 build
 10. Viewer와 사람 승인 인수 시나리오
 

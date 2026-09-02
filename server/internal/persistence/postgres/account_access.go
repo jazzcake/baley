@@ -413,6 +413,30 @@ func (r *Repository) RevokeSession(ctx context.Context, id string, now time.Time
 		return err
 	}
 	defer tx.Rollback(ctx)
+	// MCP redeem locks its connection request before it locks the browser
+	// session. Lock every already-bound pending request in that same order so a
+	// concurrent logout cannot deadlock with the callback redeem transaction.
+	// A link that is still being bound is safe as well: BeginMCPLoginLink holds
+	// its request lock while it waits for this session lock, then observes the
+	// revoked session and rolls back.
+	rows, err := tx.Query(ctx, `SELECT id FROM mcp_connection_requests
+		WHERE login_session_id=$1 AND status='pending'
+		ORDER BY id FOR UPDATE`, id)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var requestID string
+		if err = rows.Scan(&requestID); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
 	var accountID, actorID string
 	if err = tx.QueryRow(ctx, `SELECT session.account_id::text,account.actor_id
 		FROM account_sessions session JOIN accounts account ON account.id=session.account_id
@@ -420,6 +444,10 @@ func (r *Repository) RevokeSession(ctx context.Context, id string, now time.Time
 		return err
 	}
 	if _, err = tx.Exec(ctx, "UPDATE account_sessions SET revoked_at=COALESCE(revoked_at,$1) WHERE id=$2", now, id); err == nil {
+		if _, err = tx.Exec(ctx, `DELETE FROM mcp_connection_requests
+			WHERE login_session_id=$1 AND status='pending'`, id); err != nil {
+			return err
+		}
 		// A browser logout ends the Account's device trust as well. Registered
 		// gateway credentials are derived from that human membership, so leave no
 		// still-running MCP process authorized after logout.

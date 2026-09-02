@@ -551,22 +551,15 @@ type gateTaskExecuteInput struct {
 }
 
 func main() {
-	mode := "stdio"
-	if len(os.Args) > 2 || (len(os.Args) == 2 && os.Args[1] != "serve-http" && os.Args[1] != "migrate-legacy" && os.Args[1] != "rollback-legacy" && os.Args[1] != "diagnose") {
-		log.Fatal("usage: baley-mcp [serve-http|migrate-legacy|rollback-legacy|diagnose]")
-	}
-	if len(os.Args) == 2 {
-		mode = os.Args[1]
+	mode, err := parseMode(os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
 	}
 	base := os.Getenv("BALEY_SERVER_URL")
 	if base == "" {
 		base = "http://127.0.0.1:8080"
 	}
-	validationMode := mode
-	if mode != "serve-http" {
-		validationMode = "stdio"
-	}
-	if _, err := validateServerURL(base, validationMode); err != nil {
+	if _, err := validateServerURL(base); err != nil {
 		log.Fatal(err)
 	}
 	c := &client{
@@ -602,9 +595,18 @@ func main() {
 		}
 		return
 	}
-	server := newMCPServer(c)
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		log.Fatal(err)
+}
+
+func parseMode(args []string) (string, error) {
+	const usage = "usage: baley-mcp <serve-http|migrate-legacy|rollback-legacy|diagnose>"
+	if len(args) != 1 {
+		return "", errors.New(usage)
+	}
+	switch args[0] {
+	case "serve-http", "migrate-legacy", "rollback-legacy", "diagnose":
+		return args[0], nil
+	default:
+		return "", errors.New(usage)
 	}
 }
 
@@ -685,7 +687,7 @@ func classifiedTool(name, description string) *mcp.Tool {
 	}
 }
 
-func validateServerURL(base, mode string) (*url.URL, error) {
+func validateServerURL(base string) (*url.URL, error) {
 	parsed, err := url.Parse(base)
 	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Hostname() == "" {
 		return nil, errors.New("BALEY_SERVER_URL must be an absolute http(s) URL without credentials, query, or fragment")
@@ -693,8 +695,8 @@ func validateServerURL(base, mode string) (*url.URL, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, errors.New("BALEY_SERVER_URL must use http or https")
 	}
-	if mode == "stdio" && parsed.Scheme == "http" && !(parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1") {
-		return nil, errors.New("stdio BALEY_SERVER_URL must use HTTPS unless it is loopback HTTP")
+	if parsed.Scheme == "http" && !(parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1") {
+		return nil, errors.New("BALEY_SERVER_URL must use HTTPS unless it is loopback HTTP")
 	}
 	return parsed, nil
 }

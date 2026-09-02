@@ -27,7 +27,7 @@ import (
 	"golang.org/x/term"
 )
 
-const expectedSchemaVersion int64 = 24
+const expectedSchemaVersion int64 = 25
 
 var (
 	buildVersion = "dev"

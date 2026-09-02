@@ -28,7 +28,7 @@ affects:
 - 각 Wave의 자체 `test`·`vet`·`race` 검증 완료
 - 각 Wave의 독립 Agent 리뷰, finding 반영과 최종 재리뷰 완료
 - Wave 7 최종 독립 리뷰 판정 `CLOSE`
-- 전용 `baley_test`에서 migration up/down/up, PostgreSQL integration과 MCP stdio E2E skip 0건 검증 완료
+- 전용 `baley_test`에서 migration up/down/up, PostgreSQL integration과 MCP Streamable HTTP E2E skip 0건 검증 완료
 - Viewer baseline과 Gate Focus API projection을 브라우저에서 검증하고 발견한 focus 전환 문제를 반영 완료
 - Run persistence 첫 단위인 `run.start`를 PostgreSQL·HTTP·MCP에 연결 완료
 - heartbeat/terminal CAS, Record, 실제 Git repository, CLI, project init과 Run/Record Viewer 연결은 후속 데스크탑 통합 대기
@@ -97,7 +97,7 @@ Vite build에는 단일 JavaScript chunk가 500 kB를 넘는다는 비차단 war
 
 ```text
 TestGateTransitionAgainstPostgres — BALEY_TEST_DATABASE_URL 미설정으로 SKIP
-TestMCPStdioListsAndCallsTools — BALEY_MCP_E2E 미설정으로 SKIP
+TestMCPStreamableHTTPListsAndCallsTools — BALEY_MCP_E2E 미설정으로 SKIP
 ```
 
 2026-07-18 데스크탑 복귀 후 두 test를 각각 전용 `baley_test`와 격리 HTTP port에서 skip 없이 통과시켰다. Phase 2 최종 구현에서 Run lifecycle과 Record command/query를 더해 MCP catalog는 29개 tool이 됐다.
@@ -147,7 +147,7 @@ go test -v -count=1 ./integration -run TestGateTransitionAgainstPostgres
 
 성공 조건은 PostgreSQL test가 skip 없이 통과하는 것이다.
 
-### 5.4 MCP stdio E2E
+### 5.4 MCP Streamable HTTP E2E
 
 첫 번째 터미널:
 
@@ -162,7 +162,7 @@ go run ./cmd/baley-server serve
 
 ```bash
 cd server
-BALEY_MCP_E2E=1 go test -v -count=1 ./integration -run TestMCPStdioListsAndCallsTools
+BALEY_MCP_E2E=1 BALEY_MCP_BINARY=/path/to/prebuilt/baley-mcp go test -v -count=1 ./integration -run TestMCPStreamableHTTPListsAndCallsTools
 ```
 
 성공 조건은 MCP test가 skip 없이 29개 tool을 확인하고 graph query, Run lifecycle과 Record 등록·조회 실제 호출을 완료하는 것이다.

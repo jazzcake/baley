@@ -137,7 +137,7 @@ func TestPhaseTasksAdvertisesBoundedPaginationSchema(t *testing.T) {
 
 func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t *testing.T) {
 	const workspaceToken = "workspace-agent-token"
-	var connectionCreated, connectionPolled, workspaceReads int
+	var connectionCreated, connectionRedeemed, workspaceReads int
 	var upstreamAuthorizations []string
 	var upstreamMu sync.Mutex
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,13 +149,17 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 			connectionCreated++
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"connection","workspaceId":"workspace","status":"pending","connectionSecret":"secret","loginUrl":"http://viewer/login"}`))
-		case "/v1/mcp/login-links/connection":
-			connectionPolled++
+		case "/v1/mcp/login-links/connection/redeem":
+			connectionRedeemed++
 			if r.Header.Get("X-Baley-Connection-Secret") != "secret" {
 				http.Error(w, "missing connection secret", http.StatusForbidden)
 				return
 			}
-			_, _ = w.Write([]byte(`{"id":"connection","workspaceId":"workspace","status":"consumed","agentToken":"` + workspaceToken + `"}`))
+			if r.Header.Get("X-Baley-Login-Code") != "login-code" {
+				http.Error(w, "missing login code", http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"connection","workspaceId":"workspace","status":"consumed","agentToken":"` + workspaceToken + `","gatewayId":"gateway","gatewaySecret":"gateway-secret"}`))
 		case "/v1/workspaces/workspace":
 			workspaceReads++
 			if r.Header.Get("Authorization") != "Bearer "+workspaceToken {
@@ -187,6 +191,9 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 	if err != nil || !first.IsError {
 		t.Fatalf("initial connection result=%#v err=%v", first, err)
 	}
+	if _, err = c.completeWorkspaceLink(context.Background(), "connection", "login-code"); err != nil {
+		t.Fatalf("browser callback did not redeem the local link: %v", err)
+	}
 
 	secondSession, err := newSession()
 	if err != nil {
@@ -210,8 +217,8 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 
 	upstreamMu.Lock()
 	defer upstreamMu.Unlock()
-	if connectionCreated != 1 || connectionPolled != 1 || workspaceReads != 2 {
-		t.Fatalf("connections=%d polls=%d workspaceReads=%d, want 1/1/2", connectionCreated, connectionPolled, workspaceReads)
+	if connectionCreated != 1 || connectionRedeemed != 1 || workspaceReads != 2 {
+		t.Fatalf("connections=%d redemptions=%d workspaceReads=%d, want 1/1/2", connectionCreated, connectionRedeemed, workspaceReads)
 	}
 	for _, authorization := range upstreamAuthorizations {
 		if authorization == "" {
@@ -359,9 +366,13 @@ func TestClientRenewsWorkspaceCredentialInFreshProcessWithoutPersistingToken(t *
 			connectionCreated = true
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"pending","connectionSecret":"secret","loginUrl":"http://viewer/workspaces/` + workspaceID + `/mcp-login/c1"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/mcp/login-links/c1":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/mcp/login-links/c1/redeem":
 			if r.Header.Get("X-Baley-Connection-Secret") != "secret" {
 				http.Error(w, "missing connection secret", http.StatusForbidden)
+				return
+			}
+			if r.Header.Get("X-Baley-Login-Code") != "login-code" {
+				http.Error(w, "missing login code", http.StatusForbidden)
 				return
 			}
 			_, _ = w.Write([]byte(`{"id":"c1","workspaceId":"` + workspaceID + `","status":"consumed","agentToken":"` + enrolledToken + `","gatewaySecret":"` + gatewaySecret + `"}`))
@@ -396,11 +407,14 @@ func TestClientRenewsWorkspaceCredentialInFreshProcessWithoutPersistingToken(t *
 		t.Fatalf("missing actionable login result: %#v", result.StructuredContent)
 	}
 
-	// A new MCP process may consume the signed-in link but must not write
-	// the issued Agent credential into the local store.
+	// A new Gateway process redeems the browser callback but must not write the
+	// issued Agent credential into the local store.
 	restarted := &client{
 		base: server.URL, http: server.Client(), credentialStorePath: storePath,
 		agentActorID: "agent",
+	}
+	if _, err = restarted.completeWorkspaceLink(context.Background(), "c1", "login-code"); err != nil {
+		t.Fatalf("browser callback did not redeem the local link: %v", err)
 	}
 	result, _, err = restarted.workspaceGet(context.Background(), nil, workspaceInput{WorkspaceID: workspaceID})
 	if err != nil || result.IsError || !workspaceRead {

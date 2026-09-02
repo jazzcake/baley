@@ -32,7 +32,7 @@ baley-manage-work skill을 적용하세요. Web Viewer는 read-only이고, Agent
 3. migration up/down/up
 4. go test, vet, race
 5. PostgreSQL integration skip 0건
-6. server를 띄운 뒤 MCP stdio E2E skip 0건
+6. server를 띄운 뒤 MCP Streamable HTTP E2E skip 0건
 7. npm test, typecheck, build
 8. Viewer baseline 사람 인수 확인
 

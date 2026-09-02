@@ -151,9 +151,9 @@ func (r *Repository) ResumeMCPGateway(ctx context.Context, workspaceID, gatewayI
 	if subtle.ConstantTimeCompare(DigestSecret(secret), registration.SecretHash) != 1 {
 		return AgentTokenResult{}, ErrMCPGatewaySecret
 	}
-	// A local gateway secret is device-scoped, while Codex starts one stdio MCP
-	// process per client session.  Renewing a session must therefore not revoke
-	// tokens held by the other live processes on the same registered device:
+	// A local gateway secret is device-scoped, while multiple Codex clients share
+	// one local Gateway. Renewing a session must therefore not revoke tokens held
+	// by the other live clients on the same registered device:
 	// doing so makes their next request look like a lost gateway credential and
 	// incorrectly sends the user back through browser login. Gateway
 	// replacement, explicit revocation, logout, membership changes, and archive

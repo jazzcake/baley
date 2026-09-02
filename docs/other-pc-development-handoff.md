@@ -89,7 +89,7 @@ D:\Project_AI\baley 저장소의 다른 PC 개발 환경을 복원하고 작업 
 - PostgreSQL aggregate acceptance가 필요하면 운영 DB가 아니라 이름에 test 또는 acceptance가 포함된 별도 loopback DB를 BALEY_TEST_DATABASE_URL로 지정하고 scripts/run-embedding-enablement-acceptance.ps1을 실행하세요. 운영/Pilot DB를 테스트 DB로 사용하지 마세요.
 
 5. MCP와 작업 재개
-- Agent MCP는 tokenless stdio registration을 사용하고, Workspace 연결은 OS keychain의 gateway registration으로 갱신하세요. token 값을 채팅이나 저장소에 기록하지 마세요.
+- Agent MCP는 기기당 단일 loopback Gateway registration을 사용하고, Workspace 연결은 OS keychain의 gateway registration으로 갱신하세요. token 값을 채팅이나 저장소에 기록하지 마세요.
 - 환경 변수 또는 MCP schema가 바뀌었다면 새 thread/프로세스로 다시 연결하세요.
 - fresh Workspace read 후 다음 실제 Task를 제안하되, 사람 전용 승인, Task confirm, Gate pass는 baley-manage-work 승인 경계를 그대로 지키세요.
 - 현재 진행 상태를 임의로 seed 데이터나 문서의 숫자로 덮어쓰지 마세요.

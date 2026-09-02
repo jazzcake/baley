@@ -26,9 +26,8 @@ $gatewayPidFile = Join-Path $installRoot "loopback-gateway.pid"
 $legacyGatewayPidFile = Join-Path $buildRoot "loopback-gateway.pid"
 $taskName = "Baley MCP Gateway"
 New-Item -ItemType Directory -Force (Split-Path -Parent $binary) | Out-Null
-# Desktop/CLI starts this binary per stdio session. Strip DWARF and symbol
-# tables from the release artifact; this changes neither the tokenless
-# transport nor its Windows Credential Manager integration.
+# Strip DWARF and symbol tables from the release artifact. This changes neither
+# the loopback transport nor its Windows Credential Manager integration.
 if (!(Test-Path -LiteralPath $binary -PathType Leaf)) {
   go -C (Join-Path $repoRoot "server") build -trimpath -ldflags "-s -w" -o $binary ./cmd/baley-mcp
   if ($LASTEXITCODE -ne 0) { throw "Baley MCP build failed" }
@@ -49,10 +48,6 @@ $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powersh
 $action = New-ScheduledTaskAction -Execute $powershell -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcher`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-$legacyStdio = @(Get-CimInstance Win32_Process -Filter "Name='baley-mcp.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -notlike "*serve-http*" })
-if ($legacyStdio.Count -gt 0) {
-  Write-Warning "$($legacyStdio.Count) existing Codex session(s) still use stdio Baley MCP. They may finish naturally; new sessions will use the single loopback Gateway. Cross-process credential-store locking remains enforced during the transition."
-}
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
   Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 }
@@ -126,7 +121,7 @@ if (!$ready) { throw "Baley loopback Gateway did not become ready; existing Code
 # `codex mcp add` replaces the named registration atomically. Orca supplies a
 # private CODEX_HOME to its sessions, while standalone Codex Desktop/CLI use the
 # default profile. Register both homes so a reboot or restored Desktop session
-# cannot fall back to the retired per-session stdio binary.
+# cannot fall back to a command-based per-session MCP process.
 $originalCodexHome = [Environment]::GetEnvironmentVariable("CODEX_HOME", "Process")
 $defaultCodexHome = Join-Path $env:USERPROFILE ".codex"
 $orcaCodexHome = Join-Path $env:APPDATA "orca\codex-runtime-home\home"

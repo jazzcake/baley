@@ -17,10 +17,10 @@ func TestMigration13CleansLegacyAutomaticGateEntries(t *testing.T) {
 	requireDisposableDatabase(t, url)
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "migration-13-integration-secret")
 	migrations := filepath.Join("..", "migrations")
-	// Migrations 14 through 23 now sit above the migration under test.
-	// Step down through 23..13 so this test still exercises the
+	// Migrations 14 through 25 now sit above the migration under test.
+	// Step down through 25..13 so this test still exercises the
 	// legacy automatic-entry cleanup boundary.
-	for range 11 {
+	for range 13 {
 		if err := postgres.Migrate(url, migrations, "down"); err != nil {
 			t.Fatal(err)
 		}

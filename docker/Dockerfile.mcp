@@ -1,5 +1,0 @@
-# Retired: Baley no longer ships a Docker Streamable HTTP MCP gateway. Codex
-# runs the local tokenless stdio binary so device credentials stay in the OS
-# keychain and no HTTP listener is exposed.
-FROM alpine:3.22
-CMD ["sh", "-c", "echo 'Baley Docker MCP gateway is retired; use tokenless stdio.' >&2; exit 1"]

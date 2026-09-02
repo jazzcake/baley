@@ -4,15 +4,16 @@ Use this handoff in every Baley-using project after the host deploys the
 tokenless local MCP binary.
 
 ```text
-Baley MCP uses a local tokenless stdio process. Do not put a Baley token in
-Codex config, a project environment file, a URL, or an Authorization header.
+Baley MCP uses one tokenless loopback Gateway per signed-in OS user. Do not put
+a Baley token in Codex config, a project environment file, a URL, or an
+Authorization header.
 
 Host setup:
-1. Install the host-provided tokenless registration (on macOS run
+1. Install the host-provided loopback Gateway (on macOS run
    ./scripts/install-baley-mcp-macos.sh).
-2. Codex starts baley-mcp directly with BALEY_SERVER_URL and
-   BALEY_MCP_CREDENTIAL_STORE only. The device-bound secret remains in the OS
-   Keychain / Credential Manager.
+2. The per-user service starts `baley-mcp serve-http`; Codex connects only to
+   `http://127.0.0.1:8090/mcp`. The device-bound secret remains in the OS
+   Keychain / Credential Manager and is not placed in Codex configuration.
 3. Fully restart Codex Desktop or begin a new Codex CLI session.
 
 For this project:

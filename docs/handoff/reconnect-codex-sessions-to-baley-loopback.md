@@ -5,7 +5,7 @@
 연결한다.
 
 ```text
-Baley MCP가 구형 세션별 stdio 실행 방식에서 단일 loopback Gateway로 전환됐습니다.
+Baley MCP가 구형 세션별 실행 방식에서 단일 loopback Gateway로 전환됐습니다.
 
 지금 이 세션에서 다음을 수행하세요.
 
@@ -17,7 +17,7 @@ Baley MCP가 구형 세션별 stdio 실행 방식에서 단일 loopback Gateway�
 3. 필요한 변경은 기존 작업공간의 정상 절차에 따라 저장·커밋·푸시하세요. 미완성 변경을
    억지로 커밋하지 말고 handoff에 정확히 기록하세요.
 4. 더 이상 `C:\Users\jazzc\AppData\Local\Baley\mcp\baley-mcp.exe`를 직접 실행하거나
-   stdio `command` 등록, BALEY_MCP_GATEWAY_TOKEN, Authorization header를 사용하지 마세요.
+   `command` 기반 등록, BALEY_MCP_GATEWAY_TOKEN, Authorization header를 사용하지 마세요.
 5. handoff를 남긴 뒤 이 Codex 세션을 완전히 종료하세요.
 
 시스템 재부팅 후 같은 작업공간에서 새 Codex 세션을 열고 다음을 확인하세요.

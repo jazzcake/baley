@@ -167,7 +167,7 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 	}
 
 	if pending, ok := store.PendingLinks[workspaceID]; ok {
-		response, err := c.pollWorkspaceLink(ctx, pending)
+		_, err := c.pollWorkspaceLink(ctx, pending)
 		if err != nil {
 			var statusError connectionHTTPStatusError
 			if !errors.As(err, &statusError) || statusError.StatusCode != http.StatusNotFound {
@@ -179,18 +179,6 @@ func (c *client) workspaceCredential(ctx context.Context, workspaceID string) (s
 			}
 			// A not-found connection request has expired or been consumed. Start
 			// a replacement in this call rather than leaving this MCP process stuck.
-		} else if response.AgentToken != "" {
-			// Polling issues a one-time Agent token and atomically marks the
-			// connection consumed. The response can therefore be either linked
-			// (before a repository implementation marks consumption) or consumed.
-			// The token itself is the authoritative successful hand-off.
-			store.Workspaces[workspaceID] = workspaceCredential{GatewaySecret: response.GatewaySecret, ConnectedAt: time.Now().UTC()}
-			delete(store.PendingLinks, workspaceID)
-			if err = c.writeCredentialStore(ctx, &store); err != nil {
-				return "", nil, err
-			}
-			c.rememberSessionToken(workspaceID, response.AgentToken)
-			return response.AgentToken, nil, nil
 		} else {
 			return "", loginRequired(workspaceID, c.localWorkspaceLoginURL(pending)), nil
 		}
@@ -759,8 +747,8 @@ func (c *client) removeWorkspaceCredential(ctx context.Context, workspaceID stri
 	return c.writeCredentialStore(ctx, &store)
 }
 
-// lockCredentialStore serializes the read-modify-write path across stdio
-// processes and the long-lived loopback Gateway. The platform file lock is
+// lockCredentialStore serializes the read-modify-write path across Gateway
+// restarts and migration commands. The platform file lock is
 // released by the OS even when its owner is killed, so an installer restart
 // cannot strand the Keychain credential store behind a stale lock file.
 func (c *client) lockCredentialStore(ctx context.Context) (func(), error) {

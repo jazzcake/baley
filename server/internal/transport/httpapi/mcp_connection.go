@@ -80,7 +80,7 @@ func (a *API) createMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) pollMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 	secret := r.Header.Get("X-Baley-Connection-Secret")
-	view, issued, gatewaySecret, err := a.Repo.PollMCPLoginLinkAndIssueAgentToken(r.Context(), r.PathValue("connectionId"), postgres.DigestSecret(secret), time.Now().UTC())
+	view, err := a.Repo.PollMCPLoginLink(r.Context(), r.PathValue("connectionId"), postgres.DigestSecret(secret), time.Now().UTC())
 	if errors.Is(err, postgres.ErrMCPConnectionNotFound) || errors.Is(err, postgres.ErrMCPConnectionSecret) || errors.Is(err, postgres.ErrMCPConnectionConsumed) {
 		mcpConnectionNotFound(w)
 		return
@@ -89,13 +89,7 @@ func (a *API) pollMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	result := map[string]any{"id": view.ID, "workspaceId": view.WorkspaceID, "status": view.Status, "expiresAt": view.ExpiresAt}
-	if issued.Token != "" {
-		result["agentToken"] = issued.Token
-		result["gatewayId"] = view.GatewayID
-		result["gatewaySecret"] = gatewaySecret
-	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, map[string]any{"id": view.ID, "workspaceId": view.WorkspaceID, "status": view.Status, "expiresAt": view.ExpiresAt})
 }
 
 func (a *API) redeemMCPLoginLink(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +100,7 @@ func (a *API) redeemMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view, issued, gatewaySecret, err := a.Repo.RedeemMCPLoginLinkAndIssueAgentToken(r.Context(), r.PathValue("connectionId"), postgres.DigestSecret(secret), postgres.DigestSecret(code), time.Now().UTC())
-	if errors.Is(err, postgres.ErrMCPConnectionNotFound) || errors.Is(err, postgres.ErrMCPConnectionSecret) || errors.Is(err, postgres.ErrMCPConnectionConsumed) || errors.Is(err, postgres.ErrMCPLoginCode) {
+	if errors.Is(err, postgres.ErrMCPConnectionNotFound) || errors.Is(err, postgres.ErrMCPConnectionSecret) || errors.Is(err, postgres.ErrMCPConnectionConsumed) || errors.Is(err, postgres.ErrMCPLoginCode) || errors.Is(err, postgres.ErrMCPLoginSession) {
 		mcpConnectionNotFound(w)
 		return
 	}
@@ -230,8 +224,8 @@ func (a *API) completeMCPLoginLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	_, err = a.Repo.BeginMCPLoginLink(r.Context(), r.PathValue("connectionId"), r.PathValue("workspaceId"), state.Principal.ActorID, postgres.DigestSecret(code), now, now.Add(mcpLoginCodeTTL))
-	if errors.Is(err, postgres.ErrMCPConnectionNotFound) || errors.Is(err, postgres.ErrMCPConnectionConsumed) {
+	_, err = a.Repo.BeginMCPLoginLink(r.Context(), r.PathValue("connectionId"), r.PathValue("workspaceId"), state.Principal.ActorID, state.Principal.SessionID, postgres.DigestSecret(code), now, now.Add(mcpLoginCodeTTL))
+	if errors.Is(err, postgres.ErrMCPConnectionNotFound) || errors.Is(err, postgres.ErrMCPConnectionConsumed) || errors.Is(err, postgres.ErrMCPLoginSession) {
 		mcpConnectionNotFound(w)
 		return
 	}

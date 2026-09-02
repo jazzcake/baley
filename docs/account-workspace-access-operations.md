@@ -133,8 +133,8 @@ Agent-safe capability catalog. Owner/Operator receive normal operation scopes;
 Viewer/Approver receive read-only scope. Human-only Task confirmation, Gate
 passage, and policy changes remain unavailable to it. Raw
 tokens never enter chat, `config.toml`, command JSON, Task Records, browser
-storage, Git, or logs. `scripts/prepare-local-pilot-agent.ps1` is retired for
-Codex access; use the tokenless migration diagnostics instead.
+storage, Git, or logs. Use the loopback Gateway installer and redacted
+`baley_mcp_diagnostics` output for Codex access and troubleshooting.
 
 ## 6. Confirm a human-only command
 

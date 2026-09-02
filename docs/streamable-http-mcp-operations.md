@@ -26,11 +26,10 @@ The local Gateway may connect to the remote Baley API only with HTTPS. It binds
 only to loopback, is not a Tailscale or public endpoint, and reads device
 credentials only through the OS credential manager.
 
-Loopback is a same-machine trust boundary, not a Windows-user authentication
-boundary: do not enable this HTTP transport on a shared/untrusted desktop. In
-that environment keep the tokenless stdio transport until Codex supports a
-per-user OS-authenticated local transport. No external network peer can reach
-the loopback endpoint.
+Loopback is a same-machine trust boundary, not an OS-user authentication
+boundary. Do not run the Baley Gateway on a shared or untrusted desktop; Baley
+does not provide a command-based per-session fallback. No external network peer
+can reach the loopback endpoint.
 
 The first device is linked through an MCP-visible loopback `loginUrl` that
 verifies the pending local request before redirecting to Baley. An active

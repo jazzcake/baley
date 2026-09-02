@@ -98,7 +98,7 @@ Required ordering:
 
 - grouped `task.confirm`은 동일 baseline과 순차 fresh-preview revision chain을
   유지하는 Operator protocol 및 server exact binding 테스트로 검증한다.
-- phase-targeted `task.create`는 typed MCP stdio E2E에서 parent, predecessor,
+- phase-targeted `task.create`는 typed MCP Streamable HTTP E2E에서 parent, predecessor,
   successor, warning acknowledgement와 Event 결속을 검증한다.
 - lane `BacklogItem`은 Phase 없는 create/update/move/reorder/discard와 명시 Phase
   promote를 contracts, Go domain/application, PostgreSQL, HTTP/CLI, typed MCP와

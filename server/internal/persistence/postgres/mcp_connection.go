@@ -14,12 +14,13 @@ var (
 	ErrMCPConnectionSecret   = errors.New("MCP connection secret mismatch")
 	ErrMCPConnectionConsumed = errors.New("MCP connection request already consumed")
 	ErrMCPLoginCode          = errors.New("MCP login code mismatch")
+	ErrMCPLoginSession       = errors.New("MCP login browser session is no longer active")
 )
 
 type MCPConnectionRequest struct {
 	ID, WorkspaceID, AgentActorID, GatewayID, Status, LinkedByActorID string
 	SecretHash, LoginCodeHash                                         []byte
-	LoginActorID                                                      string
+	LoginActorID, LoginSessionID                                      string
 	CreatedAt, ExpiresAt                                              time.Time
 	LinkedAt, ConsumedAt, LoginCodeExpiresAt                          *time.Time
 }
@@ -39,7 +40,7 @@ func (r *Repository) MCPConnection(ctx context.Context, id string, now time.Time
 	return request, err
 }
 
-func (r *Repository) BeginMCPLoginLink(ctx context.Context, id, workspaceID, memberActorID string, codeHash []byte, now, codeExpiresAt time.Time) (MCPConnectionRequest, error) {
+func (r *Repository) BeginMCPLoginLink(ctx context.Context, id, workspaceID, memberActorID, sessionID string, codeHash []byte, now, codeExpiresAt time.Time) (MCPConnectionRequest, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
 		return MCPConnectionRequest{}, err
@@ -61,10 +62,23 @@ func (r *Repository) BeginMCPLoginLink(ctx context.Context, id, workspaceID, mem
 	if request.Status != "pending" {
 		return MCPConnectionRequest{}, ErrMCPConnectionConsumed
 	}
-	if _, err = tx.Exec(ctx, "UPDATE mcp_connection_requests SET login_code_hash=$1,login_code_expires_at=$2,login_actor_id=$3 WHERE id=$4", codeHash, codeExpiresAt, memberActorID, id); err != nil {
+	var activeSessionActorID string
+	err = tx.QueryRow(ctx, `SELECT account.actor_id
+		FROM account_sessions session
+		JOIN accounts account ON account.id=session.account_id AND account.status='active'
+		WHERE session.id=$1 AND session.revoked_at IS NULL
+		  AND session.idle_expires_at>$2 AND session.absolute_expires_at>$2
+		FOR UPDATE OF session`, sessionID, now).Scan(&activeSessionActorID)
+	if errors.Is(err, pgx.ErrNoRows) || activeSessionActorID != memberActorID {
+		return MCPConnectionRequest{}, ErrMCPLoginSession
+	}
+	if err != nil {
 		return MCPConnectionRequest{}, err
 	}
-	request.LoginCodeHash, request.LoginCodeExpiresAt, request.LoginActorID = codeHash, &codeExpiresAt, memberActorID
+	if _, err = tx.Exec(ctx, "UPDATE mcp_connection_requests SET login_code_hash=$1,login_code_expires_at=$2,login_actor_id=$3,login_session_id=$4 WHERE id=$5", codeHash, codeExpiresAt, memberActorID, sessionID, id); err != nil {
+		return MCPConnectionRequest{}, err
+	}
+	request.LoginCodeHash, request.LoginCodeExpiresAt, request.LoginActorID, request.LoginSessionID = codeHash, &codeExpiresAt, memberActorID, sessionID
 	if err = tx.Commit(ctx); err != nil {
 		return MCPConnectionRequest{}, err
 	}
@@ -96,6 +110,19 @@ func (r *Repository) RedeemMCPLoginLinkAndIssueAgentToken(ctx context.Context, i
 	if request.LoginCodeExpiresAt == nil || !request.LoginCodeExpiresAt.After(now) || subtle.ConstantTimeCompare(codeHash, request.LoginCodeHash) != 1 {
 		return MCPConnectionRequest{}, AgentTokenResult{}, "", ErrMCPLoginCode
 	}
+	var activeSessionActorID string
+	err = tx.QueryRow(ctx, `SELECT account.actor_id
+		FROM account_sessions session
+		JOIN accounts account ON account.id=session.account_id AND account.status='active'
+		WHERE session.id=$1 AND session.revoked_at IS NULL
+		  AND session.idle_expires_at>$2 AND session.absolute_expires_at>$2
+		FOR UPDATE OF session`, request.LoginSessionID, now).Scan(&activeSessionActorID)
+	if errors.Is(err, pgx.ErrNoRows) || activeSessionActorID != request.LoginActorID {
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", ErrMCPLoginSession
+	}
+	if err != nil {
+		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
+	}
 	registration, gatewaySecret, err := r.enrollMCPGatewayTx(ctx, tx, request.WorkspaceID, request.LoginActorID, request.AgentActorID, request.GatewayID, now)
 	if err != nil {
 		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
@@ -118,62 +145,40 @@ func (r *Repository) RedeemMCPLoginLinkAndIssueAgentToken(ctx context.Context, i
 	return request, issued, gatewaySecret, nil
 }
 
-func (r *Repository) PollMCPLoginLinkAndIssueAgentToken(ctx context.Context, id string, secretHash []byte, now time.Time) (MCPConnectionRequest, AgentTokenResult, string, error) {
+func (r *Repository) PollMCPLoginLink(ctx context.Context, id string, secretHash []byte, now time.Time) (MCPConnectionRequest, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
+		return MCPConnectionRequest{}, err
 	}
 	defer tx.Rollback(ctx)
 	if _, err = tx.Exec(ctx, "DELETE FROM mcp_connection_requests WHERE expires_at <= $1", now); err != nil {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
+		return MCPConnectionRequest{}, err
 	}
 	request, err := scanMCPConnection(tx.QueryRow(ctx, mcpConnectionSelect+" WHERE id=$1 FOR UPDATE", id))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", ErrMCPConnectionNotFound
+		return MCPConnectionRequest{}, ErrMCPConnectionNotFound
 	}
 	if err != nil {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
+		return MCPConnectionRequest{}, err
 	}
 	if subtle.ConstantTimeCompare(secretHash, request.SecretHash) != 1 {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", ErrMCPConnectionSecret
+		return MCPConnectionRequest{}, ErrMCPConnectionSecret
 	}
 	if request.Status == "consumed" {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", ErrMCPConnectionConsumed
+		return MCPConnectionRequest{}, ErrMCPConnectionConsumed
 	}
-	if request.Status != "linked" {
-		if err = tx.Commit(ctx); err != nil {
-			return MCPConnectionRequest{}, AgentTokenResult{}, "", err
-		}
-		return request, AgentTokenResult{}, "", nil
-	}
-	registration, gatewaySecret, err := r.enrollMCPGatewayTx(ctx, tx, request.WorkspaceID, request.LinkedByActorID, request.AgentActorID, request.GatewayID, now)
-	if err != nil {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
-	}
-	scopes, err := memberAgentScopesTx(ctx, tx, request.WorkspaceID, request.LinkedByActorID)
-	if err != nil {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
-	}
-	issued, err := r.issueAgentTokenTx(ctx, tx, request.WorkspaceID, request.AgentActorID, "mcp-login-"+request.ID, request.LinkedByActorID, scopes, nil, &registration.ID)
-	if err != nil {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
-	}
-	if _, err = tx.Exec(ctx, "UPDATE mcp_connection_requests SET status='consumed',consumed_at=$1 WHERE id=$2", now, id); err != nil {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
-	}
-	request.Status, request.ConsumedAt = "consumed", &now
 	if err = tx.Commit(ctx); err != nil {
-		return MCPConnectionRequest{}, AgentTokenResult{}, "", err
+		return MCPConnectionRequest{}, err
 	}
-	return request, issued, gatewaySecret, nil
+	return request, nil
 }
 
-const mcpConnectionSelect = `SELECT id,workspace_id,agent_actor_id,gateway_id,secret_hash,status,COALESCE(linked_by_actor_id,''),created_at,expires_at,linked_at,consumed_at,login_code_hash,login_code_expires_at,COALESCE(login_actor_id,'') FROM mcp_connection_requests`
+const mcpConnectionSelect = `SELECT id,workspace_id,agent_actor_id,gateway_id,secret_hash,status,COALESCE(linked_by_actor_id,''),created_at,expires_at,linked_at,consumed_at,login_code_hash,login_code_expires_at,COALESCE(login_actor_id,''),COALESCE(login_session_id::text,'') FROM mcp_connection_requests`
 
 type mcpRow interface{ Scan(...any) error }
 
 func scanMCPConnection(row mcpRow) (MCPConnectionRequest, error) {
 	var v MCPConnectionRequest
-	err := row.Scan(&v.ID, &v.WorkspaceID, &v.AgentActorID, &v.GatewayID, &v.SecretHash, &v.Status, &v.LinkedByActorID, &v.CreatedAt, &v.ExpiresAt, &v.LinkedAt, &v.ConsumedAt, &v.LoginCodeHash, &v.LoginCodeExpiresAt, &v.LoginActorID)
+	err := row.Scan(&v.ID, &v.WorkspaceID, &v.AgentActorID, &v.GatewayID, &v.SecretHash, &v.Status, &v.LinkedByActorID, &v.CreatedAt, &v.ExpiresAt, &v.LinkedAt, &v.ConsumedAt, &v.LoginCodeHash, &v.LoginCodeExpiresAt, &v.LoginActorID, &v.LoginSessionID)
 	return v, err
 }
