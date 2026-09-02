@@ -145,7 +145,8 @@ try {
     codex mcp add baley --url $loopbackURL
     if ($LASTEXITCODE -ne 0) { throw "Codex MCP registration failed for $codexHome" }
     $registration = codex mcp get baley 2>&1
-    if ($LASTEXITCODE -ne 0 -or $registration -notmatch [regex]::Escape($loopbackURL) -or $registration -notmatch 'transport:\s+streamable_http') {
+    $registrationText = $registration | Out-String
+    if ($LASTEXITCODE -ne 0 -or $registrationText -notmatch [regex]::Escape($loopbackURL) -or $registrationText -notmatch 'transport:\s+streamable_http') {
       throw "Codex MCP registration verification failed for $codexHome"
     }
   }
