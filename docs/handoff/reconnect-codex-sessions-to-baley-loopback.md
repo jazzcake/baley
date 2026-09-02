@@ -11,8 +11,9 @@ Baley MCP가 구형 세션별 stdio 실행 방식에서 단일 loopback Gateway�
 
 1. 현재 작업트리와 진행 중인 작업을 읽고, 사용자 소유 변경을 삭제하거나 덮어쓰지 마세요.
 2. 진행 중인 Baley Task와 Run이 있으면 현재 상태, 마지막 성공 단계, 남은 작업, 관련 파일,
-   테스트 결과, branch/HEAD를 짧은 handoff로 남기세요. 실행 중 Run은 중단 또는 정상 종료로
-   정리하되 Task를 임의로 confirmed 처리하지 마세요.
+   테스트 결과, branch/HEAD를 짧은 handoff로 남기세요. Definition of Done과 검증을 실제로
+   마친 Run만 succeeded로 종료하고, 미완성 Run은 정확한 사유와 함께 interrupted로
+   정리하세요. Task를 임의로 confirmed 처리하지 마세요.
 3. 필요한 변경은 기존 작업공간의 정상 절차에 따라 저장·커밋·푸시하세요. 미완성 변경을
    억지로 커밋하지 말고 handoff에 정확히 기록하세요.
 4. 더 이상 `C:\Users\jazzc\AppData\Local\Baley\mcp\baley-mcp.exe`를 직접 실행하거나

@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$ServerURL = "https://jazzcake-home.tail87e929.ts.net/api"
+  [string]$ServerURL = "https://jazzcake-home.tail87e929.ts.net/api",
+  [string[]]$AdditionalCodexHomes = @()
 )
 
 Set-StrictMode -Version Latest
@@ -128,8 +129,9 @@ if (!$ready) { throw "Baley loopback Gateway did not become ready; existing Code
 # cannot fall back to the retired per-session stdio binary.
 $originalCodexHome = [Environment]::GetEnvironmentVariable("CODEX_HOME", "Process")
 $defaultCodexHome = Join-Path $env:USERPROFILE ".codex"
+$orcaCodexHome = Join-Path $env:APPDATA "orca\codex-runtime-home\home"
 $codexHomes = [System.Collections.Generic.List[string]]::new()
-foreach ($candidate in @($originalCodexHome, $defaultCodexHome)) {
+foreach ($candidate in @($originalCodexHome, $defaultCodexHome, $(if (Test-Path -LiteralPath $orcaCodexHome -PathType Container) { $orcaCodexHome })) + $AdditionalCodexHomes) {
   if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
   $resolvedCandidate = [IO.Path]::GetFullPath($candidate)
   if (!($codexHomes | Where-Object { $_.Equals($resolvedCandidate, [StringComparison]::OrdinalIgnoreCase) })) {
@@ -142,6 +144,10 @@ try {
     $env:CODEX_HOME = $codexHome
     codex mcp add baley --url $loopbackURL
     if ($LASTEXITCODE -ne 0) { throw "Codex MCP registration failed for $codexHome" }
+    $registration = codex mcp get baley 2>&1
+    if ($LASTEXITCODE -ne 0 -or $registration -notmatch [regex]::Escape($loopbackURL) -or $registration -notmatch 'transport:\s+streamable_http') {
+      throw "Codex MCP registration verification failed for $codexHome"
+    }
   }
 } finally {
   if ([string]::IsNullOrWhiteSpace($originalCodexHome)) {
@@ -150,4 +156,4 @@ try {
     $env:CODEX_HOME = $originalCodexHome
   }
 }
-Write-Output "Baley MCP is registered through the tokenless loopback Gateway at $loopbackURL for: $($codexHomes -join ', '). Restart Codex Desktop or begin a new CLI session."
+Write-Output "Baley MCP is registered and verified through the tokenless loopback Gateway at $loopbackURL for: $($codexHomes -join ', '). Restart Codex Desktop or begin a new CLI session."
