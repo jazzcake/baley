@@ -3,6 +3,7 @@
 이 디렉터리는 Baley V1에서 코드가 그대로 사용하는 이름과 값의 정본이다.
 
 - `commands.json`: command 이름, 실행 경로, capability와 사람 승인 요구
+  및 compact/full MCP catalog profile과 generic command bridge 계약
 - `states.json`: 상태값, 전이와 blocker/dependency 실행 규칙
 - `diagnostics.json`: error, warning과 advisory code
 - `capabilities.json`: capability와 role bundle

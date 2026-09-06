@@ -32,4 +32,5 @@ GET /v1/workspaces/{workspaceId}/mutation-attempts
     &limit=50
 ```
 
-The equivalent typed MCP read tool is `baley_mutation_attempt_list`.
+The equivalent typed MCP read tool is `baley_mutation_attempt_list` on the
+explicit `/mcp/full` diagnostics profile.

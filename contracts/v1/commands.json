@@ -13,6 +13,57 @@
       "writes": true
     }
   },
+  "mcpCatalog": {
+    "catalogVersion": "1.0.0",
+    "defaultProfile": "compact",
+    "profiles": {
+      "compact": {
+        "path": "/mcp",
+        "maximumToolCount": 15,
+        "toolCount": 14,
+        "serializedInputSchemaBytes": 4184,
+        "tools": [
+          "baley_backlog_get",
+          "baley_backlog_list",
+          "baley_command_catalog",
+          "baley_command_execute",
+          "baley_command_execute_with_approval",
+          "baley_command_preview",
+          "baley_gate_status",
+          "baley_lane_brief",
+          "baley_mcp_diagnostics",
+          "baley_phase_tasks",
+          "baley_task_acceptance_get",
+          "baley_task_get",
+          "baley_workspace_context",
+          "baley_workspace_get"
+        ]
+      },
+      "full": {
+        "path": "/mcp/full",
+        "toolCount": 82,
+        "serializedInputSchemaBytes": 40124,
+        "legacyToolCount": 78,
+        "legacyToolParity": true,
+        "purpose": "explicit diagnostics and rare administration opt-in"
+      }
+    },
+    "baseline": {
+      "toolCount": 78,
+      "serializedInputSchemaBytes": 37800,
+      "minimumReductionPercent": 75,
+      "measurement": "sum of JSON-serialized inputSchema bytes"
+    },
+    "commandBridge": {
+      "catalogTool": "baley_command_catalog",
+      "previewTool": "baley_command_preview",
+      "operatorExecuteTool": "baley_command_execute",
+      "approvalExecuteTool": "baley_command_execute_with_approval",
+      "httpCommandCount": 49,
+      "unknownCommandHandling": "reject_before_http",
+      "commandValidationAuthority": "server"
+    }
+  },
   "envelope": {
     "required": ["idempotencyKey", "executedByActorId"],
     "optional": [

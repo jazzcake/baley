@@ -21,7 +21,7 @@ func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { r
 
 func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
 	ctx := context.Background()
-	server := newMCPServer(&client{})
+	server := newMCPServerForProfile(&client{}, mcpToolProfileFull)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	if err != nil {
@@ -47,7 +47,7 @@ func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
 		"baley_backlog_get": true, "baley_gate_status": true,
 		"baley_decision_list": true, "baley_event_list": true,
 		"baley_mutation_attempt_list": true, "baley_run_list": true,
-		"baley_record_list": true,
+		"baley_record_list": true, "baley_command_catalog": true,
 	}
 	humanApproval := map[string]bool{
 		"baley_task_acceptance_policy_change_execute": true,
@@ -58,6 +58,7 @@ func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
 		"baley_gate_pass_task_execute":                true,
 		"baley_gate_revoke_task_pass_execute":         true,
 		"baley_gate_pass_execute":                     true,
+		"baley_command_execute_with_approval":         true,
 	}
 	for _, tool := range listed.Tools {
 		annotations := tool.Annotations

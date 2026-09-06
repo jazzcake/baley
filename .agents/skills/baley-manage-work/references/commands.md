@@ -139,16 +139,16 @@ Generate client IDs once and reuse them for retries. Keep Runs alive with heartb
   executedByActorId,
   acknowledgedWarningCodes?: [],
   proceedReason?,
-  humanApprovalAttestation?
+  approvalGrantId?
 }
 ```
 
-Use `/v1/commands/preview` for a write-free evaluation and `/v1/commands/execute` for mutation. Bind each human approval attestation to the exact action, target, Workspace revision, command hash and optional decision snapshot hash. The attestation and command hash cannot be reused for another command.
+Use `/v1/commands/preview` for a write-free evaluation and `/v1/commands/execute` for mutation. A human-only command references a fresh, short-lived, single-use `approvalGrantId` issued by Baley's authenticated browser session for the exact action, target, Workspace revision, canonical command hash, warning acknowledgement, and optional decision snapshot hash. An Agent must not construct legacy approval fields, copy a token, or reuse a grant for another command.
 
-One explicit human statement may approve a finite, enumerated set of `task.confirm` outcomes for Tasks that are already `implemented` and whose evidence has been re-checked. Before asking, retain a baseline preview for every target at the same Workspace revision. Execute the set sequentially with a fresh preview and a distinct attestation per command. The first fresh preview revision must equal the group baseline revision; each later fresh preview revision must equal the immediately preceding successful result revision. Every attestation must use the same non-empty `statementHash` and `conversationRef` to correlate the group. Ignore revision and command hash only after that progression check passes; request command/Workspace/Task, projected diff, capability, all errors/warnings/advisories, and optional decision snapshot must remain equivalent. Stop and ask again on any revision or comparison mismatch. Other human-only action types use separate decision briefs.
+Grouped approval is not supported. Each `task.confirm` or other human-only command requires its own current preview, browser decision, and grant, and a successful command's revision change requires a fresh preview for the next command.
 
 Human confirmation never bypasses Task lifecycle rules. A related `pending` or `in_progress` Task that the same implementation fully satisfies must first be reported `implemented` with a shared-evidence assessment. A Task made unnecessary rather than implemented must be proposed for `task.discard`, using a reason such as `superseded by #<id>` when applicable. Partial or uncertain pending/in-progress work stays open; an insufficient `implemented` Task returns through `task.rework`; terminal confirmed/discarded work requires a new follow-up Task.
 
-The server validates each command-specific preview/execute binding. Group membership, baseline equivalence, and self-caused revision continuity are Operator protocol checks, not server-enforced atomic batch semantics.
+The server validates each command-specific preview/execute binding and consumes the grant atomically with the mutation.
 
 When preview returns warnings, execute must send the exact warning-code set in `acknowledgedWarningCodes`; use `proceedReason` to preserve the Operator's reason in command Event evidence. Both belong to the envelope and are excluded from the canonical command hash.

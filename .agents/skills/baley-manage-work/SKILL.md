@@ -41,8 +41,8 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
    - only detailed-planning Runs start in a future inactive Phase.
    - the requested action does not exercise human-only authority without a fresh browser-session approval grant for that exact command.
 9. For routine Operator mutations, treat the user's clear request as authorization: prepare the concise preview internally, execute immediately, and report the result without asking a confirmation question. This includes Task and Backlog create/update/move/reorder, normal dependency changes, Run lifecycle, and Task Record registration. Ask for a human decision only for the human-only authority boundaries below.
-10. Call the Baley MCP tool only when one is available and any required human approval has been obtained.
-11. If no Baley command tool is available, stop after the preview. Do not patch fixtures, application source, or a database as a substitute.
+10. On the compact MCP profile, use `baley_command_catalog` only when command discovery is needed, preview with `baley_command_preview`, execute routine Operator commands with `baley_command_execute`, and route human or conditionally approved commands through `baley_command_execute_with_approval` only after any required fresh browser grant is available. The explicit full profile may expose the legacy per-command typed tools for diagnostics or rare administration.
+11. If neither the compact command bridge nor an applicable legacy Baley command tool is available, stop after the preview. Do not patch fixtures, application source, or a database as a substitute.
 12. Report the resulting Task IDs and Event IDs after execution.
 
 ## Read Requests
@@ -231,4 +231,4 @@ Treat Viewer, Operator, Approver, and Owner as capability bundles for the future
 
 ## Tool Boundary
 
-Treat the Skill as workflow and intent interpretation. Treat `docs/baley-system-spec-v1.md` as normative semantics and `contracts/v1/*.json` as literal authority. API, CLI, and MCP enforce those contracts at runtime. Never duplicate domain enforcement in the Skill.
+Treat the Skill as workflow and intent interpretation. Treat `docs/baley-system-spec-v1.md` as normative semantics and `contracts/v1/*.json` as literal authority. API, CLI, and MCP enforce those contracts at runtime. Never duplicate domain enforcement in the Skill. The compact generic MCP bridge selects a fixed HTTP command endpoint and preserves the typed arguments/envelope; it does not replace server-side command, capability, revision, idempotency, warning, or approval validation.

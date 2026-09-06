@@ -78,22 +78,62 @@ func TestMCPStreamableHTTPListsAndCallsTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got, want := len(listed.Tools), 14; got != want {
+		t.Fatalf("compact MCP catalog contains %d tools, want %d", got, want)
+	}
 	toolsByName := make(map[string]*mcp.Tool, len(listed.Tools))
 	for _, tool := range listed.Tools {
 		toolsByName[tool.Name] = tool
 	}
 	for _, name := range []string{
-		"baley_workspace_get",
-		"baley_workspace_context",
+		"baley_backlog_get",
+		"baley_backlog_list",
+		"baley_command_catalog",
+		"baley_command_execute",
+		"baley_command_execute_with_approval",
+		"baley_command_preview",
+		"baley_gate_status",
+		"baley_lane_brief",
+		"baley_mcp_diagnostics",
 		"baley_phase_tasks",
+		"baley_task_acceptance_get",
+		"baley_task_get",
+		"baley_workspace_context",
+		"baley_workspace_get",
+	} {
+		if toolsByName[name] == nil {
+			t.Fatalf("missing MCP tool %s", name)
+		}
+	}
+	if toolsByName["baley_task_create_execute"] != nil {
+		t.Fatal("compact MCP catalog unexpectedly exposes a legacy typed command tool")
+	}
+
+	fullSession, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: fmt.Sprintf("http://%s/mcp/full", address)}, nil)
+	if err != nil {
+		t.Fatalf("full-profile Streamable HTTP initialize failed: %v\n%s", err, processOutput.String())
+	}
+	defer fullSession.Close()
+	fullListed, err := fullSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(fullListed.Tools), 82; got != want {
+		t.Fatalf("full MCP catalog contains %d tools, want %d", got, want)
+	}
+	fullToolsByName := make(map[string]*mcp.Tool, len(fullListed.Tools))
+	for _, tool := range fullListed.Tools {
+		fullToolsByName[tool.Name] = tool
+	}
+	for _, name := range []string{
 		"baley_task_create_preview",
 		"baley_task_create_execute",
 		"baley_task_confirm_execute",
 		"baley_gate_pass_execute",
-		"baley_mcp_diagnostics",
+		"baley_command_catalog",
 	} {
-		if toolsByName[name] == nil {
-			t.Fatalf("missing MCP tool %s", name)
+		if fullToolsByName[name] == nil {
+			t.Fatalf("full MCP catalog is missing %s", name)
 		}
 	}
 
@@ -107,7 +147,7 @@ func TestMCPStreamableHTTPListsAndCallsTools(t *testing.T) {
 		"baley_gate_revoke_task_pass_execute",
 		"baley_gate_pass_execute",
 	} {
-		tool := toolsByName[name]
+		tool := fullToolsByName[name]
 		if tool == nil {
 			t.Fatalf("missing human-only MCP tool %s", name)
 		}
@@ -124,6 +164,9 @@ func TestMCPStreamableHTTPListsAndCallsTools(t *testing.T) {
 				t.Fatalf("%s exposes removed approval field %s: %s", name, removed, schema)
 			}
 		}
+	}
+	if os.Getenv("BALEY_MCP_E2E_LIST_ONLY") != "" {
+		return
 	}
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{

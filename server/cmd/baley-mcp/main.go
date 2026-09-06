@@ -700,10 +700,10 @@ func validateServerURL(base string) (*url.URL, error) {
 	}
 	return parsed, nil
 }
-func newMCPServer(c *client) *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "baley", Version: "0.1.0"}, nil)
+func newLegacyMCPServer(c *client) *mcp.Server {
+	server := mcp.NewServer(&mcp.Implementation{Name: "baley", Version: mcpImplementationVersion}, nil)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_get", "Read Workspace metadata"), c.workspaceGet)
-	mcp.AddTool(server, readOnlyTool("baley_mcp_diagnostics", "Report tokenless credential-store, keychain, and local transport safety without exposing secrets"), c.diagnostics)
+	mcp.AddTool(server, readOnlyTool("baley_mcp_diagnostics", "Report tokenless credential-store, keychain, local transport safety, and the full MCP catalog profile without exposing secrets"), c.fullDiagnostics)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_context", "Read compact non-completed Phase and Lane status counts; expand a named Phase only when Task detail is needed"), c.workspaceContext)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_graph", "Read the current Workspace graph"), c.workspaceGraph)
 	mcp.AddTool(server, phaseTasksTool(), c.phaseTasks)
@@ -799,11 +799,16 @@ func serveHTTP(c *client) {
 	// target Workspace, not to an ephemeral MCP transport session. A new Codex
 	// chat or the HTTP session timeout must not require a new gateway login.
 	streamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServer(c) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: 10 * time.Minute})
+	fullStreamable := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServerForProfile(c, mcpToolProfileFull) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: 10 * time.Minute})
 	mux := http.NewServeMux()
 	// The endpoint is loopback-only. Credentials are never carried in Codex
 	// configuration: the local Gateway reads the device binding from the OS
 	// Keychain and obtains short-lived Workspace-scoped Agent tokens itself.
 	mux.Handle("/mcp", streamable)
+	// The full endpoint is an explicit compatibility/diagnostic opt-in. Keep it
+	// separate from the compact default because Codex builds an initial static
+	// catalog and does not need every rare administration schema on every turn.
+	mux.Handle("/mcp/full", fullStreamable)
 	mux.HandleFunc("/mcp-login/start", c.handleMCPLoginStart)
 	mux.HandleFunc("/mcp-login/callback", c.handleMCPLoginCallback)
 	httpServer := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 70 * time.Second, MaxHeaderBytes: 1 << 20}
@@ -1040,8 +1045,7 @@ func (c *client) phaseTasks(ctx context.Context, _ *mcp.CallToolRequest, in phas
 	return c.get(ctx, path)
 }
 func (c *client) diagnostics(_ context.Context, _ *mcp.CallToolRequest, _ diagnosticsInput) (*mcp.CallToolResult, any, error) {
-	result := c.localDiagnostics()
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Baley MCP diagnostics collected without exposing credentials."}}, StructuredContent: result}, result, nil
+	return c.diagnosticsForProfile(mcpToolProfileCompact)
 }
 func (c *client) localDiagnostics() map[string]any {
 	result := map[string]any{

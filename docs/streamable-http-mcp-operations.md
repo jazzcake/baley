@@ -1,7 +1,7 @@
 ---
 type: operations
 status: active
-last_active: 2026-08-28
+last_active: 2026-09-06
 ---
 
 # Tokenless local MCP operations
@@ -76,6 +76,52 @@ Restart Codex Desktop fully after changing its registration. Only a first device
 or a device invalidated by logout, membership removal, replacement, or revoke
 uses the signed-in gateway login flow.
 
+## Tool catalog profiles
+
+`/mcp` is the deterministic compact default. Catalog version `1.0.0` exposes
+exactly these 14 tools:
+
+- `baley_backlog_get`
+- `baley_backlog_list`
+- `baley_command_catalog`
+- `baley_command_execute`
+- `baley_command_execute_with_approval`
+- `baley_command_preview`
+- `baley_gate_status`
+- `baley_lane_brief`
+- `baley_mcp_diagnostics`
+- `baley_phase_tasks`
+- `baley_task_acceptance_get`
+- `baley_task_get`
+- `baley_workspace_context`
+- `baley_workspace_get`
+
+The catalog test pins the former 78-tool baseline at 37,800 serialized input-
+schema bytes and the compact catalog at 4,184 bytes, an 88.93% reduction.
+`baley_command_catalog` discovers the 49 HTTP command names on demand. Preview
+and execute bridge inputs preserve the ordinary command `arguments` and
+`envelope`; the HTTP command service remains authoritative for capability,
+revision, idempotency, warning, domain, and approval-grant validation.
+
+The endpoint's tool list is static for its lifetime. Baley does not rely on an
+MCP `listChanged` notification or a client's ability to load tools dynamically:
+Codex can build its initial catalog from the compact endpoint and invoke the
+catalog tool only when command discovery is needed.
+
+For compatibility diagnostics or rare administration, explicitly register the
+full profile under a separate name:
+
+```bash
+codex mcp add baley-full --url http://127.0.0.1:8090/mcp/full
+```
+
+`/mcp/full` exposes all 78 legacy tool names plus the four catalog/bridge tools
+(82 total). Do not make it the routine registration: remove `baley-full` after
+the diagnostic session and restart Codex so later sessions return to the compact
+default. `baley_mcp_diagnostics` reports the MCP implementation version, catalog
+version, active profile, default profile, full-profile path, and static-list
+mode without exposing credentials.
+
 ## Workspace discovery payload
 
 Start an unfamiliar Workspace with `baley_workspace_context`. It is a revisioned
@@ -86,8 +132,8 @@ changes, rather than assuming a delta history is embedded in the response.
 
 Use `baley_phase_tasks` only after selecting one returned Phase ID. Its public-ID
 cursor is scoped by that explicit Phase and the page size is 1–100 (50 by default).
-Use `baley_workspace_graph` only for callers that explicitly need the full,
-compatibility-preserved Viewer-style projection.
+Use `baley_workspace_graph` from the explicit full profile only for callers
+that need the full, compatibility-preserved Viewer-style projection.
 
 ## Migration, rollback, and diagnostics
 
