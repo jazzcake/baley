@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	neturl "net/url"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -111,6 +112,44 @@ func TestTaskJournalLifecycleIsAtomicIdempotentAndQueryable(t *testing.T) {
 		if index > 0 && (entries[index-1].RecordedAt.Before(entry.RecordedAt) || entries[index-1].RecordedAt.Equal(entry.RecordedAt) && entries[index-1].ID < entry.ID) {
 			t.Fatalf("journal order is not recordedAt/id descending: %+v", entries)
 		}
+	}
+	actualByEvent := make(map[string]application.TaskJournalEntryProjection, len(entries))
+	for _, entry := range entries {
+		actualByEvent[entry.EventID] = entry
+	}
+	events, err := repo.Events(ctx, postgres.DemoWorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuiltCount := 0
+	for _, event := range events {
+		rebuilt, rebuildErr := application.TaskJournalFromEvent(event)
+		if rebuildErr != nil {
+			t.Fatalf("rebuild Event %s: %v", event.ID, rebuildErr)
+		}
+		if rebuilt == nil {
+			continue
+		}
+		rebuiltCount++
+		actual, exists := actualByEvent[event.ID]
+		if !exists {
+			t.Fatalf("persisted Event %s rebuilt a missing Journal row", event.ID)
+		}
+		var actualContext, rebuiltContext any
+		if json.Unmarshal(actual.Context, &actualContext) != nil || json.Unmarshal(rebuilt.Context, &rebuiltContext) != nil {
+			t.Fatalf("invalid rebuilt context for Event %s", event.ID)
+		}
+		if actual.ID != event.ID || actual.TaskID != rebuilt.TaskID || actual.EventType != rebuilt.SourceEventType ||
+			actual.LifecycleStage != rebuilt.LifecycleStage || actual.Narrative != rebuilt.Narrative ||
+			actual.SchemaVersion != rebuilt.SchemaVersion || !reflect.DeepEqual(actualContext, rebuiltContext) ||
+			actual.CommandID != event.CommandID || actual.InitiatedByActorID != event.InitiatedByActorID ||
+			actual.ExecutedByActorID != event.ExecutedByActorID || actual.ApprovedByActorID != event.ApprovedByActorID ||
+			!actual.OccurredAt.Equal(event.CreatedAt) || !actual.RecordedAt.Equal(event.CreatedAt) {
+			t.Fatalf("Journal row is not an equivalent persisted-Event rebuild: actual=%+v rebuilt=%+v event=%+v", actual, rebuilt, event)
+		}
+	}
+	if rebuiltCount != len(entries) {
+		t.Fatalf("rebuilt %d Journal rows from Events, want %d", rebuiltCount, len(entries))
 	}
 	createdEntry := entries[len(entries)-1]
 	if createdEntry.InitiatedByActorID != postgres.DemoHumanActorID || createdEntry.CommandName != "task.create" || createdEntry.EventType != "task.created" {

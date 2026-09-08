@@ -883,9 +883,31 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		}
 	}
 	if plan.ExistingRunClientID != "" {
-		err = tx.QueryRow(ctx, "SELECT command_hash,result FROM commands WHERE workspace_id=$1 AND command_name='run.start' AND result->'projection'->'run'->>'clientRunId'=$2 ORDER BY created_at LIMIT 1", wid, plan.ExistingRunClientID).Scan(&existingHash, &existingJSON)
+		var storedTaskID string
+		var sourceEvent application.EventProjection
+		err = tx.QueryRow(ctx, `SELECT c.command_hash,c.result,r.task_id,
+			e.id,e.command_id,e.event_type,COALESCE(e.entity_type,''),COALESCE(e.entity_id,''),
+			COALESCE(e.initiated_by_actor_id,''),COALESCE(e.executed_by_actor_id,''),COALESCE(e.approved_by_actor_id,''),
+			e.workspace_revision,e.payload,e.created_at
+			FROM runs r
+			JOIN events e ON e.workspace_id=r.workspace_id AND e.event_type='run.started' AND e.entity_type='run' AND e.entity_id=r.id
+			JOIN commands c ON c.workspace_id=e.workspace_id AND c.id=e.command_id AND c.command_name='run.start'
+			WHERE r.workspace_id=$1 AND r.client_run_id=$2
+			ORDER BY e.created_at,e.id LIMIT 1`, wid, plan.ExistingRunClientID).Scan(
+			&existingHash, &existingJSON, &storedTaskID,
+			&sourceEvent.ID, &sourceEvent.CommandID, &sourceEvent.EventType, &sourceEvent.EntityType, &sourceEvent.EntityID,
+			&sourceEvent.InitiatedByActorID, &sourceEvent.ExecutedByActorID, &sourceEvent.ApprovedByActorID,
+			&sourceEvent.WorkspaceRevision, &sourceEvent.Payload, &sourceEvent.CreatedAt,
+		)
 		if err != nil {
 			return result, err
+		}
+		originalJournal, projectionErr := application.TaskJournalFromEvent(sourceEvent)
+		if projectionErr != nil {
+			return result, projectionErr
+		}
+		if storedTaskID != plan.TaskID || !application.TaskJournalsEqual(originalJournal, plan.TaskJournal) {
+			return result, &application.CommandError{Code: domain.CodeIdempotencyConflict, Message: "client Run ID reused for a different Task or context note"}
 		}
 		if err = json.Unmarshal(existingJSON, &result); err != nil {
 			return result, err
@@ -1365,7 +1387,7 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		result.EventIDs = append(result.EventIDs, newID())
 	}
 	if plan.TaskJournal != nil {
-		result.TaskJournalEntryID = newID()
+		result.TaskJournalEntryID = result.EventIDs[journalEventIndex]
 	}
 	storedResult := result
 	storedResult.LeaseToken = ""
@@ -1411,20 +1433,33 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 			return result, err
 		}
 	}
-	if journal := plan.TaskJournal; journal != nil {
-		approvedBy := ""
-		if req.Envelope.HumanApprovalAttestation != nil {
-			approvedBy = req.Envelope.HumanApprovalAttestation.ApprovedByActorID
+	if plan.TaskJournal != nil {
+		var sourceEvent application.EventProjection
+		if err = tx.QueryRow(ctx, `SELECT id,command_id,event_type,COALESCE(entity_type,''),COALESCE(entity_id,''),
+			COALESCE(initiated_by_actor_id,''),COALESCE(executed_by_actor_id,''),COALESCE(approved_by_actor_id,''),
+			workspace_revision,payload,created_at
+			FROM events WHERE workspace_id=$1 AND id=$2`, wid, result.EventIDs[journalEventIndex]).Scan(
+			&sourceEvent.ID, &sourceEvent.CommandID, &sourceEvent.EventType, &sourceEvent.EntityType, &sourceEvent.EntityID,
+			&sourceEvent.InitiatedByActorID, &sourceEvent.ExecutedByActorID, &sourceEvent.ApprovedByActorID,
+			&sourceEvent.WorkspaceRevision, &sourceEvent.Payload, &sourceEvent.CreatedAt,
+		); err != nil {
+			return result, err
+		}
+		journal, projectionErr := application.TaskJournalFromEvent(sourceEvent)
+		if projectionErr != nil {
+			return result, projectionErr
+		}
+		if journal == nil || !application.TaskJournalsEqual(journal, plan.TaskJournal) {
+			return result, fmt.Errorf("persisted Event %s does not reproduce the planned Task journal", sourceEvent.ID)
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO task_journal_entries(
 			id,workspace_id,task_id,event_id,command_id,lifecycle_stage,narrative,schema_version,context,
 			initiated_by_actor_id,executed_by_actor_id,approved_by_actor_id,occurred_at,recorded_at)
-			SELECT $1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,NULLIF($10,''),$11,NULLIF($12,''),
-			       e.created_at,GREATEST(e.created_at,$13)
-			FROM events e WHERE e.workspace_id=$2 AND e.id=$4`,
-			result.TaskJournalEntryID, wid, journal.TaskID, result.EventIDs[journalEventIndex], commandID,
+			VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,NULLIF($10,''),$11,NULLIF($12,''),$13,$13)`,
+			sourceEvent.ID, wid, journal.TaskID, sourceEvent.ID, sourceEvent.CommandID,
 			journal.LifecycleStage, journal.Narrative, journal.SchemaVersion, journal.Context,
-			req.Envelope.InitiatedByActorID, req.Envelope.ExecutedByActorID, approvedBy, now); err != nil {
+			sourceEvent.InitiatedByActorID, sourceEvent.ExecutedByActorID, sourceEvent.ApprovedByActorID,
+			sourceEvent.CreatedAt); err != nil {
 			return result, err
 		}
 	}

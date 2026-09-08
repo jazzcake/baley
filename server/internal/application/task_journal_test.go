@@ -67,6 +67,43 @@ func TestTaskJournalMapsLifecycleStageAndSourceEvent(t *testing.T) {
 	}
 }
 
+func TestTaskJournalIsRebuiltFromNormalizedLifecycleEventPayload(t *testing.T) {
+	journal, err := taskJournalFromCommand("task.update", taskMutationArgs{ContextNote: &TaskContextNote{
+		Narrative: "  Actual operator context.  ",
+		Context:   map[string]any{"goal": "ship", "alternatives": []any{"wait", "proceed"}},
+	}}, MutationPlan{TaskID: "task-internal"})
+	if err != nil || journal == nil || journal.ContextDigest == "" {
+		t.Fatalf("journal=%+v err=%v", journal, err)
+	}
+	events := []EventWrite{{Type: "task.updated", Payload: map[string]any{
+		"taskId": "task-internal", "before": map[string]any{"title": "old"}, "after": map[string]any{"title": "new"},
+	}}}
+	if err = attachTaskJournalToEvent(events, journal); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(events[0].Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := TaskJournalFromEvent(EventProjection{ID: "event", EventType: "task.updated", Payload: payload})
+	if err != nil || !TaskJournalsEqual(journal, rebuilt) {
+		t.Fatalf("rebuilt=%+v original=%+v err=%v payload=%s", rebuilt, journal, err, payload)
+	}
+	var persisted map[string]any
+	if err = json.Unmarshal(payload, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	seed, ok := persisted["taskJournal"].(map[string]any)
+	if !ok || seed["schemaVersion"] != float64(1) || seed["narrative"] != "Actual operator context." || seed["contextDigest"] != journal.ContextDigest {
+		t.Fatalf("Event did not persist normalized Task journal seed: %#v", persisted)
+	}
+	seed["narrative"] = "tampered"
+	tampered, _ := json.Marshal(persisted)
+	if _, err = TaskJournalFromEvent(EventProjection{ID: "event", EventType: "task.updated", Payload: tampered}); err == nil {
+		t.Fatal("Task journal rebuild accepted a payload that no longer matched its digest")
+	}
+}
+
 func TestTaskJournalSkipsEmptyContextAndEnforcesBounds(t *testing.T) {
 	plan := MutationPlan{TaskID: "task"}
 	for _, note := range []*TaskContextNote{{}, {Narrative: "  ", Context: map[string]any{"goal": " ", "alternatives": []any{}}}} {

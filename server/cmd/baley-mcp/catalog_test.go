@@ -18,11 +18,11 @@ import (
 
 const (
 	legacyCatalogToolCount    = 78
-	legacyCatalogSchemaBytes  = 37800
+	legacyCatalogSchemaBytes  = 39510
 	compactCatalogToolCount   = 15
 	compactCatalogSchemaBytes = 4700
-	fullCatalogToolCount      = 83
-	fullCatalogSchemaBytes    = 40640
+	fullCatalogToolCount      = 89
+	fullCatalogSchemaBytes    = 46217
 )
 
 var expectedCompactToolNames = []string{
@@ -166,6 +166,53 @@ func TestFullCatalogPreservesEveryLegacyToolName(t *testing.T) {
 	for _, name := range expectedLegacyToolNames {
 		if !fullSet[name] {
 			t.Errorf("full profile is missing legacy tool %s", name)
+		}
+	}
+}
+
+func TestFullProfileLifecycleToolsAdvertiseOptionalContextNote(t *testing.T) {
+	wanted := map[string]bool{}
+	for _, name := range []string{
+		"baley_task_create_preview", "baley_task_create_execute", "baley_run_start",
+		"baley_task_update_preview", "baley_task_update_execute",
+		"baley_task_rework_preview", "baley_task_rework_execute",
+		"baley_task_block_preview", "baley_task_block_execute",
+		"baley_task_unblock_preview", "baley_task_unblock_execute",
+		"baley_task_report_implemented", "baley_task_confirm_preview", "baley_task_confirm_execute",
+		"baley_task_discard_preview", "baley_task_discard_execute",
+	} {
+		wanted[name] = false
+	}
+	for _, tool := range listMCPTools(t, newMCPServerForProfile(&client{}, mcpToolProfileFull)) {
+		if _, exists := wanted[tool.Name]; !exists {
+			continue
+		}
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema map[string]any
+		if err = json.Unmarshal(raw, &schema); err != nil {
+			t.Fatal(err)
+		}
+		properties, ok := schema["properties"].(map[string]any)
+		contextSchema, hasContext := properties["contextNote"].(map[string]any)
+		if !ok || !hasContext {
+			t.Fatalf("%s schema omits contextNote: %s", tool.Name, raw)
+		}
+		if _, ok := contextSchema["properties"].(map[string]any); !ok {
+			t.Fatalf("%s contextNote schema=%#v", tool.Name, contextSchema)
+		}
+		for _, required := range schema["required"].([]any) {
+			if required == "contextNote" {
+				t.Fatalf("%s makes contextNote required", tool.Name)
+			}
+		}
+		wanted[tool.Name] = true
+	}
+	for name, found := range wanted {
+		if !found {
+			t.Errorf("full profile is missing typed lifecycle tool %s", name)
 		}
 	}
 }

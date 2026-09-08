@@ -59,7 +59,8 @@ func TestRunStartAgainstPostgres(t *testing.T) {
 		t.Fatalf("invalid start wrote state: %#v", snapshot)
 	}
 
-	start := request("run.start", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "taskId": 110, "clientRunId": "00000000-0000-4000-8000-000000000011", "kind": "detailed_planning", "sessionRef": "desktop-integration"}, "run-start", 1)
+	contextNote := map[string]any{"narrative": "The operator stated why planning starts now.", "context": map[string]any{"whyNow": "review findings are ready"}}
+	start := request("run.start", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "taskId": 110, "clientRunId": "00000000-0000-4000-8000-000000000011", "kind": "detailed_planning", "sessionRef": "desktop-integration", "contextNote": contextNote}, "run-start", 1)
 	preview, err := service.Preview(ctx, start)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +72,7 @@ func TestRunStartAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.LeaseToken == "" || result.WorkspaceRevision != 2 || len(result.EventIDs) != 2 {
+	if result.LeaseToken == "" || result.WorkspaceRevision != 2 || len(result.EventIDs) != 2 || result.TaskJournalEntryID == "" {
 		t.Fatalf("unexpected run result: %#v", result)
 	}
 	initialLeaseToken := result.LeaseToken
@@ -83,8 +84,20 @@ func TestRunStartAgainstPostgres(t *testing.T) {
 	crossKeyRetry.Envelope.IdempotencyKey = "run-start-retry"
 	crossKeyRetry.Envelope.ExpectedWorkspaceRevision = 2
 	retry, err = service.Execute(ctx, crossKeyRetry)
-	if err != nil || !retry.Idempotent || retry.CommandID != result.CommandID || retry.LeaseToken != initialLeaseToken {
+	if err != nil || !retry.Idempotent || retry.CommandID != result.CommandID || retry.TaskJournalEntryID != result.TaskJournalEntryID || retry.LeaseToken != initialLeaseToken {
 		t.Fatalf("client Run retry mismatch: %#v %v", retry, err)
+	}
+	changedContext := crossKeyRetry
+	changedContext.Envelope.IdempotencyKey = "run-start-context-conflict"
+	changedContext.Arguments = mustJSON(t, map[string]any{"workspaceId": postgres.DemoWorkspaceID, "taskId": 110, "clientRunId": "00000000-0000-4000-8000-000000000011", "kind": "detailed_planning", "sessionRef": "desktop-integration", "contextNote": map[string]any{"narrative": "Changed retry context."}})
+	if _, err = service.Execute(ctx, changedContext); commandErrorCode(err) != domain.CodeIdempotencyConflict {
+		t.Fatalf("changed run.start recovery context error=%v", err)
+	}
+	omittedContext := crossKeyRetry
+	omittedContext.Envelope.IdempotencyKey = "run-start-omitted-context-conflict"
+	omittedContext.Arguments = mustJSON(t, map[string]any{"workspaceId": postgres.DemoWorkspaceID, "taskId": 110, "clientRunId": "00000000-0000-4000-8000-000000000011", "kind": "detailed_planning", "sessionRef": "desktop-integration"})
+	if _, err = service.Execute(ctx, omittedContext); commandErrorCode(err) != domain.CodeIdempotencyConflict {
+		t.Fatalf("omitted run.start recovery context error=%v", err)
 	}
 	if _, err = repo.Pool.Exec(ctx, "UPDATE runs SET heartbeat_at=$1,lease_expires_at=$2 WHERE workspace_id=$3", time.Now().UTC().Add(-2*time.Minute), time.Now().UTC().Add(-time.Minute), postgres.DemoWorkspaceID); err != nil {
 		t.Fatal(err)
@@ -95,7 +108,7 @@ func TestRunStartAgainstPostgres(t *testing.T) {
 	if err != nil || retry.LeaseToken != initialLeaseToken {
 		t.Fatalf("expired Run retry must return the original result without reviving its lease: %#v %v", retry, err)
 	}
-	conflict := request("run.start", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "taskId": 101, "clientRunId": "00000000-0000-4000-8000-000000000011", "kind": "detailed_planning"}, "run-start-conflict", 2)
+	conflict := request("run.start", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "taskId": 101, "clientRunId": "00000000-0000-4000-8000-000000000011", "kind": "detailed_planning", "contextNote": contextNote}, "run-start-conflict", 2)
 	_, err = service.Execute(ctx, conflict)
 	assertCode(t, err, domain.CodeIdempotencyConflict)
 
@@ -133,6 +146,10 @@ func TestRunStartAgainstPostgres(t *testing.T) {
 	}
 	if len(events) != 2 || events[0].EventType != "task.started" || events[1].EventType != "run.started" {
 		t.Fatalf("unexpected Run events: %#v", events)
+	}
+	rebuiltJournal, err := application.TaskJournalFromEvent(events[1])
+	if err != nil || rebuiltJournal == nil || rebuiltJournal.TaskID != "user-test" || rebuiltJournal.ContextDigest == "" {
+		t.Fatalf("run.started Event lost recoverable context: journal=%+v err=%v payload=%s", rebuiltJournal, err, events[1].Payload)
 	}
 }
 

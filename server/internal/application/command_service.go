@@ -1433,6 +1433,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: fmt.Sprint(args.TaskID)})
 			break
 		}
+		plan.TaskID = task.ID
 		phase := findPhase(snapshot.Phases, task.PhaseID)
 		if phase == nil {
 			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: task.PhaseID})
@@ -1804,6 +1805,11 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			return result, plan, &CommandError{Code: "invalid_request", Message: journalErr.Error()}
 		}
 		plan.TaskJournal = journal
+		if journal != nil && plan.ExistingRunClientID == "" {
+			if journalErr = attachTaskJournalToEvent(plan.Events, journal); journalErr != nil {
+				return result, plan, &CommandError{Code: "invalid_request", Message: journalErr.Error()}
+			}
+		}
 	}
 	result.DecisionSnapshotHash = decisionHash
 	result.EntityType, result.EntityID = plan.EntityType, plan.EntityID
@@ -1907,10 +1913,178 @@ func taskJournalFromCommand(name string, typed any, plan MutationPlan) (*TaskJou
 	if taskID == "" {
 		return nil, fmt.Errorf("contextNote has no Task lifecycle target")
 	}
-	return &TaskJournalWrite{
+	journal := &TaskJournalWrite{
 		TaskID: taskID, SourceEventType: sourceEventType, LifecycleStage: stage,
 		Narrative: narrative, SchemaVersion: 1, Context: contextJSON,
-	}, nil
+	}
+	journal.ContextDigest = taskJournalContextDigest(journal)
+	return journal, nil
+}
+
+type taskJournalEventSeed struct {
+	SchemaVersion int             `json:"schemaVersion"`
+	Narrative     string          `json:"narrative,omitempty"`
+	Context       json.RawMessage `json:"context"`
+	ContextDigest string          `json:"contextDigest"`
+}
+
+func attachTaskJournalToEvent(events []EventWrite, journal *TaskJournalWrite) error {
+	matched := -1
+	for index := range events {
+		if events[index].Type != journal.SourceEventType {
+			continue
+		}
+		if matched != -1 {
+			return fmt.Errorf("multiple source Events for Task journal stage %s", journal.LifecycleStage)
+		}
+		matched = index
+	}
+	if matched == -1 {
+		return fmt.Errorf("missing source Event %s for Task journal", journal.SourceEventType)
+	}
+	payload, ok := events[matched].Payload.(map[string]any)
+	if !ok {
+		return fmt.Errorf("invalid Event payload for %s", journal.SourceEventType)
+	}
+	if _, exists := payload["taskJournal"]; exists {
+		return fmt.Errorf("source Event %s already contains Task journal context", journal.SourceEventType)
+	}
+	payload["taskJournal"] = taskJournalEventSeed{
+		SchemaVersion: journal.SchemaVersion, Narrative: journal.Narrative,
+		Context: journal.Context, ContextDigest: journal.ContextDigest,
+	}
+	return nil
+}
+
+// TaskJournalFromEvent rebuilds the journal-specific projection seed from the
+// persisted lifecycle Event. The Event, rather than the command plan, is the
+// source of truth for every field returned here.
+func TaskJournalFromEvent(event EventProjection) (*TaskJournalWrite, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("decode persisted Event %s payload: %w", event.ID, err)
+	}
+	raw, exists := payload["taskJournal"]
+	if !exists {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var seed taskJournalEventSeed
+	if err := decoder.Decode(&seed); err != nil {
+		return nil, fmt.Errorf("decode persisted Event %s Task journal context: %w", event.ID, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("persisted Event %s Task journal context must contain exactly one JSON value", event.ID)
+	}
+	lifecycleStage, ok := taskJournalStageForEvent(event.EventType)
+	if !ok {
+		return nil, fmt.Errorf("persisted Event %s has invalid Task journal lifecycle stage", event.ID)
+	}
+	taskID, err := taskJournalTaskIDFromEventPayload(event.EventType, payload)
+	if err != nil {
+		return nil, fmt.Errorf("persisted Event %s has invalid Task journal target: %w", event.ID, err)
+	}
+	if seed.SchemaVersion != 1 {
+		return nil, fmt.Errorf("persisted Event %s has invalid Task journal identity or schema version", event.ID)
+	}
+	if seed.Narrative != strings.TrimSpace(seed.Narrative) || len(seed.Narrative) > 4000 {
+		return nil, fmt.Errorf("persisted Event %s has non-normalized Task journal narrative", event.ID)
+	}
+	var context map[string]any
+	if len(seed.Context) == 0 || json.Unmarshal(seed.Context, &context) != nil || context == nil {
+		return nil, fmt.Errorf("persisted Event %s has invalid Task journal context", event.ID)
+	}
+	canonicalContext, err := json.Marshal(context)
+	if err != nil || len(canonicalContext) > 16*1024 {
+		return nil, fmt.Errorf("persisted Event %s has invalid Task journal context", event.ID)
+	}
+	meaningfulContext := false
+	for _, value := range context {
+		if contextValueHasContent(value) {
+			meaningfulContext = true
+			break
+		}
+	}
+	if seed.Narrative == "" && !meaningfulContext {
+		return nil, fmt.Errorf("persisted Event %s has empty Task journal context", event.ID)
+	}
+	journal := &TaskJournalWrite{
+		TaskID: taskID, SourceEventType: event.EventType,
+		LifecycleStage: lifecycleStage, Narrative: seed.Narrative,
+		SchemaVersion: seed.SchemaVersion, Context: canonicalContext,
+		ContextDigest: seed.ContextDigest,
+	}
+	if seed.ContextDigest == "" || seed.ContextDigest != taskJournalContextDigest(journal) {
+		return nil, fmt.Errorf("persisted Event %s has invalid Task journal context digest", event.ID)
+	}
+	return journal, nil
+}
+
+func TaskJournalsEqual(left, right *TaskJournalWrite) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.TaskID == right.TaskID &&
+		left.SourceEventType == right.SourceEventType &&
+		left.LifecycleStage == right.LifecycleStage &&
+		left.Narrative == right.Narrative &&
+		left.SchemaVersion == right.SchemaVersion &&
+		left.ContextDigest == right.ContextDigest &&
+		bytes.Equal(left.Context, right.Context)
+}
+
+func taskJournalContextDigest(journal *TaskJournalWrite) string {
+	material := taskJournalEventSeed{
+		SchemaVersion: journal.SchemaVersion, Narrative: journal.Narrative,
+		Context: journal.Context,
+	}
+	encoded, _ := json.Marshal(material)
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func taskJournalTaskIDFromEventPayload(eventType string, payload map[string]json.RawMessage) (string, error) {
+	if eventType == "task.created" {
+		var task struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(payload["task"], &task); err != nil || strings.TrimSpace(task.ID) == "" {
+			return "", fmt.Errorf("task.created payload has no Task identity")
+		}
+		return task.ID, nil
+	}
+	var taskID string
+	if err := json.Unmarshal(payload["taskId"], &taskID); err != nil || strings.TrimSpace(taskID) == "" {
+		return "", fmt.Errorf("%s payload has no Task identity", eventType)
+	}
+	return taskID, nil
+}
+
+func taskJournalStageForEvent(eventType string) (string, bool) {
+	switch eventType {
+	case "task.created":
+		return "created", true
+	case "run.started":
+		return "run_started", true
+	case "task.updated":
+		return "updated", true
+	case "task.rework_started":
+		return "rework_started", true
+	case "task.blocked":
+		return "blocked", true
+	case "task.unblocked":
+		return "unblocked", true
+	case "task.implemented_reported":
+		return "implemented", true
+	case "task.confirmed":
+		return "confirmed", true
+	case "task.discarded":
+		return "discarded", true
+	default:
+		return "", false
+	}
 }
 
 func contextValueHasContent(value any) bool {

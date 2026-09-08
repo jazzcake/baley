@@ -168,13 +168,23 @@ fingerprint에 들어간다. 따라서 preview와 execute, idempotent retry가 �
 context를 사용해야 한다. 사람 승인 mutation은 context를 포함한 hash에 대해
 browser grant를 발급하므로 승인 뒤 context 변경은 grant mismatch다.
 
-Repository는 lifecycle mutation과 source Event를 먼저 같은 transaction에 쓰고,
-그 Event의 `created_at`을 occurrence time으로 사용하는 append-only
-`task_journal_entries` projection을 삽입한다. stable envelope에는 command/Event
-링크와 actor provenance가 포함되고, versioned payload만 JSONB에 둔다. Task 및
-Workspace 조회는 `(recorded_at DESC, id DESC)`와 paired cursor, 최대 100건을
-사용한다. MCP `baley_task_journal`과 Viewer Task Inspector는 이 HTTP query의
-adapter이며 별도 domain rule이나 edit surface를 갖지 않는다.
+내용이 있으면 application layer가 schema version, trimmed narrative, canonical
+JSON context와 digest를 source lifecycle Event의 `taskJournal` payload로 먼저
+정규화한다. Repository는 lifecycle mutation과 Event를 같은 transaction에 쓴 뒤
+그 persisted Event를 다시 읽어 append-only `task_journal_entries`를 투영한다.
+Task target은 Event의 기존 `task`/`taskId`, stage는 Event type, projection identity와
+time은 Event ID/created time에서 얻으므로 plan-only 정보로 Journal을 직접 쓰지
+않으며 Event replay가 같은 projection을 만든다.
+
+`run.start`의 same-clientRunId cross-key recovery는 기존 Run Task와 Event-backed
+context digest를 새 요청과 비교한다. 둘 다 같을 때만 원래 command 결과와 Journal
+ID를 재사용하고, 어느 하나라도 다르면 `idempotency_conflict`를 반환한다.
+
+stable envelope에는 command/Event 링크와 actor provenance가 포함되고, versioned
+payload만 JSONB에 둔다. Task 및 Workspace 조회는 `(recorded_at DESC, id DESC)`와
+paired cursor, 최대 100건을 사용한다. MCP `baley_task_journal`과 Viewer Task
+Inspector는 이 HTTP query의 adapter이며 별도 domain rule이나 edit surface를 갖지
+않는다.
 
 ## 6. 자동 Run 예시
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -667,6 +668,93 @@ func TestTaskDiscardPreviewAndExecuteForwardReason(t *testing.T) {
 		if body["name"] != "task.discard" || arguments["taskId"] != float64(1) || arguments["reason"] != "No longer needed" {
 			t.Fatalf("task discard payload mismatch: %#v", body)
 		}
+	}
+}
+
+func TestTypedTaskLifecycleArgumentMapsForwardContextAndPreserveAbsence(t *testing.T) {
+	note := &taskContextNoteInput{Narrative: "Actual context.", Context: map[string]any{"goal": "ship"}}
+	builders := map[string]func(*taskContextNoteInput) map[string]any{
+		"task.create": func(value *taskContextNoteInput) map[string]any {
+			return taskCreateArguments(taskCreateFields{WorkspaceID: "workspace", TaskUUID: "task", LaneID: "lane", PhaseID: "phase", Title: "title", ContextNote: value})
+		},
+		"run.start": func(value *taskContextNoteInput) map[string]any {
+			return runStartArguments(runStartInput{WorkspaceID: "workspace", TaskID: 1, ClientRunID: "run", Kind: "implementation", ContextNote: value})
+		},
+		"task.update": func(value *taskContextNoteInput) map[string]any {
+			return taskUpdateArguments(taskUpdateFields{WorkspaceID: "workspace", TaskID: 1, ContextNote: value})
+		},
+		"task.rework/block/unblock": func(value *taskContextNoteInput) map[string]any {
+			return taskLifecycleArguments(taskLifecycleFields{WorkspaceID: "workspace", TaskID: 1, Reason: "reason", ContextNote: value})
+		},
+		"task.report_implemented": func(value *taskContextNoteInput) map[string]any {
+			return taskReportImplementedArguments(taskReportImplementedInput{WorkspaceID: "workspace", TaskID: 1, Assessment: "done", ContextNote: value})
+		},
+		"task.confirm": func(value *taskContextNoteInput) map[string]any {
+			return taskIdentityArguments("workspace", 1, value)
+		},
+		"task.discard": func(value *taskContextNoteInput) map[string]any {
+			return taskDiscardArguments("workspace", 1, "reason", value)
+		},
+	}
+	for name, build := range builders {
+		t.Run(name, func(t *testing.T) {
+			absent := build(nil)
+			if _, exists := absent["contextNote"]; exists {
+				t.Fatalf("absent contextNote changed legacy arguments: %#v", absent)
+			}
+			raw, err := json.Marshal(build(note))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var present map[string]any
+			if err = json.Unmarshal(raw, &present); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := present["contextNote"].(map[string]any)
+			if !ok || got["narrative"] != "Actual context." || got["context"].(map[string]any)["goal"] != "ship" {
+				t.Fatalf("contextNote was not forwarded: %#v", present)
+			}
+		})
+	}
+}
+
+func TestTypedTaskConfirmContextChangeSurfacesApprovalMismatch(t *testing.T) {
+	var approvedContext []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		arguments, _ := body["arguments"].(map[string]any)
+		contextNote, _ := json.Marshal(arguments["contextNote"])
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/commands/preview" {
+			approvedContext = contextNote
+			_, _ = w.Write([]byte(`{"commandHash":"preview-hash"}`))
+			return
+		}
+		if !bytes.Equal(approvedContext, contextNote) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"approval_grant_mismatch"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"workspaceRevision":2}`))
+	}))
+	defer server.Close()
+	c := &client{base: server.URL, http: server.Client()}
+	preview := taskConfirmPreviewInput{WorkspaceID: "workspace", TaskID: 1, ContextNote: &taskContextNoteInput{Narrative: "Approved context."}}
+	if result, _, err := c.taskConfirmPreview(context.Background(), nil, preview); err != nil || result.IsError {
+		t.Fatalf("preview failed: result=%#v err=%v", result, err)
+	}
+	execute := taskConfirmExecuteInput{
+		WorkspaceID: "workspace", TaskID: 1, ContextNote: &taskContextNoteInput{Narrative: "Changed context."},
+		executeEnvelope: executeEnvelope{ApprovalGrantID: "grant"},
+	}
+	result, structured, err := c.taskConfirmExecute(context.Background(), nil, execute)
+	response, _ := structured.(map[string]any)
+	if err != nil || result == nil || !result.IsError || response["code"] != "approval_grant_mismatch" {
+		t.Fatalf("changed typed context did not surface approval mismatch: result=%#v structured=%#v err=%v", result, structured, err)
 	}
 }
 

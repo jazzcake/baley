@@ -13,11 +13,11 @@ import (
 
 const (
 	mcpImplementationVersion = "0.2.0"
-	mcpToolCatalogVersion    = "1.0.0"
+	mcpToolCatalogVersion    = "1.1.0"
 	mcpCompactToolCount      = 15
 	mcpCompactSchemaBytes    = 4700
-	mcpFullToolCount         = 83
-	mcpFullSchemaBytes       = 40640
+	mcpFullToolCount         = 89
+	mcpFullSchemaBytes       = 46217
 
 	mcpToolProfileCompact mcpToolProfile = "compact"
 	mcpToolProfileFull    mcpToolProfile = "full"
@@ -132,6 +132,7 @@ func newMCPServerForProfile(c *client, profile mcpToolProfile) *mcp.Server {
 	var server *mcp.Server
 	if profile == mcpToolProfileFull {
 		server = newLegacyMCPServer(c)
+		addFullTaskLifecycleTools(server, c)
 	} else {
 		server = mcp.NewServer(&mcp.Implementation{Name: "baley", Version: mcpImplementationVersion}, nil)
 		addCompactReadTools(server, c)
@@ -139,6 +140,15 @@ func newMCPServerForProfile(c *client, profile mcpToolProfile) *mcp.Server {
 	mcp.AddTool(server, taskJournalTool(), c.taskJournal)
 	addCommandBridgeTools(server, c)
 	return server
+}
+
+func addFullTaskLifecycleTools(server *mcp.Server, c *client) {
+	mcp.AddTool(server, classifiedTool("baley_task_rework_preview", "Preview returning an implemented Task to active work"), c.taskReworkPreview)
+	mcp.AddTool(server, classifiedTool("baley_task_rework_execute", "Return an implemented Task to active work with an explicit reason"), c.taskReworkExecute)
+	mcp.AddTool(server, classifiedTool("baley_task_block_preview", "Preview blocking an active Task"), c.taskBlockPreview)
+	mcp.AddTool(server, classifiedTool("baley_task_block_execute", "Block an active Task with an explicit reason"), c.taskBlockExecute)
+	mcp.AddTool(server, classifiedTool("baley_task_unblock_preview", "Preview unblocking a Task"), c.taskUnblockPreview)
+	mcp.AddTool(server, classifiedTool("baley_task_unblock_execute", "Unblock a Task with an explicit reason"), c.taskUnblockExecute)
 }
 
 func taskJournalTool() *mcp.Tool {

@@ -53,28 +53,34 @@ type laneBriefInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	LaneID      string `json:"laneId"`
 }
+type taskContextNoteInput struct {
+	Narrative string         `json:"narrative,omitempty"`
+	Context   map[string]any `json:"context,omitempty"`
+}
 type taskReportImplementedInput struct {
-	WorkspaceID              string   `json:"workspaceId"`
-	TaskID                   int      `json:"taskId"`
-	Assessment               string   `json:"assessment"`
-	ProceedReason            string   `json:"proceedReason,omitempty"`
-	AcknowledgedWarningCodes []string `json:"acknowledgedWarningCodes,omitempty"`
+	WorkspaceID              string                `json:"workspaceId"`
+	TaskID                   int                   `json:"taskId"`
+	Assessment               string                `json:"assessment"`
+	ContextNote              *taskContextNoteInput `json:"contextNote,omitempty"`
+	ProceedReason            string                `json:"proceedReason,omitempty"`
+	AcknowledgedWarningCodes []string              `json:"acknowledgedWarningCodes,omitempty"`
 	automaticEnvelope
 }
 type taskCreateFields struct {
-	WorkspaceID             string `json:"workspaceId"`
-	TaskUUID                string `json:"taskUuid"`
-	LaneID                  string `json:"laneId"`
-	PhaseID                 string `json:"phaseId"`
-	ParentTaskID            int    `json:"parentTaskId,omitempty"`
-	Title                   string `json:"title"`
-	Description             string `json:"description,omitempty"`
-	CurrentSummary          string `json:"currentSummary,omitempty" jsonschema:"Short, plain-language 1-2 sentence explanation for a human"`
-	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
-	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
-	TerminalReason          string `json:"terminalReason,omitempty"`
-	RequestedAcceptanceMode string `json:"requestedAcceptanceMode,omitempty"`
-	EvidenceProfileID       string `json:"evidenceProfileId,omitempty"`
+	WorkspaceID             string                `json:"workspaceId"`
+	TaskUUID                string                `json:"taskUuid"`
+	LaneID                  string                `json:"laneId"`
+	PhaseID                 string                `json:"phaseId"`
+	ParentTaskID            int                   `json:"parentTaskId,omitempty"`
+	Title                   string                `json:"title"`
+	Description             string                `json:"description,omitempty"`
+	CurrentSummary          string                `json:"currentSummary,omitempty" jsonschema:"Short, plain-language 1-2 sentence explanation for a human"`
+	PredecessorTaskIDs      []int                 `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int                 `json:"successorTaskIds,omitempty"`
+	TerminalReason          string                `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string                `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string                `json:"evidenceProfileId,omitempty"`
+	ContextNote             *taskContextNoteInput `json:"contextNote,omitempty"`
 }
 type taskCreatePreviewInput struct {
 	taskCreateFields
@@ -87,11 +93,12 @@ type taskCreateExecuteInput struct {
 	automaticEnvelope
 }
 type taskUpdateFields struct {
-	WorkspaceID    string  `json:"workspaceId"`
-	TaskID         int     `json:"taskId"`
-	Title          *string `json:"title,omitempty"`
-	Description    *string `json:"description,omitempty"`
-	CurrentSummary *string `json:"currentSummary,omitempty" jsonschema:"Short, plain-language 1-2 sentence explanation for a human"`
+	WorkspaceID    string                `json:"workspaceId"`
+	TaskID         int                   `json:"taskId"`
+	Title          *string               `json:"title,omitempty"`
+	Description    *string               `json:"description,omitempty"`
+	CurrentSummary *string               `json:"currentSummary,omitempty" jsonschema:"Short, plain-language 1-2 sentence explanation for a human"`
+	ContextNote    *taskContextNoteInput `json:"contextNote,omitempty"`
 }
 type taskUpdatePreviewInput struct {
 	taskUpdateFields
@@ -99,6 +106,20 @@ type taskUpdatePreviewInput struct {
 }
 type taskUpdateExecuteInput struct {
 	taskUpdateFields
+	mutationExecuteEnvelope
+}
+type taskLifecycleFields struct {
+	WorkspaceID string                `json:"workspaceId"`
+	TaskID      int                   `json:"taskId"`
+	Reason      string                `json:"reason"`
+	ContextNote *taskContextNoteInput `json:"contextNote,omitempty"`
+}
+type taskLifecyclePreviewInput struct {
+	taskLifecycleFields
+	previewEnvelope
+}
+type taskLifecycleExecuteInput struct {
+	taskLifecycleFields
 	mutationExecuteEnvelope
 }
 type taskMoveFields struct {
@@ -426,13 +447,14 @@ type conditionalExecuteEnvelope struct {
 	ApprovalGrantID string `json:"approvalGrantId,omitempty"`
 }
 type runStartInput struct {
-	WorkspaceID string `json:"workspaceId"`
-	TaskID      int    `json:"taskId"`
-	ClientRunID string `json:"clientRunId"`
-	Kind        string `json:"kind"`
-	SessionRef  string `json:"sessionRef,omitempty"`
-	ParentRunID string `json:"parentRunId,omitempty"`
-	TargetRunID string `json:"targetRunId,omitempty"`
+	WorkspaceID string                `json:"workspaceId"`
+	TaskID      int                   `json:"taskId"`
+	ClientRunID string                `json:"clientRunId"`
+	Kind        string                `json:"kind"`
+	SessionRef  string                `json:"sessionRef,omitempty"`
+	ParentRunID string                `json:"parentRunId,omitempty"`
+	TargetRunID string                `json:"targetRunId,omitempty"`
+	ContextNote *taskContextNoteInput `json:"contextNote,omitempty"`
 	automaticEnvelope
 }
 type runHeartbeatInput struct {
@@ -513,25 +535,29 @@ type gitObserveInput struct {
 	automaticEnvelope
 }
 type taskConfirmPreviewInput struct {
-	WorkspaceID string `json:"workspaceId"`
-	TaskID      int    `json:"taskId"`
+	WorkspaceID string                `json:"workspaceId"`
+	TaskID      int                   `json:"taskId"`
+	ContextNote *taskContextNoteInput `json:"contextNote,omitempty"`
 	previewEnvelope
 }
 type taskConfirmExecuteInput struct {
-	WorkspaceID string `json:"workspaceId"`
-	TaskID      int    `json:"taskId"`
+	WorkspaceID string                `json:"workspaceId"`
+	TaskID      int                   `json:"taskId"`
+	ContextNote *taskContextNoteInput `json:"contextNote,omitempty"`
 	executeEnvelope
 }
 type taskDiscardPreviewInput struct {
-	WorkspaceID string `json:"workspaceId"`
-	TaskID      int    `json:"taskId"`
-	Reason      string `json:"reason"`
+	WorkspaceID string                `json:"workspaceId"`
+	TaskID      int                   `json:"taskId"`
+	Reason      string                `json:"reason"`
+	ContextNote *taskContextNoteInput `json:"contextNote,omitempty"`
 	previewEnvelope
 }
 type taskDiscardExecuteInput struct {
-	WorkspaceID string `json:"workspaceId"`
-	TaskID      int    `json:"taskId"`
-	Reason      string `json:"reason"`
+	WorkspaceID string                `json:"workspaceId"`
+	TaskID      int                   `json:"taskId"`
+	Reason      string                `json:"reason"`
+	ContextNote *taskContextNoteInput `json:"contextNote,omitempty"`
 	executeEnvelope
 }
 type gatePassPreviewInput struct {
@@ -1186,9 +1212,13 @@ func (c *client) runList(ctx context.Context, _ *mcp.CallToolRequest, in workspa
 func (c *client) recordList(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/records")
 }
-func (c *client) runStart(ctx context.Context, _ *mcp.CallToolRequest, in runStartInput) (*mcp.CallToolResult, any, error) {
+func runStartArguments(in runStartInput) map[string]any {
 	arguments := map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "clientRunId": in.ClientRunID, "kind": in.Kind, "sessionRef": in.SessionRef, "parentRunId": in.ParentRunID, "targetRunId": in.TargetRunID}
-	return c.call(ctx, "POST", "/v1/commands/execute", command("run.start", arguments, automaticEnv(in.automaticEnvelope)))
+	addTaskContextNote(arguments, in.ContextNote)
+	return arguments
+}
+func (c *client) runStart(ctx context.Context, _ *mcp.CallToolRequest, in runStartInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("run.start", runStartArguments(in), automaticEnv(in.automaticEnvelope)))
 }
 func (c *client) runHeartbeat(ctx context.Context, _ *mcp.CallToolRequest, in runHeartbeatInput) (*mcp.CallToolResult, any, error) {
 	arguments := map[string]any{"workspaceId": in.WorkspaceID, "runId": in.RunID, "leaseToken": in.LeaseToken, "expectedRunVersion": in.ExpectedRunVersion, "extensionSeconds": in.ExtensionSeconds}
@@ -1235,12 +1265,16 @@ func (c *client) gitObserve(ctx context.Context, _ *mcp.CallToolRequest, in gitO
 	arguments := map[string]any{"workspaceId": in.WorkspaceID, "observationId": in.ObservationID, "runId": in.RunID, "repositoryId": in.RepositoryID, "observedAt": in.ObservedAt, "headCommitSha": in.HeadCommitSHA, "branchHint": in.BranchHint, "worktreeLabel": in.WorktreeLabel, "dirty": in.Dirty}
 	return c.call(ctx, "POST", "/v1/commands/execute", command("git.observe", arguments, automaticEnv(in.automaticEnvelope)))
 }
-func (c *client) taskReportImplemented(ctx context.Context, _ *mcp.CallToolRequest, in taskReportImplementedInput) (*mcp.CallToolResult, any, error) {
+func taskReportImplementedArguments(in taskReportImplementedInput) map[string]any {
 	arguments := map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "assessment": in.Assessment}
+	addTaskContextNote(arguments, in.ContextNote)
+	return arguments
+}
+func (c *client) taskReportImplemented(ctx context.Context, _ *mcp.CallToolRequest, in taskReportImplementedInput) (*mcp.CallToolResult, any, error) {
 	envelope := automaticEnv(in.automaticEnvelope)
 	envelope["acknowledgedWarningCodes"] = in.AcknowledgedWarningCodes
 	envelope["proceedReason"] = in.ProceedReason
-	return c.call(ctx, "POST", "/v1/commands/execute", command("task.report_implemented", arguments, envelope))
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.report_implemented", taskReportImplementedArguments(in), envelope))
 }
 func acceptancePolicyArguments(in acceptancePolicyFields) map[string]any {
 	return map[string]any{"workspaceId": in.WorkspaceID, "policyVersion": in.PolicyVersion, "defaultMode": in.DefaultMode, "evidenceProfileId": in.EvidenceProfileID}
@@ -1271,13 +1305,15 @@ func (c *client) taskEvidenceReport(ctx context.Context, _ *mcp.CallToolRequest,
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.evidence.report", arguments, automaticEnv(in.automaticEnvelope)))
 }
 func taskCreateArguments(in taskCreateFields) map[string]any {
-	return map[string]any{
+	arguments := map[string]any{
 		"workspaceId": in.WorkspaceID, "taskUuid": in.TaskUUID, "laneId": in.LaneID, "phaseId": in.PhaseID,
 		"parentTaskId": in.ParentTaskID, "title": in.Title, "description": in.Description, "currentSummary": in.CurrentSummary,
 		"predecessorTaskIds": in.PredecessorTaskIDs, "successorTaskIds": in.SuccessorTaskIDs,
 		"terminalReason": in.TerminalReason, "requestedAcceptanceMode": in.RequestedAcceptanceMode,
 		"evidenceProfileId": in.EvidenceProfileID,
 	}
+	addTaskContextNote(arguments, in.ContextNote)
+	return arguments
 }
 func (c *client) taskCreatePreview(ctx context.Context, _ *mcp.CallToolRequest, in taskCreatePreviewInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/preview", command("task.create", taskCreateArguments(in.taskCreateFields), previewEnv(in.previewEnvelope)))
@@ -1303,6 +1339,7 @@ func taskUpdateArguments(in taskUpdateFields) map[string]any {
 	if in.CurrentSummary != nil {
 		arguments["currentSummary"] = *in.CurrentSummary
 	}
+	addTaskContextNote(arguments, in.ContextNote)
 	return arguments
 }
 func (c *client) taskUpdatePreview(ctx context.Context, _ *mcp.CallToolRequest, in taskUpdatePreviewInput) (*mcp.CallToolResult, any, error) {
@@ -1310,6 +1347,53 @@ func (c *client) taskUpdatePreview(ctx context.Context, _ *mcp.CallToolRequest, 
 }
 func (c *client) taskUpdateExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskUpdateExecuteInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.update", taskUpdateArguments(in.taskUpdateFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
+}
+func taskLifecycleArguments(in taskLifecycleFields) map[string]any {
+	arguments := map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "reason": in.Reason}
+	addTaskContextNote(arguments, in.ContextNote)
+	return arguments
+}
+func (c *client) taskLifecyclePreview(ctx context.Context, name string, in taskLifecyclePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command(name, taskLifecycleArguments(in.taskLifecycleFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) taskLifecycleExecute(ctx context.Context, name string, in taskLifecycleExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command(name, taskLifecycleArguments(in.taskLifecycleFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
+}
+func (c *client) taskReworkPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskLifecyclePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.taskLifecyclePreview(ctx, "task.rework", in)
+}
+func (c *client) taskReworkExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskLifecycleExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.taskLifecycleExecute(ctx, "task.rework", in)
+}
+func (c *client) taskBlockPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskLifecyclePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.taskLifecyclePreview(ctx, "task.block", in)
+}
+func (c *client) taskBlockExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskLifecycleExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.taskLifecycleExecute(ctx, "task.block", in)
+}
+func (c *client) taskUnblockPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskLifecyclePreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.taskLifecyclePreview(ctx, "task.unblock", in)
+}
+func (c *client) taskUnblockExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskLifecycleExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.taskLifecycleExecute(ctx, "task.unblock", in)
+}
+
+func addTaskContextNote(arguments map[string]any, note *taskContextNoteInput) {
+	if note != nil {
+		arguments["contextNote"] = note
+	}
+}
+
+func taskIdentityArguments(workspaceID string, taskID int, note *taskContextNoteInput) map[string]any {
+	arguments := map[string]any{"workspaceId": workspaceID, "taskId": taskID}
+	addTaskContextNote(arguments, note)
+	return arguments
+}
+
+func taskDiscardArguments(workspaceID string, taskID int, reason string, note *taskContextNoteInput) map[string]any {
+	arguments := taskIdentityArguments(workspaceID, taskID, note)
+	arguments["reason"] = reason
+	return arguments
 }
 func taskMoveArguments(in taskMoveFields) map[string]any {
 	return map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "targetPhaseId": in.TargetPhaseID}
@@ -1500,16 +1584,16 @@ func (c *client) gateDetachEntryTaskExecute(ctx context.Context, _ *mcp.CallTool
 	return c.call(ctx, "POST", "/v1/commands/execute", command("gate.detach_entry_task", gateEntryTaskArguments(in.gateEntryTaskFields), automaticEnv(in.automaticEnvelope)))
 }
 func (c *client) taskConfirmPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskConfirmPreviewInput) (*mcp.CallToolResult, any, error) {
-	return c.call(ctx, "POST", "/v1/commands/preview", command("task.confirm", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID}, previewEnv(in.previewEnvelope)))
+	return c.call(ctx, "POST", "/v1/commands/preview", command("task.confirm", taskIdentityArguments(in.WorkspaceID, in.TaskID, in.ContextNote), previewEnv(in.previewEnvelope)))
 }
 func (c *client) taskConfirmExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskConfirmExecuteInput) (*mcp.CallToolResult, any, error) {
-	return c.call(ctx, "POST", "/v1/commands/execute", command("task.confirm", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID}, executeEnv(in.executeEnvelope)))
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.confirm", taskIdentityArguments(in.WorkspaceID, in.TaskID, in.ContextNote), executeEnv(in.executeEnvelope)))
 }
 func (c *client) taskDiscardPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskDiscardPreviewInput) (*mcp.CallToolResult, any, error) {
-	return c.call(ctx, "POST", "/v1/commands/preview", command("task.discard", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "reason": in.Reason}, previewEnv(in.previewEnvelope)))
+	return c.call(ctx, "POST", "/v1/commands/preview", command("task.discard", taskDiscardArguments(in.WorkspaceID, in.TaskID, in.Reason, in.ContextNote), previewEnv(in.previewEnvelope)))
 }
 func (c *client) taskDiscardExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskDiscardExecuteInput) (*mcp.CallToolResult, any, error) {
-	return c.call(ctx, "POST", "/v1/commands/execute", command("task.discard", map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "reason": in.Reason}, executeEnv(in.executeEnvelope)))
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.discard", taskDiscardArguments(in.WorkspaceID, in.TaskID, in.Reason, in.ContextNote), executeEnv(in.executeEnvelope)))
 }
 func (c *client) gatePassPreview(ctx context.Context, _ *mcp.CallToolRequest, in gatePassPreviewInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/preview", command("gate.pass", map[string]any{"workspaceId": in.WorkspaceID, "gateId": in.GateID}, previewEnv(in.previewEnvelope)))

@@ -419,6 +419,18 @@ command hash가 그대로 유지된다. 필드가 있으면 request fingerprint�
 hash에 포함되므로 idempotent retry에서 바꿀 수 없고, 사람 승인 command에서는
 preview hash와 browser approval grant에도 결속된다.
 
+내용이 있는 note는 먼저 source lifecycle Event payload의 `taskJournal` seed로
+정규화해 저장한다. seed에는 `schemaVersion`, trimmed `narrative`, canonical JSON
+`context`와 이 세 값의 digest가 들어간다. Task target은 Event의 기존 `task` 또는
+`taskId`, lifecycle stage는 Event type에서 유도하므로 중복 authority를 만들지
+않는다. Journal ID와 occurred/recorded time은 source Event identity와 발생 시각을
+그대로 사용하며, projection은 persisted Event만으로 동일하게 rebuild할 수 있다.
+
+같은 `clientRunId`의 `run.start`를 다른 idempotency key로 복구할 때는 기존 Run의
+Task target과 source Event의 정규화 context digest가 새 요청과 모두 같아야 기존
+command·Journal을 재사용한다. Task 또는 context가 달라지면
+`idempotency_conflict`다.
+
 각 projection row는 Workspace/Task, source Event, source command, lifecycle stage,
 schema version, JSONB context, initiated/executed/approved Actor와 Event 발생 시간을
 보존한다. lifecycle mutation, Event, projection insert, revision CAS, idempotency

@@ -318,6 +318,7 @@ type TaskJournalWrite struct {
 	Narrative       string
 	SchemaVersion   int
 	Context         json.RawMessage
+	ContextDigest   string
 }
 type MutationPlan struct {
 	CommandName             string
