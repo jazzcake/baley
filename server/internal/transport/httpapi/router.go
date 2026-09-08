@@ -89,6 +89,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/graph", a.graph)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/phases/{phaseId}/tasks", a.phaseTasks)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/tasks/{publicId}", a.task)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/tasks/{publicId}/journal", a.taskJournal)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/tasks/{publicId}/acceptance", a.taskAcceptance)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/lanes/{laneId}/brief", a.laneBrief)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/backlog", a.backlogList)
@@ -96,6 +97,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/gates/{gateId}/status", a.gate)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/decisions", a.decisions)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/events", a.events)
+	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/task-journal", a.taskJournal)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/mutation-attempts", a.mutationAttempts)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/runs", a.runs)
 	mux.HandleFunc("GET /v1/workspaces/{workspaceId}/records", a.records)
@@ -1015,6 +1017,58 @@ func (a *API) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, v)
+}
+func (a *API) taskJournal(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 100 {
+			writeJSON(w, 400, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "limit must be between 1 and 100"}})
+			return
+		}
+		limit = parsed
+	}
+	taskPublicID := 0
+	if raw := r.PathValue("publicId"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeJSON(w, 400, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "publicId must be a positive integer"}})
+			return
+		}
+		taskPublicID = parsed
+	} else if raw := r.URL.Query().Get("taskId"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeJSON(w, 400, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "taskId must be a positive integer"}})
+			return
+		}
+		taskPublicID = parsed
+	}
+	var after time.Time
+	if raw := r.URL.Query().Get("after"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "after must be RFC3339"}})
+			return
+		}
+		after = parsed
+	}
+	afterID := r.URL.Query().Get("afterId")
+	if (!after.IsZero() && afterID == "") || (after.IsZero() && afterID != "") {
+		writeJSON(w, 400, map[string]any{"error": map[string]string{"code": "invalid_request", "message": "after and afterId must be provided together"}})
+		return
+	}
+	items, err := a.Repo.TaskJournal(r.Context(), r.PathValue("workspaceId"), taskPublicID, after, afterID, limit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	next, nextID := "", ""
+	if len(items) == limit {
+		next = items[len(items)-1].RecordedAt.Format(time.RFC3339Nano)
+		nextID = items[len(items)-1].ID
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "nextCursor": next, "nextCursorId": nextID})
 }
 func (a *API) mutationAttempts(w http.ResponseWriter, r *http.Request) {
 	limit := 50

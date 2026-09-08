@@ -14,10 +14,10 @@ import (
 const (
 	mcpImplementationVersion = "0.2.0"
 	mcpToolCatalogVersion    = "1.0.0"
-	mcpCompactToolCount      = 14
-	mcpCompactSchemaBytes    = 4184
-	mcpFullToolCount         = 82
-	mcpFullSchemaBytes       = 40124
+	mcpCompactToolCount      = 15
+	mcpCompactSchemaBytes    = 4700
+	mcpFullToolCount         = 83
+	mcpFullSchemaBytes       = 40640
 
 	mcpToolProfileCompact mcpToolProfile = "compact"
 	mcpToolProfileFull    mcpToolProfile = "full"
@@ -136,8 +136,26 @@ func newMCPServerForProfile(c *client, profile mcpToolProfile) *mcp.Server {
 		server = mcp.NewServer(&mcp.Implementation{Name: "baley", Version: mcpImplementationVersion}, nil)
 		addCompactReadTools(server, c)
 	}
+	mcp.AddTool(server, taskJournalTool(), c.taskJournal)
 	addCommandBridgeTools(server, c)
 	return server
+}
+
+func taskJournalTool() *mcp.Tool {
+	tool := readOnlyTool("baley_task_journal", "Read the append-only Task lifecycle context journal for one Task or an authorized Workspace")
+	tool.InputSchema = json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"workspaceId":{"type":"string","minLength":1},
+			"taskId":{"type":"integer","minimum":1,"description":"Optional Task public ID; omit for the Workspace journal"},
+			"after":{"type":"string","format":"date-time","description":"RFC3339 timestamp cursor returned by a prior page"},
+			"afterId":{"type":"string","minLength":1,"description":"ID tie-breaker paired with after"},
+			"limit":{"type":"integer","minimum":1,"maximum":100,"default":50}
+		},
+		"required":["workspaceId"],
+		"additionalProperties":false
+	}`)
+	return tool
 }
 
 func addCompactReadTools(server *mcp.Server, c *client) {

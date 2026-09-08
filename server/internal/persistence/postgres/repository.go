@@ -678,6 +678,39 @@ func (r *Repository) Events(ctx context.Context, wid string) ([]application.Even
 	return out, rows.Err()
 }
 
+func (r *Repository) TaskJournal(ctx context.Context, wid string, taskPublicID int, after time.Time, afterID string, limit int) ([]application.TaskJournalEntryProjection, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := r.Pool.Query(ctx, `SELECT j.id,j.workspace_id,j.task_id,t.public_id,j.event_id,e.event_type,j.command_id,c.command_name,
+		j.lifecycle_stage,COALESCE(j.narrative,''),j.schema_version,j.context,
+		COALESCE(j.initiated_by_actor_id,''),j.executed_by_actor_id,COALESCE(j.approved_by_actor_id,''),
+		j.occurred_at,j.recorded_at
+		FROM task_journal_entries j
+		JOIN tasks t ON t.workspace_id=j.workspace_id AND t.id=j.task_id
+		JOIN events e ON e.workspace_id=j.workspace_id AND e.id=j.event_id
+		JOIN commands c ON c.workspace_id=j.workspace_id AND c.id=j.command_id
+		WHERE j.workspace_id=$1 AND ($2=0 OR t.public_id=$2)
+		  AND ($3::timestamptz IS NULL OR j.recorded_at < $3 OR (j.recorded_at = $3 AND j.id < $4))
+		ORDER BY j.recorded_at DESC,j.id DESC LIMIT $5`, wid, taskPublicID, nullableTime(after), afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []application.TaskJournalEntryProjection{}
+	for rows.Next() {
+		var item application.TaskJournalEntryProjection
+		if err = rows.Scan(&item.ID, &item.WorkspaceID, &item.TaskID, &item.TaskPublicID,
+			&item.EventID, &item.EventType, &item.CommandID, &item.CommandName, &item.LifecycleStage, &item.Narrative,
+			&item.SchemaVersion, &item.Context, &item.InitiatedByActorID, &item.ExecutedByActorID,
+			&item.ApprovedByActorID, &item.OccurredAt, &item.RecordedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (r *Repository) RecordMutationAttempt(ctx context.Context, attempt application.MutationAttemptProjection) error {
 	if attempt.EventIDs == nil {
 		attempt.EventIDs = []string{}
@@ -899,6 +932,20 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		evaluation := domain.ValidateEventEvidence(domain.PlannedEvent{Type: eventWrites[index].Type, EntityType: eventWrites[index].EntityType, EntityID: eventWrites[index].EntityID, Payload: payload})
 		if evaluation.HasErrors() {
 			return result, fmt.Errorf("invalid Event evidence for %s: %+v", eventWrites[index].Type, evaluation.Errors)
+		}
+	}
+	journalEventIndex := -1
+	if plan.TaskJournal != nil {
+		for index := range eventWrites {
+			if eventWrites[index].Type == plan.TaskJournal.SourceEventType {
+				if journalEventIndex != -1 {
+					return result, fmt.Errorf("multiple source Events for Task journal stage %s", plan.TaskJournal.LifecycleStage)
+				}
+				journalEventIndex = index
+			}
+		}
+		if journalEventIndex == -1 {
+			return result, fmt.Errorf("missing source Event %s for Task journal", plan.TaskJournal.SourceEventType)
 		}
 	}
 	if !plan.IdempotentNoMutation {
@@ -1317,6 +1364,9 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 	for range eventWrites {
 		result.EventIDs = append(result.EventIDs, newID())
 	}
+	if plan.TaskJournal != nil {
+		result.TaskJournalEntryID = newID()
+	}
 	storedResult := result
 	storedResult.LeaseToken = ""
 	resultJSON, _ := json.Marshal(storedResult)
@@ -1358,6 +1408,23 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 			approvedBy = req.Envelope.HumanApprovalAttestation.ApprovedByActorID
 		}
 		if _, err = tx.Exec(ctx, "INSERT INTO events(id,workspace_id,command_id,workspace_revision,command_event_index,event_type,entity_type,entity_id,initiated_by_actor_id,executed_by_actor_id,approved_by_actor_id,payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,NULLIF($11,''),$12)", result.EventIDs[i], wid, commandID, newRevision, i, event.Type, event.EntityType, event.EntityID, req.Envelope.InitiatedByActorID, req.Envelope.ExecutedByActorID, approvedBy, payload); err != nil {
+			return result, err
+		}
+	}
+	if journal := plan.TaskJournal; journal != nil {
+		approvedBy := ""
+		if req.Envelope.HumanApprovalAttestation != nil {
+			approvedBy = req.Envelope.HumanApprovalAttestation.ApprovedByActorID
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO task_journal_entries(
+			id,workspace_id,task_id,event_id,command_id,lifecycle_stage,narrative,schema_version,context,
+			initiated_by_actor_id,executed_by_actor_id,approved_by_actor_id,occurred_at,recorded_at)
+			SELECT $1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,NULLIF($10,''),$11,NULLIF($12,''),
+			       e.created_at,GREATEST(e.created_at,$13)
+			FROM events e WHERE e.workspace_id=$2 AND e.id=$4`,
+			result.TaskJournalEntryID, wid, journal.TaskID, result.EventIDs[journalEventIndex], commandID,
+			journal.LifecycleStage, journal.Narrative, journal.SchemaVersion, journal.Context,
+			req.Envelope.InitiatedByActorID, req.Envelope.ExecutedByActorID, approvedBy, now); err != nil {
 			return result, err
 		}
 	}

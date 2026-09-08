@@ -3,7 +3,7 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { fetchGraph } from "./api/client";
+import { fetchGraph, fetchTaskJournal } from "./api/client";
 import { pilotReadyFixture } from "./fixtures/pilot-ready";
 import { layoutGraph, type GraphLayout } from "./graph/layout";
 import App from "./App";
@@ -18,7 +18,7 @@ const canvasDomNode = vi.hoisted(() => ({
   querySelector: vi.fn((selector: string) => selector === ".react-flow__viewport" ? renderedViewport : selector === ".react-flow__renderer" ? renderedRenderer : undefined),
 }));
 
-vi.mock("./api/client", () => ({ fetchGraph: vi.fn() }));
+vi.mock("./api/client", () => ({ fetchGraph: vi.fn(), fetchTaskJournal: vi.fn() }));
 vi.mock("./graph/layout", () => ({
   NODE_WIDTH: 190,
   NODE_HEIGHT: 110,
@@ -52,6 +52,7 @@ describe("Home navigation entry points", () => {
     vi.stubEnv("VITE_BALEY_WORKSPACE_ID", pilotReadyFixture.workspace.id);
     window.history.replaceState({}, "", "/workspaces/pilot/lanes/client?task=pilot-ui");
     vi.mocked(fetchGraph).mockResolvedValue(pilotReadyFixture);
+    vi.mocked(fetchTaskJournal).mockResolvedValue({ items: [], nextCursor: "", nextCursorId: "" });
     vi.mocked(layoutGraph).mockResolvedValue(backlogLayout);
     panZoomSetViewport.mockClear();
     setViewportState.mockClear();

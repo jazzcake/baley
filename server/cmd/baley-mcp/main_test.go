@@ -47,7 +47,8 @@ func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
 		"baley_backlog_get": true, "baley_gate_status": true,
 		"baley_decision_list": true, "baley_event_list": true,
 		"baley_mutation_attempt_list": true, "baley_run_list": true,
-		"baley_record_list": true, "baley_command_catalog": true,
+		"baley_task_journal": true,
+		"baley_record_list":  true, "baley_command_catalog": true,
 	}
 	humanApproval := map[string]bool{
 		"baley_task_acceptance_policy_change_execute": true,
@@ -349,6 +350,33 @@ func TestPhaseTasksUsesOneExplicitBoundedPhasePath(t *testing.T) {
 	for _, input := range []phaseTasksInput{{WorkspaceID: "workspace", PhaseID: "active", Cursor: -1}, {WorkspaceID: "workspace", PhaseID: "active", Limit: -1}, {WorkspaceID: "workspace", PhaseID: "active", Limit: 101}} {
 		if _, _, err := c.phaseTasks(context.Background(), nil, input); err == nil {
 			t.Fatalf("invalid Phase page input accepted: %#v", input)
+		}
+	}
+}
+
+func TestTaskJournalUsesAuthorizedBoundedWorkspacePath(t *testing.T) {
+	var gotPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[],"nextCursor":"","nextCursorId":""}`))
+	}))
+	defer server.Close()
+	c := &client{base: server.URL, http: server.Client()}
+	_, _, err := c.taskJournal(context.Background(), nil, taskJournalInput{
+		WorkspaceID: "workspace/escaped", TaskID: 183, After: "2026-09-08T01:02:03Z", AfterID: "journal-1", Limit: 100,
+	})
+	if err != nil || len(gotPaths) != 1 || gotPaths[0] != "/v1/workspaces/workspace%2Fescaped/task-journal?after=2026-09-08T01%3A02%3A03Z&afterId=journal-1&limit=100&taskId=183" {
+		t.Fatalf("journal result err=%v paths=%q", err, gotPaths)
+	}
+	for _, input := range []taskJournalInput{
+		{WorkspaceID: "workspace", After: "2026-09-08T01:02:03Z"},
+		{WorkspaceID: "workspace", AfterID: "journal-1"},
+		{WorkspaceID: "workspace", TaskID: -1},
+		{WorkspaceID: "workspace", Limit: 101},
+	} {
+		if _, _, err := c.taskJournal(context.Background(), nil, input); err == nil {
+			t.Fatalf("invalid journal page input accepted: %#v", input)
 		}
 	}
 }

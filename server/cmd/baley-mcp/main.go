@@ -162,6 +162,13 @@ type mutationAttemptListInput struct {
 	AfterID     string `json:"afterId,omitempty" jsonschema:"ID tie-breaker returned with the timestamp cursor"`
 	Limit       int    `json:"limit,omitempty"`
 }
+type taskJournalInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	TaskID      int    `json:"taskId,omitempty"`
+	After       string `json:"after,omitempty"`
+	AfterID     string `json:"afterId,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+}
 type backlogMutationFields struct {
 	WorkspaceID             string  `json:"workspaceId"`
 	BacklogUUID             string  `json:"backlogUuid,omitempty"`
@@ -1144,6 +1151,30 @@ func (c *client) mutationAttemptList(ctx context.Context, _ *mcp.CallToolRequest
 		values.Set("limit", fmt.Sprintf("%d", in.Limit))
 	}
 	path := "/v1/workspaces/" + url.PathEscape(in.WorkspaceID) + "/mutation-attempts"
+	if query := values.Encode(); query != "" {
+		path += "?" + query
+	}
+	return c.get(ctx, path)
+}
+func (c *client) taskJournal(ctx context.Context, _ *mcp.CallToolRequest, in taskJournalInput) (*mcp.CallToolResult, any, error) {
+	if (in.After == "") != (in.AfterID == "") {
+		return nil, nil, errors.New("after and afterId must be provided together")
+	}
+	if in.TaskID < 0 || in.Limit < 0 || in.Limit > 100 {
+		return nil, nil, errors.New("taskId and limit must be within the advertised bounds")
+	}
+	values := url.Values{}
+	if in.TaskID > 0 {
+		values.Set("taskId", fmt.Sprint(in.TaskID))
+	}
+	if in.After != "" {
+		values.Set("after", in.After)
+		values.Set("afterId", in.AfterID)
+	}
+	if in.Limit > 0 {
+		values.Set("limit", fmt.Sprint(in.Limit))
+	}
+	path := "/v1/workspaces/" + url.PathEscape(in.WorkspaceID) + "/task-journal"
 	if query := values.Encode(); query != "" {
 		path += "?" + query
 	}

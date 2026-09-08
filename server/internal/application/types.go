@@ -213,6 +213,29 @@ type EventProjection struct {
 	Payload            json.RawMessage `json:"payload"`
 	CreatedAt          time.Time       `json:"createdAt"`
 }
+type TaskContextNote struct {
+	Narrative string         `json:"narrative,omitempty"`
+	Context   map[string]any `json:"context,omitempty"`
+}
+type TaskJournalEntryProjection struct {
+	ID                 string          `json:"id"`
+	WorkspaceID        string          `json:"workspaceId"`
+	TaskID             string          `json:"taskId"`
+	TaskPublicID       int             `json:"taskPublicId"`
+	EventID            string          `json:"eventId"`
+	EventType          string          `json:"eventType"`
+	CommandID          string          `json:"commandId"`
+	CommandName        string          `json:"commandName"`
+	LifecycleStage     string          `json:"lifecycleStage"`
+	Narrative          string          `json:"narrative,omitempty"`
+	SchemaVersion      int             `json:"schemaVersion"`
+	Context            json.RawMessage `json:"context"`
+	InitiatedByActorID string          `json:"initiatedByActorId,omitempty"`
+	ExecutedByActorID  string          `json:"executedByActorId"`
+	ApprovedByActorID  string          `json:"approvedByActorId,omitempty"`
+	OccurredAt         time.Time       `json:"occurredAt"`
+	RecordedAt         time.Time       `json:"recordedAt"`
+}
 type MutationAttemptProjection struct {
 	ID                        string    `json:"id"`
 	WorkspaceID               string    `json:"workspaceId"`
@@ -288,6 +311,14 @@ type EventWrite struct {
 	EntityID   string
 	Payload    any
 }
+type TaskJournalWrite struct {
+	TaskID          string
+	SourceEventType string
+	LifecycleStage  string
+	Narrative       string
+	SchemaVersion   int
+	Context         json.RawMessage
+}
 type MutationPlan struct {
 	CommandName             string
 	WorkspaceState          domain.WorkspaceState
@@ -323,6 +354,7 @@ type MutationPlan struct {
 	FromPhaseID             string
 	ToPhaseID               string
 	Events                  []EventWrite
+	TaskJournal             *TaskJournalWrite
 	Action                  string
 	EntityType              string
 	EntityID                string
@@ -344,14 +376,15 @@ type MutationPlan struct {
 }
 
 type ExecutionResult struct {
-	CommandID         string   `json:"commandId"`
-	WorkspaceRevision int64    `json:"workspaceRevision"`
-	EventIDs          []string `json:"eventIds"`
-	Projection        any      `json:"projection"`
-	Idempotent        bool     `json:"idempotent"`
-	ApprovalProtocol  string   `json:"approvalProtocol,omitempty"`
-	LeaseToken        string   `json:"leaseToken,omitempty"`
-	CommandHash       string   `json:"-"`
+	CommandID          string   `json:"commandId"`
+	WorkspaceRevision  int64    `json:"workspaceRevision"`
+	EventIDs           []string `json:"eventIds"`
+	TaskJournalEntryID string   `json:"taskJournalEntryId,omitempty"`
+	Projection         any      `json:"projection"`
+	Idempotent         bool     `json:"idempotent"`
+	ApprovalProtocol   string   `json:"approvalProtocol,omitempty"`
+	LeaseToken         string   `json:"leaseToken,omitempty"`
+	CommandHash        string   `json:"-"`
 }
 
 type Repository interface {
@@ -363,6 +396,7 @@ type Repository interface {
 	Backlog(context.Context, string, int) (BacklogItemProjection, error)
 	BacklogList(context.Context, string, string, string, int, int) ([]BacklogItemProjection, error)
 	Events(context.Context, string) ([]EventProjection, error)
+	TaskJournal(context.Context, string, int, time.Time, string, int) ([]TaskJournalEntryProjection, error)
 }
 
 type CommandError struct {

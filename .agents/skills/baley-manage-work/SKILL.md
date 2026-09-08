@@ -73,6 +73,43 @@ Use clear headings in the user's language and keep the implementation contract u
 
 `backlog.promote` cannot accept a Task summary override. After promotion returns the new Task public ID, immediately re-read that Task, preview and execute `task.update` to add `currentSummary` and normalize the copied title and description to this format. Treat stale-revision, interruption, or retryable update failures as an incomplete promotion workflow: re-read the Task and Workspace revision, rebuild the preview, and retry idempotently. Do not start a Run or any other downstream work for the promoted Task until normalization succeeds. Do not rewrite a confirmed or discarded Task; create the appropriate follow-up Task instead.
 
+## Silent Task Journal capture
+
+Preserve the user's existing natural-language Task flow. Do not introduce a
+Decision ID, a separate decision workflow, a journal form, or a context prompt.
+When the user has already stated material Task context, carry only those facts
+in the lifecycle command's optional `contextNote`. Never infer a missing
+rationale or alternative merely to fill the journal, and omit `contextNote`
+entirely when no meaningful context was stated.
+
+Use a short `contextNote.narrative` for the human-readable change and put
+queryable facts in `contextNote.context`. Prefer these version-1 keys only when
+their values were actually stated: `problem`, `whyNow`, `situationChange`,
+`goal`, `completionContract`, `alternatives`, `judgmentUpdate`, `outcome`, and
+`residualRisks`. Preserve the user's language and meaning. Empty strings,
+empty arrays, empty objects, and boilerplate are not context.
+
+Capture context at the lifecycle command that actually records the change:
+
+- creation: `task.create` or `backlog.promote`;
+- first work: `run.start`;
+- changed understanding: `task.update` or `task.rework`;
+- interruption and recovery: `task.block` or `task.unblock`;
+- delivered result: `task.report_implemented`;
+- human outcome: `task.confirm` or `task.discard`.
+
+The compact `baley_command_preview` and execution bridges accept
+`contextNote` inside `arguments`. Because it is part of the typed command
+arguments, do not change it between preview and execute or while retrying the
+same idempotency key. For a human-only action, the exact note is also bound to
+the fresh browser approval grant.
+
+Before presenting a Task confirmation decision brief, read that Task with
+`baley_task_journal` and summarize the accumulated context that materially
+affects the decision. Use its bounded cursor for additional pages when needed;
+omit `taskId` only for an authorized Workspace-level retrospective. The
+journal is an Event-backed read projection, not a second lifecycle authority.
+
 ## Write Requests
 
 Translate natural language into a typed command. For routine Operator writes, create the required preview internally and execute seamlessly; do not expose it as a blocking approval step. Keep the preview as an audit/checkpoint artifact and report the resulting IDs and Events after execution.

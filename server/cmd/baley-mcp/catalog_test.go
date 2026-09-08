@@ -19,10 +19,10 @@ import (
 const (
 	legacyCatalogToolCount    = 78
 	legacyCatalogSchemaBytes  = 37800
-	compactCatalogToolCount   = 14
-	compactCatalogSchemaBytes = 4184
-	fullCatalogToolCount      = 82
-	fullCatalogSchemaBytes    = 40124
+	compactCatalogToolCount   = 15
+	compactCatalogSchemaBytes = 4700
+	fullCatalogToolCount      = 83
+	fullCatalogSchemaBytes    = 40640
 )
 
 var expectedCompactToolNames = []string{
@@ -38,6 +38,7 @@ var expectedCompactToolNames = []string{
 	"baley_phase_tasks",
 	"baley_task_acceptance_get",
 	"baley_task_get",
+	"baley_task_journal",
 	"baley_workspace_context",
 	"baley_workspace_get",
 }

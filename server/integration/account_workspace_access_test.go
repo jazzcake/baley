@@ -31,7 +31,7 @@ func TestMigration14DownUp(t *testing.T) {
 	deletePilotMeasurementRecords(t, url)
 	migrations := filepath.Join("..", "migrations")
 	// Exercise migration 14 from the latest schema by stepping back to 13.
-	for range 4 {
+	for range 13 {
 		if err := postgres.Migrate(url, migrations, "down"); err != nil {
 			t.Fatal(err)
 		}
@@ -150,6 +150,8 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 		"/v1/workspaces/" + postgres.DemoWorkspaceID + "/graph",
 		"/v1/workspaces/" + postgres.DemoWorkspaceID + "/context",
 		"/v1/workspaces/" + postgres.DemoWorkspaceID + "/phases/multi-user-operations/tasks",
+		"/v1/workspaces/" + postgres.DemoWorkspaceID + "/task-journal",
+		"/v1/workspaces/" + postgres.DemoWorkspaceID + "/tasks/101/journal",
 	} {
 		unauthenticated := httptest.NewRequest(http.MethodGet, path, nil)
 		unauthenticatedResponse := httptest.NewRecorder()
@@ -273,7 +275,7 @@ func TestAccountWorkspaceAccessAndAuthenticatedApprovalAgainstPostgres(t *testin
 	if _, err = repo.Pool.Exec(ctx, "INSERT INTO workspaces(id,name,state,revision) VALUES('20000000-0000-4000-8000-000000000134','Other Workspace','draft',1)"); err != nil {
 		t.Fatal(err)
 	}
-	for _, suffix := range []string{"/graph", "/context", "/phases/foreign/tasks"} {
+	for _, suffix := range []string{"/graph", "/context", "/phases/foreign/tasks", "/task-journal", "/tasks/1/journal"} {
 		crossWorkspace := httptest.NewRequest(http.MethodGet, "/v1/workspaces/20000000-0000-4000-8000-000000000134"+suffix, nil)
 		crossWorkspace.AddCookie(sessionCookie)
 		crossResponse := httptest.NewRecorder()

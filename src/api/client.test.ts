@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchGraph } from "./client";
+import { fetchGraph, fetchTaskJournal } from "./client";
 
 describe("live Backlog graph mapping", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -64,5 +64,19 @@ describe("live Backlog graph mapping", () => {
     }));
     const graph = await fetchGraph("w");
     expect(graph.gates.map((gate) => [gate.id, gate.publicId])).toEqual([["later", 2], ["earlier", 1]]);
+  });
+});
+
+describe("Task journal reads", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("uses the bounded Task-scoped authenticated path", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [], nextCursor: "", nextCursorId: "" }),
+    }));
+    await fetchTaskJournal("workspace/one", 183);
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toContain("/v1/workspaces/workspace%2Fone/tasks/183/journal?limit=50");
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({ credentials: "include" });
   });
 });

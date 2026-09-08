@@ -28,56 +28,61 @@ type workspaceMutationArgs struct {
 	WorkspaceID string `json:"workspaceId"`
 }
 type taskConfirmArgs struct {
-	WorkspaceID string `json:"workspaceId"`
-	TaskID      int    `json:"taskId"`
+	WorkspaceID string           `json:"workspaceId"`
+	TaskID      int              `json:"taskId"`
+	ContextNote *TaskContextNote `json:"contextNote,omitempty"`
 }
 type taskReportImplementedArgs struct {
-	WorkspaceID string `json:"workspaceId"`
-	TaskID      int    `json:"taskId"`
-	Assessment  string `json:"assessment"`
+	WorkspaceID string           `json:"workspaceId"`
+	TaskID      int              `json:"taskId"`
+	Assessment  string           `json:"assessment"`
+	ContextNote *TaskContextNote `json:"contextNote,omitempty"`
 }
 type taskMutationArgs struct {
-	WorkspaceID    string  `json:"workspaceId"`
-	TaskID         int     `json:"taskId"`
-	Title          *string `json:"title,omitempty"`
-	Description    *string `json:"description,omitempty"`
-	CurrentSummary *string `json:"currentSummary,omitempty"`
-	Reason         string  `json:"reason,omitempty"`
-	TargetPhaseID  string  `json:"targetPhaseId,omitempty"`
+	WorkspaceID    string           `json:"workspaceId"`
+	TaskID         int              `json:"taskId"`
+	Title          *string          `json:"title,omitempty"`
+	Description    *string          `json:"description,omitempty"`
+	CurrentSummary *string          `json:"currentSummary,omitempty"`
+	Reason         string           `json:"reason,omitempty"`
+	TargetPhaseID  string           `json:"targetPhaseId,omitempty"`
+	ContextNote    *TaskContextNote `json:"contextNote,omitempty"`
 }
 type taskCreateArgs struct {
-	WorkspaceID             string `json:"workspaceId"`
-	TaskUUID                string `json:"taskUuid"`
-	LaneID                  string `json:"laneId"`
-	PhaseID                 string `json:"phaseId"`
-	ParentTaskID            int    `json:"parentTaskId,omitempty"`
-	Title                   string `json:"title"`
-	Description             string `json:"description,omitempty"`
-	CurrentSummary          string `json:"currentSummary,omitempty"`
-	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
-	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
-	TerminalReason          string `json:"terminalReason,omitempty"`
-	RequestedAcceptanceMode string `json:"requestedAcceptanceMode,omitempty"`
-	EvidenceProfileID       string `json:"evidenceProfileId,omitempty"`
+	WorkspaceID             string           `json:"workspaceId"`
+	TaskUUID                string           `json:"taskUuid"`
+	LaneID                  string           `json:"laneId"`
+	PhaseID                 string           `json:"phaseId"`
+	ParentTaskID            int              `json:"parentTaskId,omitempty"`
+	Title                   string           `json:"title"`
+	Description             string           `json:"description,omitempty"`
+	CurrentSummary          string           `json:"currentSummary,omitempty"`
+	PredecessorTaskIDs      []int            `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int            `json:"successorTaskIds,omitempty"`
+	TerminalReason          string           `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string           `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string           `json:"evidenceProfileId,omitempty"`
+	ContextNote             *TaskContextNote `json:"contextNote,omitempty"`
 }
 type backlogMutationArgs struct {
-	WorkspaceID             string  `json:"workspaceId"`
-	BacklogUUID             string  `json:"backlogUuid,omitempty"`
-	BacklogPublicID         int     `json:"backlogPublicId,omitempty"`
-	LaneID                  string  `json:"laneId,omitempty"`
-	TargetLaneID            string  `json:"targetLaneId,omitempty"`
-	Title                   *string `json:"title,omitempty"`
-	Description             *string `json:"description,omitempty"`
-	Reason                  string  `json:"reason,omitempty"`
-	OrderedBacklogPublicIDs []int   `json:"orderedBacklogPublicIds,omitempty"`
-	TaskUUID                string  `json:"taskUuid,omitempty"`
-	PhaseID                 string  `json:"phaseId,omitempty"`
-	ParentTaskID            int     `json:"parentTaskId,omitempty"`
-	PredecessorTaskIDs      []int   `json:"predecessorTaskIds,omitempty"`
-	SuccessorTaskIDs        []int   `json:"successorTaskIds,omitempty"`
-	TerminalReason          string  `json:"terminalReason,omitempty"`
-	RequestedAcceptanceMode string  `json:"requestedAcceptanceMode,omitempty"`
-	EvidenceProfileID       string  `json:"evidenceProfileId,omitempty"`
+	WorkspaceID             string           `json:"workspaceId"`
+	BacklogUUID             string           `json:"backlogUuid,omitempty"`
+	BacklogPublicID         int              `json:"backlogPublicId,omitempty"`
+	LaneID                  string           `json:"laneId,omitempty"`
+	TargetLaneID            string           `json:"targetLaneId,omitempty"`
+	Title                   *string          `json:"title,omitempty"`
+	Description             *string          `json:"description,omitempty"`
+	Reason                  string           `json:"reason,omitempty"`
+	OrderedBacklogPublicIDs []int            `json:"orderedBacklogPublicIds,omitempty"`
+	TaskUUID                string           `json:"taskUuid,omitempty"`
+	PhaseID                 string           `json:"phaseId,omitempty"`
+	ParentTaskID            int              `json:"parentTaskId,omitempty"`
+	PredecessorTaskIDs      []int            `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int            `json:"successorTaskIds,omitempty"`
+	TerminalReason          string           `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string           `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string           `json:"evidenceProfileId,omitempty"`
+	ContextNote             *TaskContextNote `json:"contextNote,omitempty"`
 }
 type backlogCreateArgs struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -108,16 +113,17 @@ type backlogDiscardArgs struct {
 	Reason          string `json:"reason"`
 }
 type backlogPromoteArgs struct {
-	WorkspaceID             string `json:"workspaceId"`
-	BacklogPublicID         int    `json:"backlogPublicId"`
-	TaskUUID                string `json:"taskUuid"`
-	PhaseID                 string `json:"phaseId"`
-	ParentTaskID            int    `json:"parentTaskId,omitempty"`
-	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
-	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
-	TerminalReason          string `json:"terminalReason,omitempty"`
-	RequestedAcceptanceMode string `json:"requestedAcceptanceMode,omitempty"`
-	EvidenceProfileID       string `json:"evidenceProfileId,omitempty"`
+	WorkspaceID             string           `json:"workspaceId"`
+	BacklogPublicID         int              `json:"backlogPublicId"`
+	TaskUUID                string           `json:"taskUuid"`
+	PhaseID                 string           `json:"phaseId"`
+	ParentTaskID            int              `json:"parentTaskId,omitempty"`
+	PredecessorTaskIDs      []int            `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int            `json:"successorTaskIds,omitempty"`
+	TerminalReason          string           `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string           `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string           `json:"evidenceProfileId,omitempty"`
+	ContextNote             *TaskContextNote `json:"contextNote,omitempty"`
 }
 type acceptancePolicyChangeArgs struct {
 	WorkspaceID       string `json:"workspaceId"`
@@ -198,13 +204,14 @@ type gatePassArgs struct {
 	GateID      string `json:"gateId"`
 }
 type runStartArgs struct {
-	WorkspaceID string         `json:"workspaceId"`
-	TaskID      int            `json:"taskId"`
-	ClientRunID string         `json:"clientRunId"`
-	Kind        domain.RunKind `json:"kind"`
-	SessionRef  string         `json:"sessionRef,omitempty"`
-	ParentRunID string         `json:"parentRunId,omitempty"`
-	TargetRunID string         `json:"targetRunId,omitempty"`
+	WorkspaceID string           `json:"workspaceId"`
+	TaskID      int              `json:"taskId"`
+	ClientRunID string           `json:"clientRunId"`
+	Kind        domain.RunKind   `json:"kind"`
+	SessionRef  string           `json:"sessionRef,omitempty"`
+	ParentRunID string           `json:"parentRunId,omitempty"`
+	TargetRunID string           `json:"targetRunId,omitempty"`
+	ContextNote *TaskContextNote `json:"contextNote,omitempty"`
 }
 type runHeartbeatArgs struct {
 	WorkspaceID        string `json:"workspaceId"`
@@ -1791,6 +1798,13 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 	default:
 		return result, plan, &CommandError{Code: "invalid_request", Message: "unsupported command"}
 	}
+	if len(result.Errors) == 0 {
+		journal, journalErr := taskJournalFromCommand(request.Name, typed, plan)
+		if journalErr != nil {
+			return result, plan, &CommandError{Code: "invalid_request", Message: journalErr.Error()}
+		}
+		plan.TaskJournal = journal
+	}
 	result.DecisionSnapshotHash = decisionHash
 	result.EntityType, result.EntityID = plan.EntityType, plan.EntityID
 	result.CommandHash = hashCommand(request.Name, typed, request.Envelope.ExpectedWorkspaceRevision, decisionHash)
@@ -1817,6 +1831,111 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		return result, plan, &CommandError{Code: result.Errors[0].Code, Message: "command evaluation failed: " + result.Errors[0].Code}
 	}
 	return result, plan, nil
+}
+
+func taskJournalFromCommand(name string, typed any, plan MutationPlan) (*TaskJournalWrite, error) {
+	var note *TaskContextNote
+	stage, sourceEventType, taskID := "", "", plan.TaskID
+	switch args := typed.(type) {
+	case taskCreateArgs:
+		note, stage, sourceEventType = args.ContextNote, "created", "task.created"
+		if plan.TaskCreate != nil {
+			taskID = plan.TaskCreate.ID
+		}
+	case backlogMutationArgs:
+		if name == "backlog.promote" {
+			note, stage, sourceEventType = args.ContextNote, "created", "task.created"
+			if plan.TaskCreate != nil {
+				taskID = plan.TaskCreate.ID
+			}
+		}
+	case runStartArgs:
+		note, stage, sourceEventType = args.ContextNote, "run_started", "run.started"
+		if plan.Run != nil {
+			taskID = plan.Run.TaskID
+		}
+	case taskMutationArgs:
+		note = args.ContextNote
+		switch name {
+		case "task.update":
+			stage, sourceEventType = "updated", "task.updated"
+		case "task.rework":
+			stage, sourceEventType = "rework_started", "task.rework_started"
+		case "task.block":
+			stage, sourceEventType = "blocked", "task.blocked"
+		case "task.unblock":
+			stage, sourceEventType = "unblocked", "task.unblocked"
+		case "task.discard":
+			stage, sourceEventType = "discarded", "task.discarded"
+		}
+	case taskReportImplementedArgs:
+		note, stage, sourceEventType = args.ContextNote, "implemented", "task.implemented_reported"
+	case taskConfirmArgs:
+		note, stage, sourceEventType = args.ContextNote, "confirmed", "task.confirmed"
+	}
+	if note == nil {
+		return nil, nil
+	}
+	if stage == "" || sourceEventType == "" {
+		return nil, fmt.Errorf("contextNote is not supported for %s", name)
+	}
+	narrative := strings.TrimSpace(note.Narrative)
+	if len(narrative) > 4000 {
+		return nil, fmt.Errorf("contextNote.narrative exceeds 4000 bytes")
+	}
+	meaningfulContext := false
+	for _, value := range note.Context {
+		if contextValueHasContent(value) {
+			meaningfulContext = true
+			break
+		}
+	}
+	if narrative == "" && !meaningfulContext {
+		return nil, nil
+	}
+	context := note.Context
+	if context == nil {
+		context = map[string]any{}
+	}
+	contextJSON, err := json.Marshal(context)
+	if err != nil {
+		return nil, fmt.Errorf("contextNote.context is not valid JSON: %w", err)
+	}
+	if len(contextJSON) > 16*1024 {
+		return nil, fmt.Errorf("contextNote.context exceeds 16384 bytes")
+	}
+	if taskID == "" {
+		return nil, fmt.Errorf("contextNote has no Task lifecycle target")
+	}
+	return &TaskJournalWrite{
+		TaskID: taskID, SourceEventType: sourceEventType, LifecycleStage: stage,
+		Narrative: narrative, SchemaVersion: 1, Context: contextJSON,
+	}, nil
+}
+
+func contextValueHasContent(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []any:
+		for _, item := range typed {
+			if contextValueHasContent(item) {
+				return true
+			}
+		}
+		return false
+	case map[string]any:
+		for _, item := range typed {
+			if contextValueHasContent(item) {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
 }
 
 func approvalFingerprint(attestation *HumanApprovalAttestation) string {
@@ -1950,7 +2069,7 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 			TaskUUID: v.TaskUUID, PhaseID: v.PhaseID, ParentTaskID: v.ParentTaskID,
 			PredecessorTaskIDs: v.PredecessorTaskIDs, SuccessorTaskIDs: v.SuccessorTaskIDs,
 			TerminalReason: v.TerminalReason, RequestedAcceptanceMode: v.RequestedAcceptanceMode,
-			EvidenceProfileID: v.EvidenceProfileID,
+			EvidenceProfileID: v.EvidenceProfileID, ContextNote: v.ContextNote,
 		}, nil
 	case *gateMutationArgs:
 		return v.WorkspaceID, *v, nil

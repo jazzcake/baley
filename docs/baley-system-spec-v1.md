@@ -402,6 +402,38 @@ assessment는 구현 품질 인증이 아니라 상태 변경 이유, 수행한 
 
 상세계획, 독립 Agent 리뷰 또는 완료보고가 없으면 Baley는 warning을 반환하지만 상태 전이를 강제로 차단하지 않는다. 구현 주체는 warning code를 acknowledge하고 선택적 진행 사유를 남겨 진행할 수 있다.
 
+### 8.5 Task Journal
+
+Task Journal은 별도 Decision 엔터티나 상태 머신이 아니라 기존 Task lifecycle
+Event에서 파생되는 append-only 조회 projection이다. 사용자는 기존 자연어 Task
+흐름을 유지하고, Skill은 사용자가 실제로 밝힌 문제, 왜 지금인지, 상황 변화,
+목표, 완료 계약, 대안, 판단 수정과 결과만 lifecycle command의 선택적
+`contextNote`로 조용히 전달한다. 말하지 않은 rationale 또는 alternative를
+채우지 않고, narrative와 구조화 context가 모두 비어 있으면 row를 만들지 않는다.
+
+V1 `contextNote`는 짧은 `narrative`와 versioned JSON object `context`를 가진다.
+지원 command는 `task.create`, `backlog.promote`, `run.start`, `task.update`,
+`task.rework`, `task.block`, `task.unblock`, `task.report_implemented`,
+`task.confirm`, `task.discard`다. 필드가 없으면 기존 typed wire shape와 canonical
+command hash가 그대로 유지된다. 필드가 있으면 request fingerprint와 command
+hash에 포함되므로 idempotent retry에서 바꿀 수 없고, 사람 승인 command에서는
+preview hash와 browser approval grant에도 결속된다.
+
+각 projection row는 Workspace/Task, source Event, source command, lifecycle stage,
+schema version, JSONB context, initiated/executed/approved Actor와 Event 발생 시간을
+보존한다. lifecycle mutation, Event, projection insert, revision CAS, idempotency
+result와 approval grant 소비는 같은 transaction이다. Event가 역사적 원본이며
+projection은 Event를 대체하지 않는다. update/delete와 non-empty truncate는
+DB trigger가 거부한다.
+
+조회는 `workspace:read` authorization을 거친 다음 Task 범위
+`/v1/workspaces/{workspaceId}/tasks/{publicId}/journal` 또는 Workspace 범위
+`/v1/workspaces/{workspaceId}/task-journal`에서 수행한다. 정렬은
+`recordedAt DESC, id DESC`, cursor는 `after`와 `afterId` 쌍이며 page size는
+1–100으로 제한한다. compact/full MCP의 `baley_task_journal`도 같은 API와
+authorization 경계를 사용한다. Viewer는 기존 Task Inspector에서 이 누적 맥락을
+읽기 전용으로 보여 주며 입력 form이나 별도 Decision 화면을 만들지 않는다.
+
 ## 9. Task 구조와 dependency
 
 ### 9.1 Parent/child
@@ -1161,6 +1193,7 @@ run_git_observations
 human_approval_attestations
 commands
 events
+task_journal_entries
 workspace_counters
 ```
 

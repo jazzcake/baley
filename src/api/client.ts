@@ -1,4 +1,4 @@
-import type { WorkspaceFixture } from "../domain/model";
+import type { TaskJournalPage, WorkspaceFixture } from "../domain/model";
 import { requestJSON } from "./http";
 
 type GraphDTO = {
@@ -48,4 +48,11 @@ export async function fetchGraph(workspaceId: string, signal?: AbortSignal): Pro
     records: dto.records ?? [],
     acceptanceEvidence: dto.acceptanceEvidence ?? [],
   };
+}
+
+export function fetchTaskJournal(workspaceId: string, taskPublicId: number, signal?: AbortSignal): Promise<TaskJournalPage> {
+  return requestJSON<TaskJournalPage>(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/tasks/${taskPublicId}/journal?limit=50`,
+    { signal },
+  );
 }

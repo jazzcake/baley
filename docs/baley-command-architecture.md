@@ -155,6 +155,27 @@ POST /v1/commands/execute  → revision과 command hash를 재검증하고 실�
 
 Preview는 command hash, expected Workspace revision, required capability, projected diff, error/warning/advisory와 선택적 decision snapshot hash를 반환한다. 사람 승인 command는 이 preview를 통해 `human_approval_required`와 결속 정보를 얻는다. 이 필드는 기본적으로 Agent가 audit 결속에 사용하며, 사람에게는 판단 가능한 outcome-first brief를 제공한다. Run heartbeat와 자동 Record 등록은 사용자에게 매번 preview를 보여주지 않지만 같은 서버 계약과 검증을 사용한다.
 
+### 5.5 Task Journal context
+
+Task lifecycle command는 선택적 `contextNote`를 받는다. 이 필드는 새 workflow가
+아니며 사용자가 이미 말한 업무 맥락을 같은 command에 붙이는 transport다.
+지원 범위는 create/promotion, first Run, update/rework, block/unblock,
+implemented report와 confirm/discard다. 내용이 없으면 field와 projection 모두
+생략하여 기존 JSON, hash, idempotency와 실행 결과를 보존한다.
+
+내용이 있으면 typed arguments의 일부로 canonical command hash와 request
+fingerprint에 들어간다. 따라서 preview와 execute, idempotent retry가 같은
+context를 사용해야 한다. 사람 승인 mutation은 context를 포함한 hash에 대해
+browser grant를 발급하므로 승인 뒤 context 변경은 grant mismatch다.
+
+Repository는 lifecycle mutation과 source Event를 먼저 같은 transaction에 쓰고,
+그 Event의 `created_at`을 occurrence time으로 사용하는 append-only
+`task_journal_entries` projection을 삽입한다. stable envelope에는 command/Event
+링크와 actor provenance가 포함되고, versioned payload만 JSONB에 둔다. Task 및
+Workspace 조회는 `(recorded_at DESC, id DESC)`와 paired cursor, 최대 100건을
+사용한다. MCP `baley_task_journal`과 Viewer Task Inspector는 이 HTTP query의
+adapter이며 별도 domain rule이나 edit surface를 갖지 않는다.
+
 ## 6. 자동 Run 예시
 
 사용자:

@@ -154,3 +154,22 @@ func TestPhaseTasksRejectsInvalidPageBoundsBeforeRepositoryRead(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskJournalRejectsInvalidPaginationBeforeRepositoryRead(t *testing.T) {
+	handler := (&API{}).Handler()
+	for _, path := range []string{
+		"/v1/workspaces/workspace/task-journal?limit=0",
+		"/v1/workspaces/workspace/task-journal?limit=101",
+		"/v1/workspaces/workspace/task-journal?taskId=0",
+		"/v1/workspaces/workspace/tasks/0/journal",
+		"/v1/workspaces/workspace/task-journal?after=not-a-time&afterId=entry",
+		"/v1/workspaces/workspace/task-journal?after=2026-09-08T01:02:03Z",
+		"/v1/workspaces/workspace/task-journal?afterId=entry",
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") {
+			t.Fatalf("%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+}

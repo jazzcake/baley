@@ -70,6 +70,7 @@ var queryNames = map[string]bool{
 	"event.list": true, "decision.list": true,
 	"backlog.list": true, "backlog.get": true,
 	"mutation-attempt.list": true,
+	"task.journal":          true,
 }
 
 var primaryArgument = map[string]string{

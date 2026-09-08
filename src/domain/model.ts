@@ -44,6 +44,30 @@ export type BacklogItem = {
 };
 export type Run = { id: string; taskId: string; kind: string; status: string; startedAt: string; endedAt?: string; resultSummary?: string; errorSummary?: string };
 export type TaskRecord = { id: string; taskId: string; runId?: string; recordType: string; repositoryId: string; relativePath: string; state: string; shortSummary: string; commitSha?: string };
+export type TaskJournalEntry = {
+  id: string;
+  workspaceId: string;
+  taskId: string;
+  taskPublicId: number;
+  eventId: string;
+  eventType: string;
+  commandId: string;
+  commandName: string;
+  lifecycleStage: string;
+  narrative?: string;
+  schemaVersion: number;
+  context: Record<string, unknown>;
+  initiatedByActorId?: string;
+  executedByActorId: string;
+  approvedByActorId?: string;
+  occurredAt: string;
+  recordedAt: string;
+};
+export type TaskJournalPage = {
+  items: TaskJournalEntry[];
+  nextCursor: string;
+  nextCursorId: string;
+};
 export type AcceptanceEvidence = {
   id: string;
   taskId: string;

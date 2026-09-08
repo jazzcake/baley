@@ -20,8 +20,8 @@
       "compact": {
         "path": "/mcp",
         "maximumToolCount": 15,
-        "toolCount": 14,
-        "serializedInputSchemaBytes": 4184,
+        "toolCount": 15,
+        "serializedInputSchemaBytes": 4700,
         "tools": [
           "baley_backlog_get",
           "baley_backlog_list",
@@ -35,14 +35,15 @@
           "baley_phase_tasks",
           "baley_task_acceptance_get",
           "baley_task_get",
+          "baley_task_journal",
           "baley_workspace_context",
           "baley_workspace_get"
         ]
       },
       "full": {
         "path": "/mcp/full",
-        "toolCount": 82,
-        "serializedInputSchemaBytes": 40124,
+        "toolCount": 83,
+        "serializedInputSchemaBytes": 40640,
         "legacyToolCount": 78,
         "legacyToolParity": true,
         "purpose": "explicit diagnostics and rare administration opt-in"
@@ -119,8 +120,41 @@
     "decision.list",
     "backlog.list",
     "backlog.get",
-    "mutation-attempt.list"
+    "mutation-attempt.list",
+    "task.journal"
   ],
+  "taskJournal": {
+    "version": 1,
+    "sourceOfTruth": "events",
+    "projection": "append_only",
+    "optionalCommandField": "contextNote",
+    "contextNote": {
+      "narrativeMaxBytes": 4000,
+      "contextMaxBytes": 16384,
+      "contextType": "json_object",
+      "emptyNotesPersisted": false,
+      "canonicalKeys": [
+        "problem", "whyNow", "situationChange", "goal", "completionContract",
+        "alternatives", "judgmentUpdate", "outcome", "residualRisks"
+      ]
+    },
+    "commands": [
+      "task.create", "backlog.promote", "run.start", "task.update", "task.rework",
+      "task.block", "task.unblock", "task.report_implemented", "task.confirm", "task.discard"
+    ],
+    "transactionBoundary": "lifecycle_command_event_projection",
+    "hashBinding": "typed_arguments_including_contextNote",
+    "approvalBinding": "commandHash_and_decisionSnapshotHash",
+    "idempotencyBinding": "request_fingerprint_including_contextNote",
+    "read": {
+      "taskPath": "/v1/workspaces/{workspaceId}/tasks/{publicId}/journal",
+      "workspacePath": "/v1/workspaces/{workspaceId}/task-journal",
+      "mcpTool": "baley_task_journal",
+      "order": "recordedAt_desc_id_desc",
+      "maximumPageSize": 100,
+      "cursor": ["after", "afterId"]
+    }
+  },
   "mutations": {
     "project.bootstrap": { "capability": "workspace:operate", "humanApproval": "none" },
     "repository.register": { "capability": "workspace:operate", "humanApproval": "none" },

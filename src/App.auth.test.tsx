@@ -28,7 +28,7 @@ import {
   revokeApprovalGrant,
 } from "./api/auth";
 import { APIError } from "./api/http";
-import { fetchGraph } from "./api/client";
+import { fetchGraph, fetchTaskJournal } from "./api/client";
 import App from "./App";
 import { isMCPLoginPath } from "./components/WorkspaceAccess";
 import { pilotReadyFixture } from "./fixtures/pilot-ready";
@@ -60,7 +60,7 @@ vi.mock("./api/auth", () => ({
   executeCommand: vi.fn(),
   revokeApprovalGrant: vi.fn(),
 }));
-vi.mock("./api/client", () => ({ fetchGraph: vi.fn() }));
+vi.mock("./api/client", () => ({ fetchGraph: vi.fn(), fetchTaskJournal: vi.fn() }));
 vi.mock("./graph/layout", () => ({
   NODE_WIDTH: 190,
   NODE_HEIGHT: 110,
@@ -102,6 +102,7 @@ describe("authenticated Workspace routing", () => {
     vi.stubEnv("VITE_BALEY_AUTH_MODE", "enforced");
     vi.mocked(fetchSession).mockResolvedValue(session);
     vi.mocked(fetchWorkspaces).mockResolvedValue(memberships);
+    vi.mocked(fetchTaskJournal).mockResolvedValue({ items: [], nextCursor: "", nextCursorId: "" });
     vi.mocked(logout).mockResolvedValue(undefined);
     vi.mocked(createWorkspace).mockResolvedValue({
       id: "w3",
@@ -269,9 +270,20 @@ describe("authenticated Workspace routing", () => {
       implementedAssessment: "Implementation and independent review passed.",
     } : item);
     vi.mocked(fetchGraph).mockResolvedValue(implementedGraph);
+    vi.mocked(fetchTaskJournal).mockResolvedValue({
+      items: [{
+        id: "journal-1", workspaceId: "w1", taskId: "pilot-ui", taskPublicId: 104,
+        eventId: "event-1", eventType: "task.implemented_reported", commandId: "command-1", commandName: "task.report_implemented",
+        lifecycleStage: "implemented", narrative: "The user-visible outcome passed review.", schemaVersion: 1,
+        context: { outcome: "reviewed delivery" }, executedByActorId: "agent", occurredAt: "2026-09-08T01:02:03Z", recordedAt: "2026-09-08T01:02:03Z",
+      }],
+      nextCursor: "", nextCursorId: "",
+    });
     window.history.replaceState({}, "", "/workspaces/w1?task=pilot-ui");
     render(<App />);
 
+    expect(await screen.findByText("The user-visible outcome passed review.")).toBeTruthy();
+    expect(screen.getByText("reviewed delivery")).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Confirm task" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm task once" }));
 
