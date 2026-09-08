@@ -119,7 +119,7 @@ Task #182의 audit와 read-only SQL을 그대로 입력으로 사용했으며 �
 - 리뷰 수정 커밋: `9038f13caaf2d01e58ecf457af5eb7bcc131e914` (`fix: address Task 183 journal review`).
 - 독립 재리뷰: `task-records/development-decision-log/task-183-independent-rereview.md`, verdict `CHANGES_REQUIRED`, blocking 0건과 material 1건. 원문 SHA-256은 `B44931F0554477F38262AEED56C8160B4EE0013217A386F001FC7FDF7EEEE957`이며 보정 중 파일을 변경하지 않았다.
 - material(backlog promotion typed MCP): `baley_backlog_promote_preview`/`execute` schema와 `backlogMutationFields` forwarding에 선택적 `contextNote`를 추가하고 present exact-value/absent omission test를 추가했다.
-- 보정 커밋: 검증 후 기록한다.
+- 2차 보정 커밋: `e0393164273db83d0db1bfd16b69beaf6fa15ce5` (`fix(task-183): forward backlog promotion context`). PM 재리뷰 원문도 byte 변경 없이 이 커밋에 포함했다.
 - 이 보고서는 재리뷰 finding 수정 완료를 기록하지만 독립 후속 리뷰 통과를 주장하지 않는다. Task의 `implemented` 전환은 후속 리뷰에서 unresolved blocking/material finding 0건을 확인한 뒤에만 가능하다.
 
 ## 운영 불변
