@@ -97,8 +97,9 @@ Task #182의 audit와 read-only SQL을 그대로 입력으로 사용했으며 �
 
 ## 독립 리뷰와 커밋
 
-- 구현 커밋: 독립 리뷰 전 생성 예정.
-- 독립 리뷰: coordinator가 구현 커밋을 대상으로 별도 reviewer에게 dispatch할 예정. blocking/material finding은 수정 후 재검증·재리뷰한다.
+- 구현 커밋: `6da2c5c1560cb82de5e12480ce1962f393bd1c51` (`feat: add seamless task journal`).
+- 구현 Dispatch에서 coordinator에게 독립 리뷰를 blocking 요청했고, coordinator는 PM 검증 후 준비된 별도 review Task로 위 커밋을 즉시 dispatch하겠다고 답했다.
+- 이 구현 Dispatch에는 reviewer finding이나 review artifact가 아직 반환되지 않았다. 따라서 Task의 `implemented` 전환은 별도 reviewer가 correctness, migration, auth/CAS/idempotency, approval binding, queryability, skill 비추론 규칙과 UI 회귀를 검토하고 unresolved blocking/material finding이 0임을 확인한 뒤에만 가능하다.
 
 ## 운영 불변
 
