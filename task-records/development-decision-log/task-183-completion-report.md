@@ -109,7 +109,7 @@ Task #182의 audit와 read-only SQL을 그대로 입력으로 사용했으며 �
 - blocking(Event source/rebuild): Event-first normalized seed/digest와 persisted-Event projection, rebuild 동등성 test로 수정했다.
 - material(run.start recovery): Task target/context digest comparison과 same/different cross-key integration test로 수정했다.
 - material(full typed MCP): 모든 명시된 typed lifecycle schema/argument forwarding, absent compatibility와 approval mismatch test로 수정했다.
-- 리뷰 수정 커밋: 생성 예정.
+- 리뷰 수정 커밋: `9038f13caaf2d01e58ecf457af5eb7bcc131e914` (`fix: address Task 183 journal review`).
 - 이 보고서는 finding 수정 완료를 기록하지만 독립 재리뷰 통과를 주장하지 않는다. Task의 `implemented` 전환은 재리뷰에서 unresolved blocking/material finding 0건을 확인한 뒤에만 가능하다.
 
 ## 운영 불변
