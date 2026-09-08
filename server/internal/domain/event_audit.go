@@ -39,6 +39,11 @@ func buildEventEvidenceRules() []EventEvidenceRule {
 		"run.started": {"runId", "taskId", "clientRunId", "kind"}, "run.succeeded": {"runId", "resultSummary"}, "run.failed": {"runId", "errorSummary"}, "run.cancelled": {"runId", "errorSummary"}, "run.interrupted": {"runId", "errorSummary"}, "run.corrected": {"runId", "previousStatus", "previousResultSummary", "previousErrorSummary", "previousEndedAt", "newStatus", "newResultSummary", "newErrorSummary", "newEndedAt", "reason"},
 		"record.registered": {"recordId", "taskId", "repositoryId", "relativePath"}, "record.commit_attached": {"recordId", "commitSha", "blobSha"}, "commit.attached": {"commitId", "taskId", "repositoryId", "commitSha", "relation"}, "git.observed": {"observationId", "runId", "repositoryId", "observedAt"},
 		"human_approval_attestation.recorded": {"action", "entityType", "entityId", "workspaceRevision", "approvedByActorId", "approvedCommandHash"},
+		"bird_view.created":                   {"birdViewId", "title"}, "bird_view.updated": {"birdViewId", "before", "after"}, "bird_view.archived": {"birdViewId"},
+		"bird_view.node.created": {"nodeId", "birdViewId"}, "bird_view.node.updated": {"nodeId", "before", "after"}, "bird_view.node.deleted": {"nodeId", "birdViewId"}, "bird_view.node.achieved": {"nodeId", "status"}, "bird_view.node.parked": {"nodeId", "status"},
+		"bird_view.edge.connected": {"edgeId", "fromNodeId", "toNodeId"}, "bird_view.edge.updated": {"edgeId", "before", "after"}, "bird_view.edge.disconnected": {"edgeId"},
+		"bird_view.binding.pinned": {"nodeId", "targetType", "workspaceId", "targetId", "state"}, "bird_view.binding.excluded": {"nodeId", "targetType", "workspaceId", "targetId", "state"},
+		"bird_view.overlay.replaced": {"nodeId", "suggestedCount", "preservedExplicitCount"},
 	}
 	rules := make([]EventEvidenceRule, 0, len(keys))
 	for eventType, required := range keys {

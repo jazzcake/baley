@@ -27,7 +27,7 @@ import (
 	"golang.org/x/term"
 )
 
-const expectedSchemaVersion int64 = 25
+const expectedSchemaVersion int64 = 27
 
 var (
 	buildVersion = "dev"
@@ -185,7 +185,7 @@ func main() {
 		}
 	}()
 	api := &httpapi.API{
-		Service: service, Repo: repo, AllowedOrigins: origins, MCPLoginOrigin: mcpLoginOrigin, MCPLoopbackCallbackOrigin: mcpLoopbackCallbackOrigin, Auth: authService, OIDC: oidcService, OIDCPostLoginURL: oidcPostLoginURL,
+		Service: service, BirdViews: application.NewBirdViewService(repo), Repo: repo, AllowedOrigins: origins, MCPLoginOrigin: mcpLoginOrigin, MCPLoopbackCallbackOrigin: mcpLoopbackCallbackOrigin, Auth: authService, OIDC: oidcService, OIDCPostLoginURL: oidcPostLoginURL,
 		AuthMode: runtimeConfig.AuthMode, CookieSecure: runtimeConfig.CookieSecure,
 		Build: httpapi.BuildInfo{Version: buildVersion, Commit: buildCommit, BuiltAt: buildTime, SchemaVersion: expectedSchemaVersion},
 		ReadyCheck: func(readyCtx context.Context) (int64, error) {

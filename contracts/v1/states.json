@@ -5,6 +5,17 @@
     "values": ["draft", "active", "closed", "archived"],
     "terminal": ["closed"]
   },
+  "birdView": {
+    "values": ["active", "archived"],
+    "terminal": ["archived"]
+  },
+  "birdViewNode": {
+    "values": ["active", "achieved", "parked"]
+  },
+  "birdViewBinding": {
+    "values": ["suggested", "pinned", "excluded"],
+    "overlayReplacePreserves": ["pinned", "excluded"]
+  },
   "task": {
     "values": ["pending", "in_progress", "implemented", "confirmed", "discarded"],
     "terminal": ["confirmed", "discarded"],

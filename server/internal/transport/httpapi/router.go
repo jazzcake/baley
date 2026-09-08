@@ -25,6 +25,7 @@ import (
 
 type API struct {
 	Service                   *application.Service
+	BirdViews                 *application.BirdViewService
 	Repo                      *postgres.Repository
 	AllowedOrigins            []string
 	MCPLoginOrigin            string
@@ -65,6 +66,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/mcp/gateway-sessions", a.resumeMCPGateway)
 	mux.HandleFunc("POST /v1/mcp/gateway-enrollments", a.autoEnrollMCPGateway)
 	mux.HandleFunc("GET /v1/workspaces", a.workspaces)
+	mux.HandleFunc("GET /v1/bird-views", a.birdViewList)
+	mux.HandleFunc("GET /v1/bird-views/{birdViewId}", a.birdViewGet)
+	mux.HandleFunc("GET /v1/bird-views/{birdViewId}/graph", a.birdViewGraph)
+	mux.HandleFunc("GET /v1/bird-views/{birdViewId}/nodes/{nodeId}/focus", a.birdViewNodeFocus)
+	mux.HandleFunc("GET /v1/bird-views/{birdViewId}/nodes/{nodeId}/context", a.birdViewNodeContext)
 	mux.HandleFunc("POST /v1/workspaces", a.createWorkspace)
 	mux.HandleFunc("PATCH /v1/workspaces/{workspaceId}", a.renameWorkspace)
 	mux.HandleFunc("POST /v1/workspaces/{workspaceId}/archive", a.archiveWorkspace)
@@ -334,6 +340,80 @@ func (a *API) workspaces(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]any{"id": value.ID, "name": value.Name, "state": value.State, "revision": value.Revision, "role": value.Role, "relationship": relationship, "capabilities": value.Capabilities})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) birdViewPrincipal(r *http.Request) *application.CommandPrincipal {
+	state, ok := authState(r)
+	if !ok {
+		return nil
+	}
+	return &application.CommandPrincipal{AccountID: state.Principal.AccountID, CredentialID: firstNonEmpty(state.Principal.CredentialID, state.Principal.SessionID), WorkspaceID: state.Principal.WorkspaceID, SessionID: state.Principal.SessionID, Subject: state.Principal.Subject}
+}
+
+func (a *API) birdViewList(w http.ResponseWriter, r *http.Request) {
+	if a.BirdViews == nil {
+		writeBirdViewUnavailable(w)
+		return
+	}
+	items, err := a.BirdViews.List(r.Context(), a.birdViewPrincipal(r), r.URL.Query().Get("includeArchived") == "true")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) birdViewGet(w http.ResponseWriter, r *http.Request) {
+	if a.BirdViews == nil {
+		writeBirdViewUnavailable(w)
+		return
+	}
+	value, err := a.BirdViews.Get(r.Context(), a.birdViewPrincipal(r), r.PathValue("birdViewId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+func (a *API) birdViewGraph(w http.ResponseWriter, r *http.Request) {
+	if a.BirdViews == nil {
+		writeBirdViewUnavailable(w)
+		return
+	}
+	value, err := a.BirdViews.Graph(r.Context(), a.birdViewPrincipal(r), r.PathValue("birdViewId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+func (a *API) birdViewNodeFocus(w http.ResponseWriter, r *http.Request) {
+	if a.BirdViews == nil {
+		writeBirdViewUnavailable(w)
+		return
+	}
+	value, err := a.BirdViews.Focus(r.Context(), a.birdViewPrincipal(r), r.PathValue("birdViewId"), r.PathValue("nodeId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+func (a *API) birdViewNodeContext(w http.ResponseWriter, r *http.Request) {
+	if a.BirdViews == nil {
+		writeBirdViewUnavailable(w)
+		return
+	}
+	value, err := a.BirdViews.Context(r.Context(), a.birdViewPrincipal(r), r.PathValue("birdViewId"), r.PathValue("nodeId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+
+func writeBirdViewUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]string{"code": "service_unavailable", "message": "Bird View is unavailable"}})
 }
 
 func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -1134,6 +1214,21 @@ func (a *API) preview(w http.ResponseWriter, r *http.Request) {
 		req.Principal = &application.CommandPrincipal{AccountID: state.Principal.AccountID, CredentialID: firstNonEmpty(state.Principal.CredentialID, state.Principal.SessionID), WorkspaceID: state.Principal.WorkspaceID, SessionID: state.Principal.SessionID, Subject: state.Principal.Subject}
 		req.Envelope.ExecutedByActorID = state.Principal.ActorID
 		req.Envelope.InitiatedByActorID = state.Principal.ActorID
+	}
+	if application.IsBirdViewCommand(req.Name) {
+		if a.BirdViews == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]string{"code": "service_unavailable", "message": "Bird View is unavailable"}})
+			return
+		}
+		v, err := a.BirdViews.Preview(r.Context(), req)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, v)
+		return
+	}
+	if state, ok := authState(r); ok {
 		workspaceID := commandWorkspaceID(req.Arguments)
 		if workspaceID == "" || state.Principal.WorkspaceID != "" && state.Principal.WorkspaceID != workspaceID {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]string{"code": "not_found", "message": "workspace not found"}})
@@ -1191,6 +1286,21 @@ func (a *API) execute(w http.ResponseWriter, r *http.Request) {
 		req.Principal = &application.CommandPrincipal{AccountID: state.Principal.AccountID, CredentialID: firstNonEmpty(state.Principal.CredentialID, state.Principal.SessionID), WorkspaceID: state.Principal.WorkspaceID, SessionID: state.Principal.SessionID, Subject: state.Principal.Subject}
 		req.Envelope.ExecutedByActorID = state.Principal.ActorID
 		req.Envelope.InitiatedByActorID = state.Principal.ActorID
+	}
+	if application.IsBirdViewCommand(req.Name) {
+		if a.BirdViews == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]string{"code": "service_unavailable", "message": "Bird View is unavailable"}})
+			return
+		}
+		v, birdErr := a.BirdViews.Execute(r.Context(), req)
+		if birdErr != nil {
+			writeError(w, birdErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, v)
+		return
+	}
+	if state, ok := authState(r); ok {
 		workspaceID := commandWorkspaceID(req.Arguments)
 		if !a.authorizeCommandTenant(r, state, workspaceID) {
 			_ = a.Repo.RecordAccessDenial(r.Context(), state.Principal.ActorID, "http.command.execute", workspaceID)
@@ -1383,7 +1493,7 @@ func writeError(w http.ResponseWriter, err error) {
 	switch ce.Code {
 	case "not_found":
 		status = 404
-	case "stale_revision", "stale_run_version", "run_lease_mismatch", "idempotency_conflict", "invalid_state_transition", "gate_not_ready", "gate_not_current":
+	case "stale_revision", "stale_bird_view_revision", "stale_run_version", "run_lease_mismatch", "idempotency_conflict", "invalid_state_transition", "gate_not_ready", "gate_not_current", "bird_view_archived":
 		status = 409
 	case "invalid_request":
 		status = 400

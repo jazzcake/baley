@@ -16,9 +16,11 @@ const (
 	GateApprove      Capability = "gate:approve"
 	WorkspaceClose   Capability = "workspace:close"
 	WorkspaceAdmin   Capability = "workspace:admin"
+	BirdViewRead     Capability = "bird_view:read"
+	BirdViewOperate  Capability = "bird_view:operate"
 )
 
-var Capabilities = []Capability{WorkspaceRead, WorkspaceOperate, RunOperate, RecordOperate, TaskApprove, LaneApprove, GateApprove, WorkspaceClose, WorkspaceAdmin}
+var Capabilities = []Capability{WorkspaceRead, WorkspaceOperate, RunOperate, RecordOperate, TaskApprove, LaneApprove, GateApprove, WorkspaceClose, WorkspaceAdmin, BirdViewRead, BirdViewOperate}
 var IntrinsicAgentForbidden = []Capability{TaskApprove, LaneApprove, GateApprove, WorkspaceClose, WorkspaceAdmin}
 
 type Role string
@@ -58,9 +60,9 @@ type Catalog struct {
 var DefaultCatalog = Catalog{
 	Capabilities: append([]Capability(nil), Capabilities...),
 	Roles: map[Role][]Capability{
-		RoleViewer:   {WorkspaceRead},
-		RoleOperator: {WorkspaceRead, WorkspaceOperate, RunOperate, RecordOperate},
-		RoleApprover: {WorkspaceRead, TaskApprove, LaneApprove, GateApprove},
+		RoleViewer:   {WorkspaceRead, BirdViewRead},
+		RoleOperator: {WorkspaceRead, WorkspaceOperate, RunOperate, RecordOperate, BirdViewRead, BirdViewOperate},
+		RoleApprover: {WorkspaceRead, TaskApprove, LaneApprove, GateApprove, BirdViewRead},
 		RoleOwner:    append([]Capability(nil), Capabilities...),
 	},
 	AgentAllowedRole: RoleOperator,

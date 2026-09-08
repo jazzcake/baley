@@ -231,3 +231,9 @@ Web에서 제외:
 - Branch/worktree 관리
 
 UI 안의 command bar가 추가되더라도 동일한 Skill/MCP command 경로를 사용한다.
+
+## 11. Bird View command scope
+
+Bird View는 Workspace command scope를 공유하지 않는다. 같은 `/v1/commands/preview`와 `/v1/commands/execute` transport를 사용하지만 account-private Bird View aggregate의 `expectedBirdViewRevision`, idempotency ledger와 Event ledger로 평가한다. 정확한 query/mutation literal은 `contracts/v1/commands.json`, 의미와 non-leakage 규칙은 [ADR 0003](adr/0003-account-private-bird-view-planning-graph.md)이 정본이다.
+
+MCP/LLM은 `bird_view.node.context`로 현재 Node 내용과 접근 가능한 overlay를 읽고 제안한 `suggested` 집합을 `bird_view.overlay.replace`로 교체한다. 서버는 모델을 호출하지 않고, pinned/excluded 보존과 target visibility만 transaction 안에서 강제한다.

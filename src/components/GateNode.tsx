@@ -8,7 +8,7 @@ export function GateNode({ data, selected }: NodeProps) {
   return <article className={`gate-node ${value.compact ? "compact" : ""} ${selected ? "selected" : ""} ${value.dimmed ? "dimmed" : ""}`}>
     <Handle type="target" position={Position.Left} />
     {!value.compact && <div className="gate-icon"><Milestone size={18} /></div>}
-    <div><span><Diamond size={9} /> G#{value.publicId} · PHASE GATE · {value.status}</span><strong>{value.compact ? "Passed" : value.title}</strong>{!value.compact && <small>{value.alias ?? value.gateId} · {value.status === "ready" ? "Approval pending" : value.summary}</small>}</div>
+    <div><span><Diamond size={9} /> G#{value.publicId} · PHASE GATE · {value.status}</span><strong>{value.title}</strong>{!value.compact && <small>{value.alias ?? value.gateId} · {value.status === "ready" ? "Approval pending" : value.summary}</small>}</div>
     <Handle type="source" position={Position.Right} />
   </article>;
 }

@@ -34,7 +34,11 @@
     "backlog_order_mismatch",
     "backlog_order_unchanged",
     "invalid_backlog_filter",
-    "lane_has_active_backlog"
+    "lane_has_active_backlog",
+    "stale_bird_view_revision",
+    "invalid_bird_view_edge",
+    "invalid_bird_view_binding",
+    "bird_view_archived"
   ],
   "warnings": [
     "missing_detailed_plan_record",

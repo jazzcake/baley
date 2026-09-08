@@ -10,12 +10,14 @@
     "lane:approve",
     "gate:approve",
     "workspace:close",
-    "workspace:admin"
+    "workspace:admin",
+    "bird_view:read",
+    "bird_view:operate"
   ],
   "roles": {
-    "viewer": ["workspace:read"],
-    "operator": ["workspace:read", "workspace:operate", "run:operate", "record:operate"],
-    "approver": ["workspace:read", "task:approve", "lane:approve", "gate:approve"],
+    "viewer": ["workspace:read", "bird_view:read"],
+    "operator": ["workspace:read", "workspace:operate", "run:operate", "record:operate", "bird_view:read", "bird_view:operate"],
+    "approver": ["workspace:read", "task:approve", "lane:approve", "gate:approve", "bird_view:read"],
     "owner": [
       "workspace:read",
       "workspace:operate",
@@ -25,7 +27,9 @@
       "lane:approve",
       "gate:approve",
       "workspace:close",
-      "workspace:admin"
+      "workspace:admin",
+      "bird_view:read",
+      "bird_view:operate"
     ]
   },
   "agentToken": {

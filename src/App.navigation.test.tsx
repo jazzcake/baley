@@ -12,6 +12,7 @@ const panZoomSetViewport = vi.hoisted(() => vi.fn(() => Promise.resolve({})));
 const setViewportState = vi.hoisted(() => vi.fn());
 const renderedViewport = vi.hoisted(() => ({ style: { transform: "translate(0px, 0px) scale(1)" } }));
 const renderedRenderer = vi.hoisted(() => ({ __zoom: undefined as unknown }));
+const renderedWorkspaceBackgrounds = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const canvasDomNode = vi.hoisted(() => ({
   clientWidth: 1200,
   clientHeight: 700,
@@ -27,7 +28,7 @@ vi.mock("./graph/layout", () => ({
   layoutGraph: vi.fn(async () => undefined),
 }));
 vi.mock("@xyflow/react", () => ({
-  Background: () => null,
+  Background: (props: Record<string, unknown>) => { renderedWorkspaceBackgrounds.push(props); return null; },
   Panel: ({ children, ...props }: { children: React.ReactNode }) => React.createElement("div", props, children),
   ReactFlow: ({ children, viewport, fitView, panOnDrag }: { children: React.ReactNode; viewport?: unknown; fitView?: unknown; panOnDrag?: boolean }) => React.createElement("div", { "data-testid": "graph", "data-controlled": String(Boolean(viewport)), "data-auto-fit": String(Boolean(fitView)), "data-drag-disabled": String(panOnDrag === false) }, children),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
@@ -56,6 +57,7 @@ describe("Home navigation entry points", () => {
     panZoomSetViewport.mockClear();
     setViewportState.mockClear();
     renderedViewport.style.transform = "translate(0px, 0px) scale(1)";
+    renderedWorkspaceBackgrounds.length = 0;
     window.localStorage.clear();
   });
 
@@ -86,6 +88,13 @@ describe("Home navigation entry points", () => {
     expect(canvas.getAttribute("data-auto-fit")).toBe("false");
     expect(canvas.getAttribute("data-drag-disabled")).toBe("false");
     expect(screen.getByLabelText("Viewport controls")).toBeTruthy();
+  });
+
+  it("keeps the lower Workspace graph on its established single dot background", async () => {
+    render(<App />);
+    await screen.findByTestId("graph");
+    expect(renderedWorkspaceBackgrounds).toContainEqual({ color: "#d8d6ce", gap: 24, size: 1 });
+    expect(renderedWorkspaceBackgrounds.some((background) => background.variant === "lines" || String(background.className ?? "").includes("bird-v2-planning-grid"))).toBe(false);
   });
 
   it("defaults to Flow and persists a Tree selection for the Workspace", async () => {

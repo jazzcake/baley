@@ -29,6 +29,7 @@ type Invocation struct {
 	IdempotencyKey            string
 	ExecutedByActorID         string
 	ExpectedWorkspaceRevision int64
+	ExpectedBirdViewRevision  int64
 	AcknowledgedWarningCodes  []string
 }
 
@@ -70,6 +71,8 @@ var queryNames = map[string]bool{
 	"event.list": true, "decision.list": true,
 	"backlog.list": true, "backlog.get": true,
 	"mutation-attempt.list": true,
+	"bird_view.list":        true, "bird_view.get": true, "bird_view.graph": true,
+	"bird_view.node.focus": true, "bird_view.node.context": true,
 }
 
 var primaryArgument = map[string]string{
@@ -137,7 +140,11 @@ func Parse(args []string) (Invocation, error) {
 			if err != nil || revision < 0 {
 				return Invocation{}, invalid("invalid --revision")
 			}
-			invocation.ExpectedWorkspaceRevision = revision
+			if strings.HasPrefix(name, "bird_view.") {
+				invocation.ExpectedBirdViewRevision = revision
+			} else {
+				invocation.ExpectedWorkspaceRevision = revision
+			}
 		case "ack":
 			if strings.TrimSpace(flagValue) == "" {
 				return Invocation{}, invalid("blank --ack")
@@ -206,7 +213,7 @@ func Run(ctx context.Context, client Client, invocation Invocation, approval *Ap
 		Name: invocation.Name, Arguments: invocation.Arguments,
 		Envelope: application.CommandEnvelope{
 			IdempotencyKey: invocation.IdempotencyKey, ExecutedByActorID: invocation.ExecutedByActorID,
-			ExpectedWorkspaceRevision: invocation.ExpectedWorkspaceRevision,
+			ExpectedWorkspaceRevision: invocation.ExpectedWorkspaceRevision, ExpectedBirdViewRevision: invocation.ExpectedBirdViewRevision,
 		},
 	}
 	preview, err := client.Preview(ctx, request)
@@ -233,7 +240,11 @@ func Run(ctx context.Context, client Client, invocation Invocation, approval *Ap
 		outcome.ApprovalRequired = true
 		return outcome, nil
 	}
-	request.Envelope.ExpectedWorkspaceRevision = preview.ExpectedWorkspaceRevision
+	if strings.HasPrefix(invocation.Name, "bird_view.") {
+		request.Envelope.ExpectedBirdViewRevision = preview.ExpectedBirdViewRevision
+	} else {
+		request.Envelope.ExpectedWorkspaceRevision = preview.ExpectedWorkspaceRevision
+	}
 	request.Envelope.AcknowledgedWarningCodes = append([]string(nil), invocation.AcknowledgedWarningCodes...)
 	if approvalRequired {
 		request.Envelope.ApprovalGrantID = strings.TrimSpace(approval.GrantID)

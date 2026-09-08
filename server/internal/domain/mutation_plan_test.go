@@ -38,12 +38,12 @@ func TestMutationPoliciesCoverCommandContract(t *testing.T) {
 		if policy.Capability != literal.Capability || string(policy.HumanApproval) != literal.HumanApproval && !(policy.HumanApproval == "" && literal.HumanApproval == "none") || policy.ActiveCapability != literal.ActiveCapability {
 			t.Errorf("policy drift %s: %+v vs %+v", name, policy, literal)
 		}
-		if MutationHandlers[name] == nil {
+		if MutationHandlers[name] == nil && BirdViewMutationHandlers[name] == nil {
 			t.Errorf("mutation %s has no executable handler", name)
 		}
 	}
-	if len(MutationHandlers) != len(contract.Mutations) {
-		t.Fatalf("handler count %d != contract %d", len(MutationHandlers), len(contract.Mutations))
+	if len(MutationHandlers)+len(BirdViewMutationHandlers) != len(contract.Mutations) {
+		t.Fatalf("handler count %d != contract %d", len(MutationHandlers)+len(BirdViewMutationHandlers), len(contract.Mutations))
 	}
 }
 

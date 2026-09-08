@@ -47,7 +47,10 @@ func TestBaleyToolAnnotationsKeepOperatorWorkSilent(t *testing.T) {
 		"baley_backlog_get": true, "baley_gate_status": true,
 		"baley_decision_list": true, "baley_event_list": true,
 		"baley_mutation_attempt_list": true, "baley_run_list": true,
-		"baley_record_list": true,
+		"baley_record_list":    true,
+		"baley_bird_view_list": true, "baley_bird_view_get": true,
+		"baley_bird_view_graph": true, "baley_bird_view_node_focus": true,
+		"baley_bird_view_node_context": true,
 	}
 	humanApproval := map[string]bool{
 		"baley_task_acceptance_policy_change_execute": true,

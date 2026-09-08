@@ -154,3 +154,22 @@ func TestPhaseTasksRejectsInvalidPageBoundsBeforeRepositoryRead(t *testing.T) {
 		}
 	}
 }
+
+func TestBirdViewReadsFailClosedWhenServiceIsUnwired(t *testing.T) {
+	handler := (&API{}).Handler()
+	for _, path := range []string{
+		"/v1/bird-views",
+		"/v1/bird-views/20000000-0000-4000-8000-000000000026",
+		"/v1/bird-views/20000000-0000-4000-8000-000000000026/graph",
+		"/v1/bird-views/20000000-0000-4000-8000-000000000026/nodes/30000000-0000-4000-8000-000000000026/focus",
+		"/v1/bird-views/20000000-0000-4000-8000-000000000026/nodes/30000000-0000-4000-8000-000000000026/context",
+	} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"service_unavailable"`) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}

@@ -26,6 +26,7 @@ import {
 } from "../api/auth";
 import type { CommandExecution, CommandPreview, CommandRequest, MCPLoginLink, OIDCProvider } from "../api/auth";
 import { APIError } from "../api/http";
+import { useAuth } from "../auth/AuthProvider";
 import { traceViewer } from "../debug/viewer-trace";
 import type {
   Account,
@@ -146,23 +147,90 @@ function moveMenuFocus(event: React.KeyboardEvent<HTMLElement>) {
 
 export function LoginScreen() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const auth = useAuth();
   const [oidcProviders, setOIDCProviders] = useState<OIDCProvider[]>();
+  const [loginId, setLoginId] = useState("");
+  const [password, setPassword] = useState("");
+  const [localLoginBusy, setLocalLoginBusy] = useState(false);
+  const [localLoginError, setLocalLoginError] = useState<string>();
+  const localReviewLoginEnabled = resolveLocalReviewLogin(import.meta.env.VITE_BALEY_LOCAL_REVIEW_LOGIN, import.meta.env.DEV);
 
   useEffect(() => {
     const controller = new AbortController();
+    const requestURL = `${(import.meta.env.VITE_BALEY_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "")}/v1/auth/oidc/providers`;
+    traceViewer("login-providers:request", {
+      requestURL,
+      configuredAuthMode: import.meta.env.VITE_BALEY_AUTH_MODE,
+      configuredLocalReviewLogin: import.meta.env.VITE_BALEY_LOCAL_REVIEW_LOGIN,
+      calculatedLocalReviewLogin: localReviewLoginEnabled,
+      calculatedAuthState: "anonymous",
+    });
     void fetchOIDCProviders().then((items) => {
-      if (!controller.signal.aborted) setOIDCProviders(items);
-    }).catch(() => {
-      if (!controller.signal.aborted) setOIDCProviders([]);
+      if (controller.signal.aborted) return;
+      setOIDCProviders(items);
+      traceViewer("login-providers:response", {
+        requestURL,
+        providerStateReturnedByAPI: items.map((provider) => ({ id: provider.id, label: provider.label })),
+        reactAuthState: "anonymous",
+      });
+    }).catch((cause: unknown) => {
+      if (controller.signal.aborted) return;
+      setOIDCProviders([]);
+      traceViewer("login-providers:response", {
+        requestURL,
+        providerStateReturnedByAPI: "request-failed",
+        error: cause instanceof Error ? cause.message : "unknown error",
+        reactAuthState: "anonymous",
+      });
     });
     return () => controller.abort();
-  }, []);
+  }, [localReviewLoginEnabled]);
 
   const providers = oidcProviders ? [...oidcProviders].sort((left, right) => {
     if (left.id === "google") return -1;
     if (right.id === "google") return 1;
     return left.label.localeCompare(right.label);
   }) : [];
+  useEffect(() => {
+    if (!oidcProviders) return;
+    traceViewer("login-providers:calculated", {
+      apiProviderIds: oidcProviders.map((provider) => provider.id),
+      calculatedProviderIds: providers.map((provider) => provider.id),
+      calculatedLocalReviewLogin: localReviewLoginEnabled,
+      reactAuthState: "anonymous",
+    });
+    const frame = window.requestAnimationFrame(() => traceViewer("login-providers:dom", {
+      renderedProviderButtons: Array.from(document.querySelectorAll<HTMLButtonElement>(".login-card .google-login-button")).map((button) => button.innerText),
+      localReviewFormPresent: Boolean(document.querySelector(".local-review-login")),
+      emptyProviderAlert: document.querySelector(".login-card [role='alert']")?.textContent,
+      renderedAuthState: document.querySelector(".login-shell") ? "anonymous" : "missing-login-shell",
+    }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [localReviewLoginEnabled, oidcProviders]);
+  const submitLocalReviewLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!localReviewLoginEnabled || localLoginBusy) return;
+    setLocalLoginBusy(true);
+    setLocalLoginError(undefined);
+    const returnTo = new URLSearchParams(location.search).get("returnTo");
+    const calculatedTarget = safeLoginReturnTo(returnTo);
+    traceViewer("local-login:event", {
+      event: "submit",
+      requestURL: `${(import.meta.env.VITE_BALEY_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "")}/v1/auth/login`,
+      loginId,
+      reactAuthState: auth.state.status,
+      calculatedTarget,
+    });
+    try {
+      await auth.login(loginId, password);
+      navigate(calculatedTarget, { replace: true });
+    } catch (cause) {
+      setLocalLoginError(cause instanceof Error ? cause.message : "Local review login failed");
+    } finally {
+      setLocalLoginBusy(false);
+    }
+  };
   const startOIDC = (provider: OIDCProvider) => {
     const returnTo = new URLSearchParams(location.search).get("returnTo");
     if (isMCPLoginPath(returnTo)) {
@@ -183,10 +251,25 @@ export function LoginScreen() {
         <span className="google-login-mark" aria-hidden="true">{provider.id === "google" ? "G" : provider.label.slice(0, 1)}</span>
         {provider.id === "google" ? "Google로 계속" : `${provider.label}로 계속`}
       </button>)}
-      {oidcProviders?.length === 0 && <div className="form-error" role="alert">현재 사용할 수 있는 로그인 제공자가 없습니다.</div>}
+      {localReviewLoginEnabled && <form className="local-review-login" aria-label="Local review login" onSubmit={submitLocalReviewLogin}>
+        <div className="login-provider-divider"><span>ISOLATED REVIEW</span></div>
+        <label>Login ID<input autoComplete="username" value={loginId} onChange={(event) => setLoginId(event.target.value)} required /></label>
+        <label>Password<input autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
+        {localLoginError && <div className="form-error" role="alert">{localLoginError}</div>}
+        <button className="primary-button" type="submit" disabled={localLoginBusy}>{localLoginBusy ? "Signing in…" : "Sign in for review"}</button>
+      </form>}
+      {oidcProviders?.length === 0 && !localReviewLoginEnabled && <div className="form-error" role="alert">현재 사용할 수 있는 로그인 제공자가 없습니다.</div>}
       <p className="login-security-note"><ShieldCheck size={15} aria-hidden="true" /> OIDC 인증은 Workspace 권한이나 사람 전용 승인 권한을 변경하지 않습니다.</p>
     </section>
   </main>;
+}
+
+export function resolveLocalReviewLogin(configured: string | undefined, development: boolean): boolean {
+  return development && configured === "enabled";
+}
+
+export function safeLoginReturnTo(value: string | null): string {
+  return value && /^\/(?:bird-views|workspaces)(?:\/|$)/.test(value) ? value : "/workspaces";
 }
 
 export function isMCPLoginPath(value: string | null | undefined): value is string {
@@ -274,6 +357,7 @@ export function WorkspaceChooser({
       <div className="brand-mark">B</div>
       <div><span>BALEY WORKSPACES</span><h1>{account.displayName}님의 Workspace</h1></div>
       <div className="workspace-chooser-actions">
+        <button type="button" className="workspace-chooser-create-trigger workspace-chooser-bird-view" onClick={() => navigate("/bird-views")}><LayoutGrid size={16} /> Bird Views</button>
         <div className="workspace-chooser-create">
           <button
             ref={createTriggerRef}
@@ -989,6 +1073,23 @@ export function WorkspaceContextSwitcher({
         </button>
       </span>)}
       <span className="workspace-context-menu-separator" role="separator" />
+      <button
+        type="button"
+        role="menuitem"
+        tabIndex={-1}
+        onClick={() => {
+          traceViewer("bird-view-navigation:event", {
+            source: "workspace-context-menu",
+            event: "bird-views-click",
+            calculatedTargetPath: "/bird-views",
+            currentWorkspaceId: membership.id,
+          });
+          setOpen(false);
+          navigate("/bird-views");
+        }}
+      >
+        <span><strong><LayoutGrid size={14} aria-hidden="true" /> Bird Views</strong><small>Account planning graphs</small></span>
+      </button>
       <button
         type="button"
         role="menuitem"

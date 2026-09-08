@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import { Background, Panel, ReactFlow, ViewportPortal, useStore, useStoreApi, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -20,10 +20,12 @@ import { BacklogList, BacklogRail } from "./components/BacklogRail";
 import { LaneAnchorColumn } from "./components/LaneAnchorColumn";
 import { TaskSearch } from "./components/TaskSearch";
 import { TaskConfirmation } from "./components/TaskConfirmation";
+import { TaskCommandEditor, type TaskCommandDraft } from "./components/TaskCommandEditor";
 import { laneColorMap } from "./components/lane-palette";
-import { isMCPLoginPath, LoginLanding, LoginScreen, MCPLoginLink, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
+import { isMCPLoginPath, LoginLanding, LoginScreen, MCPLoginLink, safeLoginReturnTo, WorkspaceAccessControls, WorkspaceChooser, WorkspaceContextSwitcher } from "./components/WorkspaceAccess";
 import { traceViewer } from "./debug/viewer-trace";
 import type { BacklogItem, Task, WorkspaceFixture } from "./domain/model";
+const BirdViewRoutes = lazy(() => import("./bird-view/BirdViewRoutes").then((module) => ({ default: module.BirdViewRoutes })));
 
 const nodeTypes = { task: TaskNode, gate: GateNode, phaseSummary: PhaseSummaryNode };
 // Tree mode can span several Phase/Lane columns. Keep enough range to fit the
@@ -87,7 +89,7 @@ function AppRoutes() {
     </Routes>;
   }
   return <Routes>
-    <Route path="/login" element={<Navigate to="/workspaces" replace />} />
+    <Route path="/login" element={<AuthenticatedLoginRedirect />} />
     <Route path="/workspaces" element={<WorkspaceChooserWithPostLogin
       account={auth.state.account}
       memberships={auth.state.memberships}
@@ -97,8 +99,14 @@ function AppRoutes() {
       onSessionExpired={auth.expireSession}
     />} />
     <Route path="/workspaces/:workspaceId/*" element={<WorkspaceRoute />} />
+    <Route path="/bird-views/*" element={<Suspense fallback={<main className="server-state"><h1>Bird View</h1><p>Opening canvas…</p></main>}><BirdViewRoutes /></Suspense>} />
     <Route path="*" element={<Navigate to={auth.state.memberships.length === 1 ? `/workspaces/${encodeURIComponent(auth.state.memberships[0]!.id)}` : "/workspaces"} replace />} />
   </Routes>;
+}
+
+function AuthenticatedLoginRedirect() {
+  const location = useLocation();
+  return <Navigate to={safeLoginReturnTo(new URLSearchParams(location.search).get("returnTo"))} replace />;
 }
 
 function WorkspaceChooserWithPostLogin(props: ComponentProps<typeof WorkspaceChooser>) {
@@ -538,6 +546,7 @@ function WorkspaceViewer({
             return gate ? `G#${gate.publicId} ${gate.name} gate` : "Unknown gate";
           })()
         : undefined;
+  const canOperateTasks = membership.state === "active" && membership.capabilities.includes("workspace:operate");
   const setSelectedId = (nextSelectedId: string | undefined) => {
     routeNavigate({
       pathname: location.pathname,
@@ -643,7 +652,7 @@ function WorkspaceViewer({
                 <button type="button" aria-pressed={layoutMode === "tree"} className={layoutMode === "tree" ? "active" : ""} onClick={() => changeLayoutMode("tree")}>Tree</button>
               </div>
               {loadError && <span className="poll-error">refresh failed</span>}
-              <span className="readonly-badge">READ ONLY</span>
+              <span className="readonly-badge">{canOperateTasks ? "TASK EDIT + PHASE MOVE · AUTO LAYOUT" : "VIEW ONLY · AUTO LAYOUT"}</span>
               <button className="quiet-button" onClick={() => setSelectedId(undefined)}><RotateCcw size={14} /> Clear focus</button>
             </div>
           </div>
@@ -664,7 +673,15 @@ function WorkspaceViewer({
         </div>
         {inspectorOpen && <div className="inspector-panel">
           <InspectorResizeHandle width={inspectorWidth} onWidth={setInspectorWidth} />
-          <Inspector fixture={graph} task={selectedTask} backlog={selectedBacklog} gateId={selectedGate?.id} membership={membership} csrfToken={csrfToken} onTaskConfirmed={(taskId, execution) => {
+          <Inspector fixture={graph} task={selectedTask} backlog={selectedBacklog} gateId={selectedGate?.id} membership={membership} csrfToken={csrfToken} onTaskMutated={(taskId, execution, draft) => {
+            setFixture((current) => current ? {
+              ...current,
+              workspace: { ...current.workspace, revision: execution.workspaceRevision },
+              tasks: current.tasks.map((item) => item.id !== taskId ? item : draft.kind === "move"
+                ? { ...item, phaseId: draft.targetPhaseId }
+                : { ...item, title: draft.title, description: draft.description, currentSummary: draft.currentSummary }),
+            } : current);
+          }} onTaskConfirmed={(taskId, execution) => {
             setFixture((current) => current ? {
               ...current,
               workspace: { ...current.workspace, revision: execution.workspaceRevision },
@@ -897,7 +914,7 @@ function InspectorResizeHandle({ width, onWidth }: { width: number; onWidth: (wi
   />;
 }
 
-function Inspector({ fixture, task, backlog, gateId, membership, csrfToken, onTaskConfirmed, onLane, onGate }: { fixture: WorkspaceFixture; task?: Task; backlog?: BacklogItem; gateId?: string; membership: WorkspaceMembership; csrfToken: string; onTaskConfirmed: (taskId: string, execution: import("./api/auth").CommandExecution) => void; onLane: (id: string) => void; onGate: (id: string) => void }) {
+function Inspector({ fixture, task, backlog, gateId, membership, csrfToken, onTaskMutated, onTaskConfirmed, onLane, onGate }: { fixture: WorkspaceFixture; task?: Task; backlog?: BacklogItem; gateId?: string; membership: WorkspaceMembership; csrfToken: string; onTaskMutated: (taskId: string, execution: import("./api/auth").CommandExecution, draft: TaskCommandDraft) => void; onTaskConfirmed: (taskId: string, execution: import("./api/auth").CommandExecution) => void; onLane: (id: string) => void; onGate: (id: string) => void }) {
   if (backlog) {
     const lane = fixture.lanes.find((item) => item.id === backlog.laneId);
     return <aside className="inspector"><div className="inspector-kicker">BACKLOG INSPECTOR</div><div className="inspector-id">BACKLOG B#{backlog.publicId}</div><h2>{backlog.title}</h2><span className={`status-pill status-${backlog.status}`}>{backlog.status}</span><p>{backlog.description}</p><Section title="Context"><button className="text-link" onClick={() => lane && onLane(lane.id)}>{lane?.name ?? "Unknown"} lane</button><span className="meta-value">Phase unassigned</span></Section><Section title="Planning"><span className="meta-value">Position {backlog.position ?? "unranked"}</span>{backlog.promotedTaskPublicId && <span className="evidence-copy">Promoted to Task #{backlog.promotedTaskPublicId}</span>}</Section><section className="command-hint"><strong>LLM command only</strong><p>Use Baley Skill commands to update backlog B#{backlog.publicId}.</p></section></aside>;
@@ -938,7 +955,8 @@ function Inspector({ fixture, task, backlog, gateId, membership, csrfToken, onTa
     });
   }, [task.publicId, task.currentSummary, task.description]);
   const canApprove = membership.role === "owner" || membership.capabilities.includes("task:approve");
-  return <aside ref={inspectorRef} className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><div className="inspector-id">TASK #{task.publicId}</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span>{task.currentSummary && <p className="task-current-summary">{task.currentSummary}</p>}<p className="task-description">{task.description}</p><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.nextAction && <Section title="Next action"><span className="evidence-copy">{task.nextAction}</span></Section>}{task.implementedAssessment && <Section title="Implementation assessment"><span className="evidence-copy">{task.implementedAssessment}</span></Section>}{task.effectiveAcceptanceMode && <Section title="Acceptance"><span className="meta-value">{task.effectiveAcceptanceMode}</span><span className="evidence-copy">Policy {task.acceptancePolicyVersion} · Profile {task.evidenceProfileId}</span>{task.acceptanceEvaluation && <span className="evidence-copy">{task.acceptanceEvaluation.eligible ? "Evidence eligible" : `Evidence pending: ${task.acceptanceEvaluation.reasons.join(", ")}`}</span>}</Section>}{task.status === "implemented" && <TaskConfirmation workspaceId={fixture.workspace.id} workspaceRevision={fixture.workspace.revision} task={task} csrfToken={csrfToken} canApprove={canApprove} runs={runs} records={(fixture.records ?? []).filter((record) => record.taskId === task.id)} acceptanceEvidence={acceptanceEvidence} onConfirmed={(execution) => onTaskConfirmed(task.id, execution)} />}{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((edge) => <div className="relation-row" key={edge.id}><span>from</span><strong>#{fixture.tasks.find((item) => item.id === edge.fromTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title}</strong></div>)}{downstream.map((edge) => <div className="relation-row" key={edge.id}><span>to</span><strong>#{fixture.tasks.find((item) => item.id === edge.toTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.toTaskId)?.title}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">Independent path</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => { const linkedGate = fixture.gates.find((gate) => gate.id === link.gateId); return <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>{linkedGate ? `G#${linkedGate.publicId} ${linkedGate.name}` : link.gateId}</strong></button>; })}</Section>}<Section title="Runs">{runs.map((run) => <div className="evidence-row" key={run.id}><div><strong>{run.kind.replaceAll("_", " ")}</strong><span>{run.status}</span></div>{(run.resultSummary || run.errorSummary) && <p>{run.resultSummary || run.errorSummary}</p>}</div>)}{runs.length === 0 && <span className="muted">No Runs recorded</span>}</Section><Section title="Task Records">{records.map((record) => <div className="evidence-row" key={record.id}><div><strong>{record.recordType}</strong><span>{record.state}</span></div><code>{record.relativePath}</code><p>{record.shortSummary}</p></div>)}{records.length === 0 && <span className="muted">No Task Records indexed</span>}</Section><section className="command-hint"><strong>LLM command only</strong><p>Use Baley Skill commands to update task #{task.publicId}.</p></section></aside>;
+  const canOperate = membership.state === "active" && membership.capabilities.includes("workspace:operate");
+  return <aside ref={inspectorRef} className="inspector"><div className="inspector-kicker">TASK INSPECTOR</div><div className="inspector-id">TASK #{task.publicId}</div><h2>{task.title}</h2><span className={`status-pill status-${task.status}`}>{task.status}</span>{task.currentSummary && <p className="task-current-summary">{task.currentSummary}</p>}<p className="task-description">{task.description}</p><TaskCommandEditor workspaceId={fixture.workspace.id} workspaceRevision={fixture.workspace.revision} task={task} phases={fixture.phases} csrfToken={csrfToken} canOperate={canOperate} onExecuted={(execution, draft) => onTaskMutated(task.id, execution, draft)} /><Section title="Context"><button className="text-link" onClick={() => onLane(lane.id)}>{lane.name} lane</button><span className="meta-value">{phase.name} Phase</span></Section>{task.nextAction && <Section title="Next action"><span className="evidence-copy">{task.nextAction}</span></Section>}{task.implementedAssessment && <Section title="Implementation assessment"><span className="evidence-copy">{task.implementedAssessment}</span></Section>}{task.effectiveAcceptanceMode && <Section title="Acceptance"><span className="meta-value">{task.effectiveAcceptanceMode}</span><span className="evidence-copy">Policy {task.acceptancePolicyVersion} · Profile {task.evidenceProfileId}</span>{task.acceptanceEvaluation && <span className="evidence-copy">{task.acceptanceEvaluation.eligible ? "Evidence eligible" : `Evidence pending: ${task.acceptanceEvaluation.reasons.join(", ")}`}</span>}</Section>}{task.status === "implemented" && <TaskConfirmation workspaceId={fixture.workspace.id} workspaceRevision={fixture.workspace.revision} task={task} csrfToken={csrfToken} canApprove={canApprove} runs={runs} records={(fixture.records ?? []).filter((record) => record.taskId === task.id)} acceptanceEvidence={acceptanceEvidence} onConfirmed={(execution) => onTaskConfirmed(task.id, execution)} />}{task.blocker && <Section title="Blocker"><div className="blocker-box">{task.blocker}</div></Section>}<Section title="Flow">{upstream.map((edge) => <div className="relation-row" key={edge.id}><span>from</span><strong>#{fixture.tasks.find((item) => item.id === edge.fromTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.fromTaskId)?.title}</strong></div>)}{downstream.map((edge) => <div className="relation-row" key={edge.id}><span>to</span><strong>#{fixture.tasks.find((item) => item.id === edge.toTaskId)?.publicId} {fixture.tasks.find((item) => item.id === edge.toTaskId)?.title}</strong></div>)}{!upstream.length && !downstream.length && <span className="muted">Independent path</span>}</Section>{gateLinks.length > 0 && <Section title="Gate relations">{gateLinks.map((link) => { const linkedGate = fixture.gates.find((gate) => gate.id === link.gateId); return <button className="relation-row clickable" key={link.gateId} onClick={() => onGate(link.gateId)}><span>{link.kind}</span><strong>{linkedGate ? `G#${linkedGate.publicId} ${linkedGate.name}` : link.gateId}</strong></button>; })}</Section>}<Section title="Runs">{runs.map((run) => <div className="evidence-row" key={run.id}><div><strong>{run.kind.replaceAll("_", " ")}</strong><span>{run.status}</span></div>{(run.resultSummary || run.errorSummary) && <p>{run.resultSummary || run.errorSummary}</p>}</div>)}{runs.length === 0 && <span className="muted">No Runs recorded</span>}</Section><Section title="Task Records">{records.map((record) => <div className="evidence-row" key={record.id}><div><strong>{record.recordType}</strong><span>{record.state}</span></div><code>{record.relativePath}</code><p>{record.shortSummary}</p></div>)}{records.length === 0 && <span className="muted">No Task Records indexed</span>}</Section></aside>;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) { return <section className="inspector-section"><h3>{title}</h3>{children}</section>; }

@@ -575,6 +575,18 @@ Gate에 연결되지 않은 이전 Phase Task는 전이를 차단하지 않으�
 
 Milestone 객체는 만들지 않는다. Gate pass Event가 달성과 전이 이력을 나타낸다.
 
+### 10.4 Bird View planning layer
+
+Bird View는 Workspace 밖에 존재하는 account-private 상위 planning/understanding graph다. 상세 계약은 [ADR 0003](adr/0003-account-private-bird-view-planning-graph.md)을 따른다. Bird View Node의 `achieved` 표시는 운영 Milestone이나 Gate 통과를 대체하지 않으며, Gate pass Event가 실제 Phase 전이와 성취 이력이라는 원칙을 유지한다.
+
+- Node는 Workspace나 Task 없이 존재할 수 있다.
+- Node edge는 cycle을 허용하는 자유 관계이며 Task dependency로 투영하지 않는다.
+- Phase/Gate/Task/Backlog binding은 `suggested | pinned | excluded` overlay/reference다.
+- overlay replace는 pinned/excluded를 보존하고 Task를 자동 생성하지 않는다.
+- 각 Bird View는 Workspace와 독립된 revision, command, Event scope를 가진다.
+- Viewer는 read-only이며 편집과 추천 교체는 command/MCP/LLM 경로를 사용한다.
+- 모든 overlay 조회는 owning Account의 현재 active Workspace membership을 다시 확인하며 철회된 대상의 ID, 개수와 존재 여부를 노출하지 않는다.
+
 ## 11. Run
 
 ### 11.1 정의
@@ -1121,6 +1133,8 @@ Viewer는 상태를 읽고 탐색한다.
 
 V1 외부 서버는 private repository 원문을 읽지 않으므로 Record 본문을 직접 표시하지 않아도 된다.
 
+Bird Viewer의 첫 화면은 Bird View Node와 edge만 표시한다. Node focus는 활성 membership으로 볼 수 있는 Workspace를 별도 수평 영역으로 나누고, 간단한 Phase strip과 연결된 Gate/기존 Task DAG/Backlog reference를 표시한다. 두 단계 semantic zoom을 제공하며 모든 편집은 Viewer 밖의 command 경로에서 수행한다.
+
 ## 18. baley init
 
 프로젝트 통합은 CLI 또는 LLM command로 초기화한다.
@@ -1163,6 +1177,22 @@ commands
 events
 workspace_counters
 ```
+
+Account-private planning layer:
+
+```text
+bird_views
+bird_view_nodes
+bird_view_edges
+bird_view_phase_bindings
+bird_view_gate_bindings
+bird_view_task_bindings
+bird_view_backlog_bindings
+bird_view_commands
+bird_view_events
+```
+
+이 table들은 Workspace command/Event를 재사용하지 않는다. target binding table만 기존 Workspace entity를 composite FK로 참조하며 조회 시 active membership을 추가로 강제한다.
 
 `commands` 최소 필드:
 
@@ -1379,6 +1409,8 @@ cross-table 상태 전이, cycle, Phase 순서와 Gate readiness는 Go command s
 - cross-Workspace dependency
 - Lane Group과 Lane fork
 - 범용 workflow automation engine
+- Bird View Node에서 Task 자동 생성
+- 서버 내부 model SDK 또는 자동 추천 실행기
 
 ## 23. Legacy migration
 

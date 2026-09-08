@@ -88,6 +88,9 @@ func requestWorkspaceID(path string, payload any) string {
 		return strings.TrimSpace(value)
 	}
 	if payload == nil {
+		if parsed, err := url.Parse(path); err == nil {
+			return strings.TrimSpace(parsed.Query().Get("credentialWorkspaceId"))
+		}
 		return ""
 	}
 	raw, err := json.Marshal(payload)

@@ -48,6 +48,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const authMode = resolveAuthMode(import.meta.env.VITE_BALEY_AUTH_MODE, import.meta.env.PROD);
+    traceViewer("auth:config", {
+      configuredAuthMode: import.meta.env.VITE_BALEY_AUTH_MODE,
+      productionBuild: import.meta.env.PROD,
+      calculatedAuthMode: authMode,
+      sessionRequestURL: `${(import.meta.env.VITE_BALEY_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "")}/v1/auth/session`,
+      reactAuthState: state.status,
+    });
     if (authMode !== "enforced") {
       const workspaceId = import.meta.env.VITE_BALEY_WORKSPACE_ID || "00000000-0000-4000-8000-000000000001";
       setState({

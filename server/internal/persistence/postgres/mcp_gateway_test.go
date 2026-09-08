@@ -13,10 +13,10 @@ func TestAgentScopesForMemberRole(t *testing.T) {
 		role authz.Role
 		want []authz.Capability
 	}{
-		{name: "viewer", role: authz.RoleViewer, want: []authz.Capability{authz.WorkspaceRead}},
-		{name: "approver", role: authz.RoleApprover, want: []authz.Capability{authz.WorkspaceRead}},
-		{name: "operator", role: authz.RoleOperator, want: []authz.Capability{authz.WorkspaceRead, authz.WorkspaceOperate, authz.RunOperate, authz.RecordOperate}},
-		{name: "owner", role: authz.RoleOwner, want: []authz.Capability{authz.WorkspaceRead, authz.WorkspaceOperate, authz.RunOperate, authz.RecordOperate}},
+		{name: "viewer", role: authz.RoleViewer, want: []authz.Capability{authz.WorkspaceRead, authz.BirdViewRead}},
+		{name: "approver", role: authz.RoleApprover, want: []authz.Capability{authz.WorkspaceRead, authz.BirdViewRead}},
+		{name: "operator", role: authz.RoleOperator, want: []authz.Capability{authz.WorkspaceRead, authz.WorkspaceOperate, authz.RunOperate, authz.RecordOperate, authz.BirdViewRead, authz.BirdViewOperate}},
+		{name: "owner", role: authz.RoleOwner, want: []authz.Capability{authz.WorkspaceRead, authz.WorkspaceOperate, authz.RunOperate, authz.RecordOperate, authz.BirdViewRead, authz.BirdViewOperate}},
 	}
 
 	for _, test := range tests {

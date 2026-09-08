@@ -53,6 +53,20 @@ var MutationPolicies = []MutationPolicy{
 	{Name: "gate.pass_task", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.task_passed"}, {Name: "gate.revoke_task_pass", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.task_pass_revoked"}, {Name: "gate.pass", Capability: "gate:approve", HumanApproval: ApprovalAlways, EventType: "gate.passed"},
 	{Name: "run.start", Capability: "run:operate", EventType: "run.started"}, {Name: "run.heartbeat", Capability: "run:operate", OperationalNoEvent: true}, {Name: "run.succeed", Capability: "run:operate", EventType: "run.succeeded"}, {Name: "run.fail", Capability: "run:operate", EventType: "run.failed"}, {Name: "run.cancel", Capability: "run:operate", EventType: "run.cancelled"}, {Name: "run.interrupt", Capability: "run:operate", EventType: "run.interrupted"}, {Name: "run.correct", Capability: "run:operate", EventType: "run.corrected"},
 	{Name: "record.register", Capability: "record:operate", EventType: "record.registered"}, {Name: "record.attach_commit", Capability: "record:operate", EventType: "record.commit_attached"}, {Name: "commit.attach", Capability: "record:operate", EventType: "commit.attached"}, {Name: "git.observe", Capability: "record:operate", EventType: "git.observed"},
+	{Name: "bird_view.create", Capability: "bird_view:operate", EventType: "bird_view.created"},
+	{Name: "bird_view.update", Capability: "bird_view:operate", EventType: "bird_view.updated"},
+	{Name: "bird_view.archive", Capability: "bird_view:operate", EventType: "bird_view.archived"},
+	{Name: "bird_view.node.create", Capability: "bird_view:operate", EventType: "bird_view.node.created"},
+	{Name: "bird_view.node.update", Capability: "bird_view:operate", EventType: "bird_view.node.updated"},
+	{Name: "bird_view.node.delete", Capability: "bird_view:operate", EventType: "bird_view.node.deleted"},
+	{Name: "bird_view.node.achieve", Capability: "bird_view:operate", EventType: "bird_view.node.achieved"},
+	{Name: "bird_view.node.park", Capability: "bird_view:operate", EventType: "bird_view.node.parked"},
+	{Name: "bird_view.edge.connect", Capability: "bird_view:operate", EventType: "bird_view.edge.connected"},
+	{Name: "bird_view.edge.update", Capability: "bird_view:operate", EventType: "bird_view.edge.updated"},
+	{Name: "bird_view.edge.disconnect", Capability: "bird_view:operate", EventType: "bird_view.edge.disconnected"},
+	{Name: "bird_view.binding.pin", Capability: "bird_view:operate", EventType: "bird_view.binding.pinned"},
+	{Name: "bird_view.binding.exclude", Capability: "bird_view:operate", EventType: "bird_view.binding.excluded"},
+	{Name: "bird_view.overlay.replace", Capability: "bird_view:operate", EventType: "bird_view.overlay.replaced"},
 }
 
 type DomainMutationPlan struct {

@@ -24,11 +24,13 @@ import {
   updateWorkspaceMember,
   executeCommand,
   issueApprovalGrant,
+  login,
   previewCommand,
   revokeApprovalGrant,
 } from "./api/auth";
 import { APIError } from "./api/http";
 import { fetchGraph } from "./api/client";
+import { listBirdViews } from "./bird-view/api";
 import App from "./App";
 import { isMCPLoginPath } from "./components/WorkspaceAccess";
 import { pilotReadyFixture } from "./fixtures/pilot-ready";
@@ -39,6 +41,7 @@ vi.mock("./api/auth", () => ({
   fetchSession: vi.fn(),
   fetchWorkspaces: vi.fn(),
 	fetchOIDCProviders: vi.fn().mockResolvedValue([]),
+  login: vi.fn(),
   logout: vi.fn(),
   createWorkspace: vi.fn(),
   fetchWorkspaceMembers: vi.fn(),
@@ -61,6 +64,12 @@ vi.mock("./api/auth", () => ({
   revokeApprovalGrant: vi.fn(),
 }));
 vi.mock("./api/client", () => ({ fetchGraph: vi.fn() }));
+vi.mock("./bird-view/api", () => ({
+  listBirdViews: vi.fn(),
+  fetchBirdViewGraph: vi.fn(),
+  fetchBirdViewNodeFocus: vi.fn(),
+  executeBirdViewCommand: vi.fn(),
+}));
 vi.mock("./graph/layout", () => ({
   NODE_WIDTH: 190,
   NODE_HEIGHT: 110,
@@ -100,9 +109,12 @@ function graph(id: string, name: string): WorkspaceFixture {
 describe("authenticated Workspace routing", () => {
   beforeEach(() => {
     vi.stubEnv("VITE_BALEY_AUTH_MODE", "enforced");
+    vi.stubEnv("VITE_BALEY_LOCAL_REVIEW_LOGIN", "");
     vi.mocked(fetchSession).mockResolvedValue(session);
     vi.mocked(fetchWorkspaces).mockResolvedValue(memberships);
+    vi.mocked(listBirdViews).mockResolvedValue([]);
     vi.mocked(logout).mockResolvedValue(undefined);
+    vi.mocked(login).mockResolvedValue(session);
     vi.mocked(createWorkspace).mockResolvedValue({
       id: "w3",
       name: "Day Tripper Pilot",
@@ -198,6 +210,21 @@ describe("authenticated Workspace routing", () => {
 
     expect(await screen.findByRole("button", { name: /Google/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Keycloak/ })).toBeTruthy();
+  });
+
+  it("offers an explicit development-only local review login and restores the Bird View return path", async () => {
+    vi.stubEnv("VITE_BALEY_LOCAL_REVIEW_LOGIN", "enabled");
+    vi.mocked(fetchSession).mockRejectedValueOnce(new APIError("authentication required", 401, "unauthenticated"));
+    vi.mocked(fetchOIDCProviders).mockResolvedValueOnce([]);
+    window.history.replaceState({}, "", "/login?returnTo=%2Fbird-views%2Freview");
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Login ID"), { target: { value: "bird-v2-review" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "a sufficiently long password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in for review" }));
+
+    await waitFor(() => expect(login).toHaveBeenCalledWith("bird-v2-review", "a sufficiently long password"));
+    await waitFor(() => expect(window.location.pathname).toBe("/bird-views/review"));
   });
 
   it("lets a user log out from the Workspace chooser", async () => {
@@ -479,6 +506,21 @@ describe("authenticated Workspace routing", () => {
 
     await waitFor(() => expect(screen.queryByRole("menu", { name: "Workspace 전환" })).toBeNull());
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("opens account Bird Views from an automatically selected Workspace", async () => {
+    vi.mocked(fetchWorkspaces).mockResolvedValue([memberships[0]!]);
+    vi.mocked(fetchGraph).mockResolvedValue(graph("w1", "Workspace One"));
+    window.history.replaceState({}, "", "/");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Workspace One Workspace/ }));
+    const birdViews = screen.getByRole("menuitem", { name: /Bird Views/ });
+    expect(birdViews.tagName).toBe("BUTTON");
+    fireEvent.click(birdViews);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/bird-views"));
+    expect(await screen.findByRole("button", { name: "Create Bird View" })).toBeTruthy();
   });
 
   it("opens Owner Workspace commands from its card and submits rename", async () => {

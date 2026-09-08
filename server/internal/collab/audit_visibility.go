@@ -382,6 +382,20 @@ var auditEventImportance = map[string]bool{
 	"commit.attached":                     false,
 	"git.observed":                        false,
 	"human_approval_attestation.recorded": false,
+	"bird_view.created":                    false,
+	"bird_view.updated":                    false,
+	"bird_view.archived":                   true,
+	"bird_view.node.created":               false,
+	"bird_view.node.updated":               false,
+	"bird_view.node.deleted":               true,
+	"bird_view.node.achieved":              true,
+	"bird_view.node.parked":                true,
+	"bird_view.edge.connected":             true,
+	"bird_view.edge.updated":               false,
+	"bird_view.edge.disconnected":          true,
+	"bird_view.binding.pinned":             true,
+	"bird_view.binding.excluded":           true,
+	"bird_view.overlay.replaced":           true,
 }
 
 const ErrInvalidAuditInput conflictError = "invalid audit input"

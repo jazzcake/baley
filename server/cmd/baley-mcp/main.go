@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +36,38 @@ type client struct {
 
 type workspaceInput struct {
 	WorkspaceID string `json:"workspaceId" jsonschema:"Baley workspace ID"`
+}
+type birdViewReadInput struct {
+	WorkspaceID string `json:"workspaceId" jsonschema:"An active Workspace used only to select this account's MCP credential"`
+	BirdViewID  string `json:"birdViewId,omitempty"`
+	NodeID      string `json:"nodeId,omitempty"`
+}
+type birdViewMutationInput struct {
+	WorkspaceID       string   `json:"workspaceId" jsonschema:"An active Workspace used only to select this account's MCP credential"`
+	BirdViewID        string   `json:"birdViewId"`
+	NodeID            string   `json:"nodeId,omitempty"`
+	EdgeID            string   `json:"edgeId,omitempty"`
+	FromNodeID        string   `json:"fromNodeId,omitempty"`
+	ToNodeID          string   `json:"toNodeId,omitempty"`
+	Title             *string  `json:"title,omitempty"`
+	Description       *string  `json:"description,omitempty"`
+	Summary           *string  `json:"summary,omitempty"`
+	Content           *string  `json:"content,omitempty"`
+	Label             *string  `json:"label,omitempty"`
+	PositionX         *float64 `json:"positionX,omitempty"`
+	PositionY         *float64 `json:"positionY,omitempty"`
+	TargetType        string   `json:"targetType,omitempty"`
+	TargetWorkspaceID string   `json:"targetWorkspaceId,omitempty"`
+	TargetID          string   `json:"targetId,omitempty"`
+	Bindings          []struct {
+		TargetType  string `json:"targetType"`
+		WorkspaceID string `json:"workspaceId"`
+		TargetID    string `json:"targetId"`
+	} `json:"bindings,omitempty"`
+	ExpectedBirdViewRevision int64  `json:"expectedBirdViewRevision,omitempty"`
+	IdempotencyKey           string `json:"idempotencyKey"`
+	ExecutedByActorID        string `json:"executedByActorId,omitempty"`
+	InitiatedByActorID       string `json:"initiatedByActorId,omitempty"`
 }
 type phaseTasksInput struct {
 	WorkspaceID string `json:"workspaceId" jsonschema:"Baley workspace ID"`
@@ -718,6 +749,30 @@ func newMCPServer(c *client) *mcp.Server {
 	mcp.AddTool(server, readOnlyTool("baley_mutation_attempt_list", "List append-only Workspace mutation attempts"), c.mutationAttemptList)
 	mcp.AddTool(server, readOnlyTool("baley_run_list", "List Workspace Runs"), c.runList)
 	mcp.AddTool(server, readOnlyTool("baley_record_list", "List Task Record indexes without loading document bodies"), c.recordList)
+	mcp.AddTool(server, readOnlyTool("baley_bird_view_list", "List this account's active Bird Views"), c.birdViewList)
+	mcp.AddTool(server, readOnlyTool("baley_bird_view_get", "Read one account-private Bird View"), c.birdViewGet)
+	mcp.AddTool(server, readOnlyTool("baley_bird_view_graph", "Read the top-level Bird View Node and edge graph"), c.birdViewGraph)
+	mcp.AddTool(server, readOnlyTool("baley_bird_view_node_focus", "Read one Node's visible multi-Workspace Phase, Gate, Task DAG, and Backlog overlay"), c.birdViewNodeFocus)
+	mcp.AddTool(server, readOnlyTool("baley_bird_view_node_context", "Read one Node's LLM context including accessible pinned and excluded binding guidance"), c.birdViewNodeContext)
+	for _, spec := range []struct{ name, description, command string }{
+		{"baley_bird_view_create", "Create an account-private Bird View", "bird_view.create"},
+		{"baley_bird_view_update", "Update a Bird View title or description", "bird_view.update"},
+		{"baley_bird_view_archive", "Archive a Bird View", "bird_view.archive"},
+		{"baley_bird_view_node_create", "Create a free-form Bird View Node", "bird_view.node.create"},
+		{"baley_bird_view_node_update", "Update Bird View Node content", "bird_view.node.update"},
+		{"baley_bird_view_node_delete", "Delete a Bird View Node and its attached edges", "bird_view.node.delete"},
+		{"baley_bird_view_node_achieve", "Mark a Bird View Node achieved as planning annotation", "bird_view.node.achieve"},
+		{"baley_bird_view_node_park", "Park a Bird View Node", "bird_view.node.park"},
+		{"baley_bird_view_edge_connect", "Connect two Bird View Nodes without creating a Task dependency", "bird_view.edge.connect"},
+		{"baley_bird_view_edge_update", "Update a Bird View edge label", "bird_view.edge.update"},
+		{"baley_bird_view_edge_disconnect", "Disconnect a Bird View edge", "bird_view.edge.disconnect"},
+		{"baley_bird_view_binding_pin", "Pin an accessible Phase, Gate, Task, or Backlog binding", "bird_view.binding.pin"},
+		{"baley_bird_view_binding_exclude", "Exclude an accessible Phase, Gate, Task, or Backlog binding", "bird_view.binding.exclude"},
+		{"baley_bird_view_overlay_replace", "Replace suggested bindings while preserving pinned and excluded bindings", "bird_view.overlay.replace"},
+	} {
+		mcp.AddTool(server, classifiedTool(spec.name+"_preview", "Preview: "+spec.description), c.birdViewMutationHandler(spec.command, false))
+		mcp.AddTool(server, operatorTool(spec.name+"_execute", spec.description), c.birdViewMutationHandler(spec.command, true))
+	}
 	mcp.AddTool(server, classifiedTool("baley_run_start", "Start a Run and automatically start a pending Task"), c.runStart)
 	mcp.AddTool(server, classifiedTool("baley_run_heartbeat", "Extend a running Run lease using token and Run version CAS"), c.runHeartbeat)
 	mcp.AddTool(server, classifiedTool("baley_run_succeed", "Mark a Run succeeded using Run version CAS"), c.runSucceed)
@@ -1150,6 +1205,43 @@ func (c *client) runList(ctx context.Context, _ *mcp.CallToolRequest, in workspa
 }
 func (c *client) recordList(ctx context.Context, _ *mcp.CallToolRequest, in workspaceInput) (*mcp.CallToolResult, any, error) {
 	return c.get(ctx, "/v1/workspaces/"+url.PathEscape(in.WorkspaceID)+"/records")
+}
+func birdCredentialQuery(workspaceID string) string {
+	return "?credentialWorkspaceId=" + url.QueryEscape(workspaceID)
+}
+func (c *client) birdViewList(ctx context.Context, _ *mcp.CallToolRequest, in birdViewReadInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/bird-views"+birdCredentialQuery(in.WorkspaceID))
+}
+func (c *client) birdViewGet(ctx context.Context, _ *mcp.CallToolRequest, in birdViewReadInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/bird-views/"+url.PathEscape(in.BirdViewID)+birdCredentialQuery(in.WorkspaceID))
+}
+func (c *client) birdViewGraph(ctx context.Context, _ *mcp.CallToolRequest, in birdViewReadInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/bird-views/"+url.PathEscape(in.BirdViewID)+"/graph"+birdCredentialQuery(in.WorkspaceID))
+}
+func (c *client) birdViewNodeFocus(ctx context.Context, _ *mcp.CallToolRequest, in birdViewReadInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/bird-views/"+url.PathEscape(in.BirdViewID)+"/nodes/"+url.PathEscape(in.NodeID)+"/focus"+birdCredentialQuery(in.WorkspaceID))
+}
+func (c *client) birdViewNodeContext(ctx context.Context, _ *mcp.CallToolRequest, in birdViewReadInput) (*mcp.CallToolResult, any, error) {
+	return c.get(ctx, "/v1/bird-views/"+url.PathEscape(in.BirdViewID)+"/nodes/"+url.PathEscape(in.NodeID)+"/context"+birdCredentialQuery(in.WorkspaceID))
+}
+func (c *client) birdViewMutationHandler(commandName string, execute bool) func(context.Context, *mcp.CallToolRequest, birdViewMutationInput) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in birdViewMutationInput) (*mcp.CallToolResult, any, error) {
+		path := "/v1/commands/preview"
+		if execute {
+			path = "/v1/commands/execute"
+		}
+		arguments := map[string]any{"workspaceId": in.WorkspaceID, "birdViewId": in.BirdViewID, "nodeId": in.NodeID, "edgeId": in.EdgeID, "fromNodeId": in.FromNodeID, "toNodeId": in.ToNodeID, "title": in.Title, "description": in.Description, "summary": in.Summary, "content": in.Content, "label": in.Label, "positionX": in.PositionX, "positionY": in.PositionY, "targetType": in.TargetType, "targetWorkspaceId": in.TargetWorkspaceID, "targetId": in.TargetID, "bindings": in.Bindings}
+		for key, value := range arguments {
+			if value == nil || value == "" {
+				delete(arguments, key)
+			}
+		}
+		envelope := map[string]any{"idempotencyKey": in.IdempotencyKey, "expectedBirdViewRevision": in.ExpectedBirdViewRevision, "executedByActorId": in.ExecutedByActorID}
+		if in.InitiatedByActorID != "" {
+			envelope["initiatedByActorId"] = in.InitiatedByActorID
+		}
+		return c.call(ctx, "POST", path, command(commandName, arguments, envelope))
+	}
 }
 func (c *client) runStart(ctx context.Context, _ *mcp.CallToolRequest, in runStartInput) (*mcp.CallToolResult, any, error) {
 	arguments := map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "clientRunId": in.ClientRunID, "kind": in.Kind, "sessionRef": in.SessionRef, "parentRunId": in.ParentRunID, "targetRunId": in.TargetRunID}

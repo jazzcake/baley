@@ -25,6 +25,7 @@ type CommandPrincipal struct {
 type CommandEnvelope struct {
 	IdempotencyKey            string                    `json:"idempotencyKey"`
 	ExpectedWorkspaceRevision int64                     `json:"expectedWorkspaceRevision,omitempty"`
+	ExpectedBirdViewRevision  int64                     `json:"expectedBirdViewRevision,omitempty"`
 	InitiatedByActorID        string                    `json:"initiatedByActorId,omitempty"`
 	ExecutedByActorID         string                    `json:"executedByActorId"`
 	AcknowledgedWarningCodes  []string                  `json:"acknowledgedWarningCodes,omitempty"`
@@ -272,6 +273,7 @@ type Diagnostic = domain.Diagnostic
 type PreviewResult struct {
 	CommandHash               string       `json:"commandHash"`
 	ExpectedWorkspaceRevision int64        `json:"expectedWorkspaceRevision"`
+	ExpectedBirdViewRevision  int64        `json:"expectedBirdViewRevision,omitempty"`
 	RequiredCapability        string       `json:"requiredCapability"`
 	ProjectedDiff             any          `json:"projectedDiff"`
 	Errors                    []Diagnostic `json:"errors"`
@@ -346,6 +348,7 @@ type MutationPlan struct {
 type ExecutionResult struct {
 	CommandID         string   `json:"commandId"`
 	WorkspaceRevision int64    `json:"workspaceRevision"`
+	BirdViewRevision  int64    `json:"birdViewRevision,omitempty"`
 	EventIDs          []string `json:"eventIds"`
 	Projection        any      `json:"projection"`
 	Idempotent        bool     `json:"idempotent"`

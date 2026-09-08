@@ -31,7 +31,7 @@ func TestMigration14DownUp(t *testing.T) {
 	deletePilotMeasurementRecords(t, url)
 	migrations := filepath.Join("..", "migrations")
 	// Exercise migration 14 from the latest schema by stepping back to 13.
-	for range 4 {
+	for range 13 {
 		if err := postgres.Migrate(url, migrations, "down"); err != nil {
 			t.Fatal(err)
 		}

@@ -23,6 +23,12 @@ func TestMigration25FailsClosedForPreSessionMCPLinks(t *testing.T) {
 	if err := postgres.Migrate(url, migrations, "down"); err != nil {
 		t.Fatal(err)
 	}
+	if err := postgres.Migrate(url, migrations, "down"); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Migrate(url, migrations, "down"); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		if err := postgres.Migrate(url, migrations, "up"); err != nil {
 			t.Errorf("restore latest migration: %v", err)

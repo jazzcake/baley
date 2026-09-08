@@ -51,6 +51,18 @@ func TestRunQueryUsesHTTPClientPortShape(t *testing.T) {
 	}
 }
 
+func TestRunCarriesBirdViewRevisionInsteadOfWorkspaceRevision(t *testing.T) {
+	client := &fakeClient{preview: application.PreviewResult{CommandHash: "sha256:bird", ExpectedBirdViewRevision: 7}}
+	invocation, err := Parse([]string{"bird_view.node", "update", "--workspace", "credential-workspace", "--bird-view-id", "20000000-0000-4000-8000-000000000026", "--node-id", "30000000-0000-4000-8000-000000000026", "--title", "Next", "--actor", "agent", "--idempotency", "bird-next", "--revision", "6", "--execute"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := Run(context.Background(), client, invocation, nil)
+	if err != nil || outcome.Execution == nil || client.executed.Envelope.ExpectedBirdViewRevision != 7 || client.executed.Envelope.ExpectedWorkspaceRevision != 0 {
+		t.Fatalf("Bird View revision scope drift: %+v %+v %v", client.executed.Envelope, outcome, err)
+	}
+}
+
 func TestRunStopsHumanOnlyCommandAfterPreviewUntilApproval(t *testing.T) {
 	client := &fakeClient{preview: application.PreviewResult{
 		CommandHash: "sha256:command", DecisionSnapshotHash: "sha256:decision", ExpectedWorkspaceRevision: 8,

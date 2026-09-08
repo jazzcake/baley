@@ -84,8 +84,8 @@ type Principal struct {
 }
 
 type AgentTokenRecord struct {
-	TokenID, ActorID, WorkspaceID string
-	Scopes                        []authz.Capability
+	TokenID, AccountID, ActorID, WorkspaceID string
+	Scopes                                   []authz.Capability
 }
 
 type LoginResult struct {
@@ -258,7 +258,7 @@ func (s *Service) AuthenticateBearer(ctx context.Context, token string) (Princip
 	if err != nil {
 		return Principal{}, ErrSessionInvalid
 	}
-	return Principal{ActorID: record.ActorID, CredentialID: record.TokenID, WorkspaceID: record.WorkspaceID,
+	return Principal{AccountID: record.AccountID, ActorID: record.ActorID, CredentialID: record.TokenID, WorkspaceID: record.WorkspaceID,
 		Subject: authz.Subject{ActorID: record.ActorID, Kind: authz.ActorAgent, Credential: authz.AgentToken, Scopes: record.Scopes}}, nil
 }
 

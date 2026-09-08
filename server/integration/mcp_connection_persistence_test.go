@@ -172,8 +172,8 @@ func TestMCPConnectionRequestsSurviveRepositoryRestartAndConsumeAtomically(t *te
 			t.Fatalf("%s member did not receive read-only MCP access: %#v %v", target.role, readonly, err)
 		}
 		record, err := restarted.AgentByTokenHash(ctx, postgres.DigestSecret(readonly.AgentToken), now.Add(4*time.Minute))
-		if err != nil || len(record.Scopes) != 1 || record.Scopes[0] != authz.WorkspaceRead {
-			t.Fatalf("%s member scopes=%v err=%v, want workspace:read only", target.role, record.Scopes, err)
+		if err != nil || len(record.Scopes) != 2 || record.Scopes[0] != authz.WorkspaceRead || record.Scopes[1] != authz.BirdViewRead {
+			t.Fatalf("%s member scopes=%v err=%v, want workspace:read and bird_view:read", target.role, record.Scopes, err)
 		}
 	}
 	const removedMemberWorkspaceID = "00000000-0000-4000-8000-000000000095"
