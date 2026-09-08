@@ -78,7 +78,7 @@ func TestMCPStreamableHTTPListsAndCallsTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(listed.Tools), 14; got != want {
+	if got, want := len(listed.Tools), 15; got != want {
 		t.Fatalf("compact MCP catalog contains %d tools, want %d", got, want)
 	}
 	toolsByName := make(map[string]*mcp.Tool, len(listed.Tools))
@@ -98,8 +98,9 @@ func TestMCPStreamableHTTPListsAndCallsTools(t *testing.T) {
 		"baley_phase_tasks",
 		"baley_task_acceptance_get",
 		"baley_task_get",
+		"baley_task_rework_execute",
+		"baley_task_rework_preview",
 		"baley_workspace_context",
-		"baley_workspace_get",
 	} {
 		if toolsByName[name] == nil {
 			t.Fatalf("missing MCP tool %s", name)
@@ -118,7 +119,7 @@ func TestMCPStreamableHTTPListsAndCallsTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(fullListed.Tools), 82; got != want {
+	if got, want := len(fullListed.Tools), 84; got != want {
 		t.Fatalf("full MCP catalog contains %d tools, want %d", got, want)
 	}
 	fullToolsByName := make(map[string]*mcp.Tool, len(fullListed.Tools))
@@ -129,6 +130,8 @@ func TestMCPStreamableHTTPListsAndCallsTools(t *testing.T) {
 		"baley_task_create_preview",
 		"baley_task_create_execute",
 		"baley_task_confirm_execute",
+		"baley_task_rework_execute",
+		"baley_task_rework_preview",
 		"baley_gate_pass_execute",
 		"baley_command_catalog",
 	} {
@@ -170,7 +173,7 @@ func TestMCPStreamableHTTPListsAndCallsTools(t *testing.T) {
 	}
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "baley_workspace_get",
+		Name:      "baley_workspace_context",
 		Arguments: map[string]any{"workspaceId": "00000000-0000-4000-8000-000000000001"},
 	})
 	if err != nil {

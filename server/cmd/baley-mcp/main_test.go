@@ -176,7 +176,7 @@ func TestStreamableHTTPMCPPersistsEncryptedWorkspaceCredentialsAcrossSessions(t 
 
 	credentials := filepath.Join(t.TempDir(), "credentials.json")
 	c := &client{base: upstream.URL, http: upstream.Client(), credentialStorePath: credentials, agentActorID: "agent"}
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServer(c) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: time.Minute})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCPServerForProfile(c, mcpToolProfileFull) }, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: time.Minute})
 	mcpHTTP := httptest.NewServer(handler)
 	defer mcpHTTP.Close()
 
@@ -793,6 +793,64 @@ func TestTaskClearTerminalPreviewAndExecuteForwardTaskOnly(t *testing.T) {
 	execute := <-requests
 	if execute.path != "/v1/commands/execute" || execute.body["name"] != "task.clear_terminal" {
 		t.Fatalf("clear terminal execute was not forwarded: %#v", execute)
+	}
+}
+
+func TestTaskReworkPreviewAndExecuteForwardTypedPayloads(t *testing.T) {
+	type capturedRequest struct {
+		path string
+		body map[string]any
+	}
+	requests := make(chan capturedRequest, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests <- capturedRequest{path: r.URL.Path, body: body}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"commandHash":"sha256:test","workspaceRevision":12}`))
+	}))
+	defer server.Close()
+
+	c := &client{base: server.URL, http: server.Client()}
+	fields := taskReworkFields{WorkspaceID: "workspace", TaskID: 181, Reason: "Acceptance evidence needs correction"}
+	_, _, err := c.taskReworkPreview(context.Background(), nil, taskReworkPreviewInput{
+		taskReworkFields: fields,
+		previewEnvelope:  previewEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "preview-key", ExecutedByActorID: "agent", InitiatedByActorID: "owner"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := <-requests
+	previewArguments := preview.body["arguments"].(map[string]any)
+	previewEnvelope := preview.body["envelope"].(map[string]any)
+	if preview.path != "/v1/commands/preview" || preview.body["name"] != "task.rework" || previewArguments["workspaceId"] != "workspace" ||
+		previewArguments["taskId"] != float64(181) || previewArguments["reason"] != fields.Reason || previewEnvelope["expectedWorkspaceRevision"] != float64(11) ||
+		previewEnvelope["idempotencyKey"] != "preview-key" || previewEnvelope["executedByActorId"] != "agent" || previewEnvelope["initiatedByActorId"] != "owner" {
+		t.Fatalf("task.rework preview payload mismatch: %#v", preview)
+	}
+
+	_, _, err = c.taskReworkExecute(context.Background(), nil, taskReworkExecuteInput{
+		taskReworkFields: fields,
+		mutationExecuteEnvelope: mutationExecuteEnvelope{
+			automaticEnvelope:        automaticEnvelope{ExpectedWorkspaceRevision: 11, IdempotencyKey: "execute-key", ExecutedByActorID: "agent", InitiatedByActorID: "owner"},
+			AcknowledgedWarningCodes: []string{"predecessor_reworked"},
+			ProceedReason:            "Correct the incomplete evidence.",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execute := <-requests
+	executeEnvelope := execute.body["envelope"].(map[string]any)
+	codes := executeEnvelope["acknowledgedWarningCodes"].([]any)
+	if execute.path != "/v1/commands/execute" || execute.body["name"] != "task.rework" || execute.body["arguments"].(map[string]any)["reason"] != fields.Reason ||
+		executeEnvelope["expectedWorkspaceRevision"] != float64(11) || executeEnvelope["idempotencyKey"] != "execute-key" || executeEnvelope["executedByActorId"] != "agent" ||
+		executeEnvelope["initiatedByActorId"] != "owner" || len(codes) != 1 || codes[0] != "predecessor_reworked" || executeEnvelope["proceedReason"] != "Correct the incomplete evidence." ||
+		executeEnvelope["approvalGrantId"] != nil {
+		t.Fatalf("task.rework execute payload mismatch: %#v", execute)
 	}
 }
 

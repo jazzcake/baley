@@ -14,14 +14,14 @@
     }
   },
   "mcpCatalog": {
-    "catalogVersion": "1.0.0",
+    "catalogVersion": "1.1.0",
     "defaultProfile": "compact",
     "profiles": {
       "compact": {
         "path": "/mcp",
         "maximumToolCount": 15,
-        "toolCount": 14,
-        "serializedInputSchemaBytes": 4184,
+        "toolCount": 15,
+        "serializedInputSchemaBytes": 5106,
         "tools": [
           "baley_backlog_get",
           "baley_backlog_list",
@@ -35,14 +35,15 @@
           "baley_phase_tasks",
           "baley_task_acceptance_get",
           "baley_task_get",
-          "baley_workspace_context",
-          "baley_workspace_get"
+          "baley_task_rework_execute",
+          "baley_task_rework_preview",
+          "baley_workspace_context"
         ]
       },
       "full": {
         "path": "/mcp/full",
-        "toolCount": 82,
-        "serializedInputSchemaBytes": 40124,
+        "toolCount": 84,
+        "serializedInputSchemaBytes": 41201,
         "legacyToolCount": 78,
         "legacyToolParity": true,
         "purpose": "explicit diagnostics and rare administration opt-in"

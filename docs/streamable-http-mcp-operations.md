@@ -78,8 +78,8 @@ uses the signed-in gateway login flow.
 
 ## Tool catalog profiles
 
-`/mcp` is the deterministic compact default. Catalog version `1.0.0` exposes
-exactly these 14 tools:
+`/mcp` is the deterministic compact default. Catalog version `1.1.0` exposes
+exactly these 15 tools:
 
 - `baley_backlog_get`
 - `baley_backlog_list`
@@ -93,15 +93,26 @@ exactly these 14 tools:
 - `baley_phase_tasks`
 - `baley_task_acceptance_get`
 - `baley_task_get`
+- `baley_task_rework_execute`
+- `baley_task_rework_preview`
 - `baley_workspace_context`
-- `baley_workspace_get`
 
 The catalog test pins the former 78-tool baseline at 37,800 serialized input-
-schema bytes and the compact catalog at 4,184 bytes, an 88.93% reduction.
+schema bytes and the compact catalog at 5,106 bytes, an 86.49% reduction.
 `baley_command_catalog` discovers the 49 HTTP command names on demand. Preview
 and execute bridge inputs preserve the ordinary command `arguments` and
 `envelope`; the HTTP command service remains authoritative for capability,
 revision, idempotency, warning, domain, and approval-grant validation.
+
+The two compact typed `task.rework` tools are the intentional exception to the
+generic mutation bridge. They make the common corrective workflow explicit:
+preview and then return an `implemented` Task to `in_progress`, recording the
+required reason in the `task.rework_started` Event. The execute tool remains a
+routine `workspace:operate` action with no human approval, and preserves warning
+acknowledgements and `proceedReason` in the existing mutation envelope.
+`baley_workspace_get` remains available from `/mcp/full`; compact callers obtain
+the current revision and normal recovery context from `baley_workspace_context`
+or `baley_task_get`.
 
 The endpoint's tool list is static for its lifetime. Baley does not rely on an
 MCP `listChanged` notification or a client's ability to load tools dynamically:
@@ -115,12 +126,13 @@ full profile under a separate name:
 codex mcp add baley-full --url http://127.0.0.1:8090/mcp/full
 ```
 
-`/mcp/full` exposes all 78 legacy tool names plus the four catalog/bridge tools
-(82 total). Do not make it the routine registration: remove `baley-full` after
-the diagnostic session and restart Codex so later sessions return to the compact
-default. `baley_mcp_diagnostics` reports the MCP implementation version, catalog
-version, active profile, default profile, full-profile path, and static-list
-mode without exposing credentials.
+`/mcp/full` exposes all 78 legacy names, the two typed `task.rework` tools, and
+the four catalog/bridge tools (84 total, 41,201 serialized input-schema bytes).
+Do not make it the routine registration:
+remove `baley-full` after the diagnostic session and restart Codex so later
+sessions return to the compact default. `baley_mcp_diagnostics` reports the MCP
+implementation version, catalog version, active profile, default profile,
+full-profile path, and static-list mode without exposing credentials.
 
 ## Workspace discovery payload
 

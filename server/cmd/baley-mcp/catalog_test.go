@@ -19,10 +19,10 @@ import (
 const (
 	legacyCatalogToolCount    = 78
 	legacyCatalogSchemaBytes  = 37800
-	compactCatalogToolCount   = 14
-	compactCatalogSchemaBytes = 4184
-	fullCatalogToolCount      = 82
-	fullCatalogSchemaBytes    = 40124
+	compactCatalogToolCount   = 15
+	compactCatalogSchemaBytes = 5106
+	fullCatalogToolCount      = 84
+	fullCatalogSchemaBytes    = 41201
 )
 
 var expectedCompactToolNames = []string{
@@ -38,8 +38,9 @@ var expectedCompactToolNames = []string{
 	"baley_phase_tasks",
 	"baley_task_acceptance_get",
 	"baley_task_get",
+	"baley_task_rework_execute",
+	"baley_task_rework_preview",
 	"baley_workspace_context",
-	"baley_workspace_get",
 }
 
 var expectedLegacyToolNames = []string{
@@ -151,6 +152,82 @@ func TestCompactCatalogHasExactDeterministicDefaultToolList(t *testing.T) {
 	if !reflect.DeepEqual(names, expectedCompactToolNames) {
 		t.Fatalf("compact tool names:\n got %v\nwant %v", names, expectedCompactToolNames)
 	}
+}
+
+func TestTaskReworkTypedToolsAdvertiseRequiredContract(t *testing.T) {
+	for _, profile := range []mcpToolProfile{mcpToolProfileCompact, mcpToolProfileFull} {
+		tools := listMCPTools(t, newMCPServerForProfile(&client{}, profile))
+		byName := make(map[string]*mcp.Tool, len(tools))
+		for _, tool := range tools {
+			byName[tool.Name] = tool
+		}
+		for _, name := range []string{"baley_task_rework_preview", "baley_task_rework_execute"} {
+			tool := byName[name]
+			if tool == nil {
+				t.Fatalf("profile %s is missing %s", profile, name)
+			}
+			if !strings.Contains(tool.Description, "in_progress") || !strings.Contains(tool.Description, "task.rework_started") {
+				t.Errorf("%s description does not explain lifecycle/Event effect: %q", name, tool.Description)
+			}
+			schema, ok := tool.InputSchema.(map[string]any)
+			if !ok {
+				t.Fatalf("%s schema type=%T", name, tool.InputSchema)
+			}
+			required, ok := schema["required"].([]any)
+			if !ok {
+				t.Fatalf("%s required=%#v", name, schema["required"])
+			}
+			for _, field := range []string{"workspaceId", "taskId", "reason", "expectedWorkspaceRevision", "executedByActorId", "idempotencyKey"} {
+				if !containsJSONSchemaString(required, field) {
+					t.Errorf("%s schema does not require %s: %#v", name, field, required)
+				}
+			}
+			properties := schema["properties"].(map[string]any)
+			if _, present := properties["approvalGrantId"]; present {
+				t.Errorf("operator tool %s unexpectedly exposes approvalGrantId", name)
+			}
+			if name == "baley_task_rework_execute" {
+				for _, field := range []string{"acknowledgedWarningCodes", "proceedReason", "initiatedByActorId"} {
+					if _, present := properties[field]; !present {
+						t.Errorf("%s schema does not preserve optional envelope field %s", name, field)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestTaskReworkTypedToolsRejectMissingReasonBeforeHTTP(t *testing.T) {
+	var requests atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	session := connectMCPServer(t, newMCPServer(&client{base: upstream.URL, http: upstream.Client()}))
+	for _, name := range []string{"baley_task_rework_preview", "baley_task_rework_execute"} {
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{
+			"workspaceId": "workspace", "taskId": 181, "expectedWorkspaceRevision": 11,
+			"idempotencyKey": "missing-reason", "executedByActorId": "agent",
+		}})
+		if err == nil && (result == nil || !result.IsError) {
+			t.Errorf("%s accepted an input without required reason: result=%#v err=%v", name, result, err)
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("invalid typed rework calls reached HTTP server %d times", requests.Load())
+	}
+}
+
+func containsJSONSchemaString(values []any, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestFullCatalogPreservesEveryLegacyToolName(t *testing.T) {

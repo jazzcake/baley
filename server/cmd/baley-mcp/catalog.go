@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	mcpImplementationVersion = "0.2.0"
-	mcpToolCatalogVersion    = "1.0.0"
-	mcpCompactToolCount      = 14
-	mcpCompactSchemaBytes    = 4184
-	mcpFullToolCount         = 82
-	mcpFullSchemaBytes       = 40124
+	mcpImplementationVersion = "0.3.0"
+	mcpToolCatalogVersion    = "1.1.0"
+	mcpCompactToolCount      = 15
+	mcpCompactSchemaBytes    = 5106
+	mcpFullToolCount         = 84
+	mcpFullSchemaBytes       = 41201
 
 	mcpToolProfileCompact mcpToolProfile = "compact"
 	mcpToolProfileFull    mcpToolProfile = "full"
@@ -136,12 +136,12 @@ func newMCPServerForProfile(c *client, profile mcpToolProfile) *mcp.Server {
 		server = mcp.NewServer(&mcp.Implementation{Name: "baley", Version: mcpImplementationVersion}, nil)
 		addCompactReadTools(server, c)
 	}
+	addTaskReworkTools(server, c)
 	addCommandBridgeTools(server, c)
 	return server
 }
 
 func addCompactReadTools(server *mcp.Server, c *client) {
-	mcp.AddTool(server, readOnlyTool("baley_workspace_get", "Read Workspace metadata"), c.workspaceGet)
 	mcp.AddTool(server, readOnlyTool("baley_mcp_diagnostics", "Report redacted local safety plus the compact MCP catalog profile and version"), c.diagnostics)
 	mcp.AddTool(server, readOnlyTool("baley_workspace_context", "Read compact non-completed Phase and Lane status counts; expand a named Phase only when Task detail is needed"), c.workspaceContext)
 	mcp.AddTool(server, phaseTasksTool(), c.phaseTasks)
@@ -151,6 +151,11 @@ func addCompactReadTools(server *mcp.Server, c *client) {
 	mcp.AddTool(server, readOnlyTool("baley_backlog_list", "List lane Backlog items with optional lane/status filters"), c.backlogList)
 	mcp.AddTool(server, readOnlyTool("baley_backlog_get", "Read one Backlog item by B# public ID"), c.backlogGet)
 	mcp.AddTool(server, readOnlyTool("baley_gate_status", "Read Gate status and conditions"), c.gateStatus)
+}
+
+func addTaskReworkTools(server *mcp.Server, c *client) {
+	mcp.AddTool(server, classifiedTool("baley_task_rework_preview", "Preview returning an implemented Task to in_progress and recording why in the task.rework_started Event"), c.taskReworkPreview)
+	mcp.AddTool(server, classifiedTool("baley_task_rework_execute", "Return an implemented Task to in_progress and record the reason in the task.rework_started Event"), c.taskReworkExecute)
 }
 
 func addCommandBridgeTools(server *mcp.Server, c *client) {

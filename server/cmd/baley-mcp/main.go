@@ -126,6 +126,19 @@ type taskClearTerminalExecuteInput struct {
 	taskClearTerminalFields
 	mutationExecuteEnvelope
 }
+type taskReworkFields struct {
+	WorkspaceID string `json:"workspaceId"`
+	TaskID      int    `json:"taskId"`
+	Reason      string `json:"reason" jsonschema:"Reason recorded in the task.rework_started Event"`
+}
+type taskReworkPreviewInput struct {
+	taskReworkFields
+	previewEnvelope
+}
+type taskReworkExecuteInput struct {
+	taskReworkFields
+	mutationExecuteEnvelope
+}
 type dependencyRefInput struct {
 	PredecessorTaskID int `json:"predecessorTaskId"`
 	SuccessorTaskID   int `json:"successorTaskId"`
@@ -1297,6 +1310,15 @@ func (c *client) taskClearTerminalPreview(ctx context.Context, _ *mcp.CallToolRe
 }
 func (c *client) taskClearTerminalExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskClearTerminalExecuteInput) (*mcp.CallToolResult, any, error) {
 	return c.call(ctx, "POST", "/v1/commands/execute", command("task.clear_terminal", taskClearTerminalArguments(in.taskClearTerminalFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
+}
+func taskReworkArguments(in taskReworkFields) map[string]any {
+	return map[string]any{"workspaceId": in.WorkspaceID, "taskId": in.TaskID, "reason": in.Reason}
+}
+func (c *client) taskReworkPreview(ctx context.Context, _ *mcp.CallToolRequest, in taskReworkPreviewInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/preview", command("task.rework", taskReworkArguments(in.taskReworkFields), previewEnv(in.previewEnvelope)))
+}
+func (c *client) taskReworkExecute(ctx context.Context, _ *mcp.CallToolRequest, in taskReworkExecuteInput) (*mcp.CallToolResult, any, error) {
+	return c.call(ctx, "POST", "/v1/commands/execute", command("task.rework", taskReworkArguments(in.taskReworkFields), mutationExecuteEnv(in.mutationExecuteEnvelope)))
 }
 func dependencyPatchArguments(in dependencyPatchFields) map[string]any {
 	arguments := map[string]any{"workspaceId": in.WorkspaceID}

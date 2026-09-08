@@ -149,6 +149,12 @@ Grouped approval is not supported. Each `task.confirm` or other human-only comma
 
 Human confirmation never bypasses Task lifecycle rules. A related `pending` or `in_progress` Task that the same implementation fully satisfies must first be reported `implemented` with a shared-evidence assessment. A Task made unnecessary rather than implemented must be proposed for `task.discard`, using a reason such as `superseded by #<id>` when applicable. Partial or uncertain pending/in-progress work stays open; an insufficient `implemented` Task returns through `task.rework`; terminal confirmed/discarded work requires a new follow-up Task.
 
+The compact profile exposes `baley_task_rework_preview` and
+`baley_task_rework_execute` for that correction path. Both require Workspace,
+Task, reason, revision, executing Actor, and idempotency inputs; execute also
+preserves exact warning acknowledgement and `proceedReason`. This remains a
+routine `workspace:operate` mutation and never takes an approval grant.
+
 The server validates each command-specific preview/execute binding and consumes the grant atomically with the mutation.
 
 When preview returns warnings, execute must send the exact warning-code set in `acknowledgedWarningCodes`; use `proceedReason` to preserve the Operator's reason in command Event evidence. Both belong to the envelope and are excluded from the canonical command hash.

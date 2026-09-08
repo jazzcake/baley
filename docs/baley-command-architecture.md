@@ -86,7 +86,7 @@ task 104
 
 정확한 query와 mutation 이름, capability 및 승인 요구는 [`contracts/v1/commands.json`](../contracts/v1/commands.json)을 따른다. 이 문서는 도구를 어떤 흐름으로 사용하는지 설명하고 목록을 복제하지 않는다.
 
-기본 MCP catalog는 고정된 compact profile이다. `baley_command_catalog`로 허용된 HTTP command 이름과 실행 분류를 필요할 때 조회하고, `baley_command_preview`, `baley_command_execute`, `baley_command_execute_with_approval`로 동일한 typed command envelope를 전달한다. generic bridge는 임의 URL을 받지 않고 알려지지 않은 command 또는 잘못 분류된 실행을 HTTP 전송 전에 거부한다. capability, Workspace filter, revision, idempotency, warning, domain invariant와 browser approval grant 검증은 계속 HTTP command service의 단일 권한이다. client의 동적 MCP tool-list 갱신에는 의존하지 않는다. 기존 개별 typed tool 이름이 필요한 진단 또는 드문 관리 작업만 `/mcp/full`을 명시적으로 사용한다.
+기본 MCP catalog는 고정된 compact profile이다. `baley_command_catalog`로 허용된 HTTP command 이름과 실행 분류를 필요할 때 조회하고, `baley_command_preview`, `baley_command_execute`, `baley_command_execute_with_approval`로 동일한 typed command envelope를 전달한다. 자주 쓰는 corrective workflow인 `task.rework`만 compact에 `baley_task_rework_preview`와 `baley_task_rework_execute` typed 도구로 함께 노출한다. 이 도구는 `implemented` Task를 `in_progress`로 되돌리고 사유를 `task.rework_started` Event에 남기는 기존 command를 고정된 preview/execute 경로로 전달하며, `workspace:operate`이고 사람 승인을 요구하지 않는다. generic bridge와 typed rework 도구 모두 capability, Workspace filter, revision, idempotency, warning, domain invariant 검증을 HTTP command service에 남긴다. client의 동적 MCP tool-list 갱신에는 의존하지 않는다. `workspace_get`을 포함한 그 밖의 기존 개별 typed tool 이름이 필요한 진단 또는 드문 관리 작업만 `/mcp/full`을 명시적으로 사용한다.
 
 ### 5.1 Graph mutation
 
