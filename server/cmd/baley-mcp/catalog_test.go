@@ -18,11 +18,11 @@ import (
 
 const (
 	legacyCatalogToolCount    = 78
-	legacyCatalogSchemaBytes  = 39510
+	legacyCatalogSchemaBytes  = 39852
 	compactCatalogToolCount   = 15
 	compactCatalogSchemaBytes = 4700
 	fullCatalogToolCount      = 89
-	fullCatalogSchemaBytes    = 46217
+	fullCatalogSchemaBytes    = 46559
 )
 
 var expectedCompactToolNames = []string{
@@ -124,6 +124,17 @@ var expectedLegacyToolNames = []string{
 	"baley_workspace_graph",
 }
 
+var expectedTypedTaskLifecycleToolNames = []string{
+	"baley_backlog_promote_preview", "baley_backlog_promote_execute",
+	"baley_task_create_preview", "baley_task_create_execute", "baley_run_start",
+	"baley_task_update_preview", "baley_task_update_execute",
+	"baley_task_rework_preview", "baley_task_rework_execute",
+	"baley_task_block_preview", "baley_task_block_execute",
+	"baley_task_unblock_preview", "baley_task_unblock_execute",
+	"baley_task_report_implemented", "baley_task_confirm_preview", "baley_task_confirm_execute",
+	"baley_task_discard_preview", "baley_task_discard_execute",
+}
+
 func TestMCPToolCatalogProfilesReduceSerializedSchemaCost(t *testing.T) {
 	legacyCount, legacyBytes := catalogMetrics(t, newLegacyMCPServer(&client{}))
 	if legacyCount != legacyCatalogToolCount || legacyBytes != legacyCatalogSchemaBytes {
@@ -172,15 +183,7 @@ func TestFullCatalogPreservesEveryLegacyToolName(t *testing.T) {
 
 func TestFullProfileLifecycleToolsAdvertiseOptionalContextNote(t *testing.T) {
 	wanted := map[string]bool{}
-	for _, name := range []string{
-		"baley_task_create_preview", "baley_task_create_execute", "baley_run_start",
-		"baley_task_update_preview", "baley_task_update_execute",
-		"baley_task_rework_preview", "baley_task_rework_execute",
-		"baley_task_block_preview", "baley_task_block_execute",
-		"baley_task_unblock_preview", "baley_task_unblock_execute",
-		"baley_task_report_implemented", "baley_task_confirm_preview", "baley_task_confirm_execute",
-		"baley_task_discard_preview", "baley_task_discard_execute",
-	} {
+	for _, name := range expectedTypedTaskLifecycleToolNames {
 		wanted[name] = false
 	}
 	for _, tool := range listMCPTools(t, newMCPServerForProfile(&client{}, mcpToolProfileFull)) {
@@ -444,11 +447,12 @@ func TestMCPToolCatalogMatchesLiteralCommandContract(t *testing.T) {
 					Tools                      []string `json:"tools"`
 				} `json:"compact"`
 				Full struct {
-					Path                       string `json:"path"`
-					ToolCount                  int    `json:"toolCount"`
-					SerializedInputSchemaBytes int    `json:"serializedInputSchemaBytes"`
-					LegacyToolCount            int    `json:"legacyToolCount"`
-					LegacyToolParity           bool   `json:"legacyToolParity"`
+					Path                        string   `json:"path"`
+					ToolCount                   int      `json:"toolCount"`
+					SerializedInputSchemaBytes  int      `json:"serializedInputSchemaBytes"`
+					LegacyToolCount             int      `json:"legacyToolCount"`
+					LegacyToolParity            bool     `json:"legacyToolParity"`
+					TypedTaskLifecycleToolNames []string `json:"typedTaskLifecycleTools"`
 				} `json:"full"`
 			} `json:"profiles"`
 			Baseline struct {
@@ -480,6 +484,7 @@ func TestMCPToolCatalogMatchesLiteralCommandContract(t *testing.T) {
 		mcpContract.Profiles.Compact.MaximumToolCount != 15 || mcpContract.Profiles.Compact.ToolCount != compactCatalogToolCount ||
 		mcpContract.Profiles.Compact.SerializedInputSchemaBytes != compactCatalogSchemaBytes || mcpContract.Profiles.Full.ToolCount != fullCatalogToolCount ||
 		mcpContract.Profiles.Full.SerializedInputSchemaBytes != fullCatalogSchemaBytes || mcpContract.Profiles.Full.LegacyToolCount != legacyCatalogToolCount ||
+		!reflect.DeepEqual(mcpContract.Profiles.Full.TypedTaskLifecycleToolNames, expectedTypedTaskLifecycleToolNames) ||
 		mcpContract.Baseline.ToolCount != legacyCatalogToolCount || mcpContract.Baseline.SerializedInputSchemaBytes != legacyCatalogSchemaBytes ||
 		mcpContract.Baseline.MinimumReductionPercent != 75 || mcpContract.Baseline.Measurement != "sum of JSON-serialized inputSchema bytes" ||
 		!reflect.DeepEqual(mcpContract.Profiles.Compact.Tools, expectedCompactToolNames) {

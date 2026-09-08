@@ -418,6 +418,8 @@ V1 `contextNote`는 짧은 `narrative`와 versioned JSON object `context`를 가
 command hash가 그대로 유지된다. 필드가 있으면 request fingerprint와 command
 hash에 포함되므로 idempotent retry에서 바꿀 수 없고, 사람 승인 command에서는
 preview hash와 browser approval grant에도 결속된다.
+full-profile typed backlog promotion preview/execute는 선택적 `contextNote`를 같은
+`backlog.promote` arguments에 전달하며, 필드가 없으면 key 자체를 만들지 않는다.
 
 내용이 있는 note는 먼저 source lifecycle Event payload의 `taskJournal` seed로
 정규화해 저장한다. seed에는 `schemaVersion`, trimmed `narrative`, canonical JSON

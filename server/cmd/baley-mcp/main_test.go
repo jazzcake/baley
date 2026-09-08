@@ -674,6 +674,9 @@ func TestTaskDiscardPreviewAndExecuteForwardReason(t *testing.T) {
 func TestTypedTaskLifecycleArgumentMapsForwardContextAndPreserveAbsence(t *testing.T) {
 	note := &taskContextNoteInput{Narrative: "Actual context.", Context: map[string]any{"goal": "ship"}}
 	builders := map[string]func(*taskContextNoteInput) map[string]any{
+		"backlog.promote": func(value *taskContextNoteInput) map[string]any {
+			return backlogArguments(backlogMutationFields{WorkspaceID: "workspace", BacklogPublicID: 1, TaskUUID: "task", PhaseID: "phase", ContextNote: value})
+		},
 		"task.create": func(value *taskContextNoteInput) map[string]any {
 			return taskCreateArguments(taskCreateFields{WorkspaceID: "workspace", TaskUUID: "task", LaneID: "lane", PhaseID: "phase", Title: "title", ContextNote: value})
 		},
@@ -715,6 +718,90 @@ func TestTypedTaskLifecycleArgumentMapsForwardContextAndPreserveAbsence(t *testi
 				t.Fatalf("contextNote was not forwarded: %#v", present)
 			}
 		})
+	}
+}
+
+func TestBacklogPromotePreviewAndExecuteForwardContextAndPreserveAbsence(t *testing.T) {
+	type capturedRequest struct {
+		path string
+		body map[string]any
+	}
+	requests := make([]capturedRequest, 0, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests = append(requests, capturedRequest{path: r.URL.Path, body: body})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"commandHash":"sha256:test","workspaceRevision":2}`))
+	}))
+	defer server.Close()
+
+	c := &client{base: server.URL, http: server.Client()}
+	note := &taskContextNoteInput{
+		Narrative: "Promotion context is ready.",
+		Context: map[string]any{
+			"goal":         "ship",
+			"alternatives": []any{"wait", "promote"},
+		},
+	}
+	fields := backlogPromoteFields{
+		WorkspaceID: "workspace", BacklogPublicID: 7, TaskUUID: "task-uuid", PhaseID: "phase", ContextNote: note,
+	}
+	preview := backlogPromotePreviewInput{
+		backlogPromoteFields: fields,
+		previewEnvelope:      previewEnvelope{ExpectedWorkspaceRevision: 1, IdempotencyKey: "preview-context", ExecutedByActorID: "agent"},
+	}
+	if result, _, err := c.backlogPromotePreview(context.Background(), nil, preview); err != nil || result.IsError {
+		t.Fatalf("backlog promote preview with context failed: %#v %v", result, err)
+	}
+	execute := backlogPromoteExecuteInput{
+		backlogPromoteFields: fields,
+		mutationExecuteEnvelope: mutationExecuteEnvelope{
+			automaticEnvelope: automaticEnvelope{ExpectedWorkspaceRevision: 1, IdempotencyKey: "execute-context", ExecutedByActorID: "agent"},
+		},
+	}
+	if result, _, err := c.backlogPromoteExecute(context.Background(), nil, execute); err != nil || result.IsError {
+		t.Fatalf("backlog promote execute with context failed: %#v %v", result, err)
+	}
+
+	fields.ContextNote = nil
+	preview.backlogPromoteFields = fields
+	preview.IdempotencyKey = "preview-absent"
+	if result, _, err := c.backlogPromotePreview(context.Background(), nil, preview); err != nil || result.IsError {
+		t.Fatalf("backlog promote preview without context failed: %#v %v", result, err)
+	}
+	execute.backlogPromoteFields = fields
+	execute.IdempotencyKey = "execute-absent"
+	if result, _, err := c.backlogPromoteExecute(context.Background(), nil, execute); err != nil || result.IsError {
+		t.Fatalf("backlog promote execute without context failed: %#v %v", result, err)
+	}
+
+	if len(requests) != 4 {
+		t.Fatalf("got %d requests, want 4", len(requests))
+	}
+	for index, request := range requests {
+		wantPath := "/v1/commands/preview"
+		if index%2 == 1 {
+			wantPath = "/v1/commands/execute"
+		}
+		arguments, ok := request.body["arguments"].(map[string]any)
+		if request.path != wantPath || request.body["name"] != "backlog.promote" || !ok {
+			t.Fatalf("request %d envelope mismatch: %#v", index, request)
+		}
+		contextNote, present := arguments["contextNote"]
+		if index < 2 {
+			noteMap, ok := contextNote.(map[string]any)
+			contextMap, contextOK := noteMap["context"].(map[string]any)
+			alternatives, alternativesOK := contextMap["alternatives"].([]any)
+			if !present || !ok || !contextOK || !alternativesOK || noteMap["narrative"] != "Promotion context is ready." || contextMap["goal"] != "ship" || len(alternatives) != 2 || alternatives[0] != "wait" || alternatives[1] != "promote" {
+				t.Fatalf("request %d contextNote mismatch: %#v", index, arguments)
+			}
+		} else if present {
+			t.Fatalf("request %d emitted absent contextNote: %#v", index, arguments)
+		}
 	}
 }
 

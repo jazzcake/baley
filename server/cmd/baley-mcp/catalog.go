@@ -13,11 +13,11 @@ import (
 
 const (
 	mcpImplementationVersion = "0.2.0"
-	mcpToolCatalogVersion    = "1.1.0"
+	mcpToolCatalogVersion    = "1.2.0"
 	mcpCompactToolCount      = 15
 	mcpCompactSchemaBytes    = 4700
 	mcpFullToolCount         = 89
-	mcpFullSchemaBytes       = 46217
+	mcpFullSchemaBytes       = 46559
 
 	mcpToolProfileCompact mcpToolProfile = "compact"
 	mcpToolProfileFull    mcpToolProfile = "full"

@@ -49,8 +49,8 @@ supersedes: null
 - cursor: `(recordedAt, id)` pair, 기본 50개, 최대 100개, 내림차순 deterministic order.
 - 두 route 모두 기존 Workspace authentication/authorization을 통과하며 다른 Workspace의 Task/provenance는 반환하지 않는다.
 - MCP read-only tool `baley_task_journal`을 compact/full profile에 제공한다.
-- compact profile의 generic bridge와 full profile의 typed lifecycle tool 모두 선택적 `contextNote`를 전달한다. full profile은 task create/update, run start, implemented report, confirm/discard의 기존 typed schema와 argument map을 확장하고, rework/block/unblock preview·execute typed tool 6개를 추가했다.
-- `contextNote`가 nil이면 argument map에 key를 만들지 않아 기존 wire/hash를 유지한다. catalog version은 `1.1.0`, compact는 15 tools / 4,700 bytes, full은 89 tools / 46,217 bytes다.
+- compact profile의 generic bridge와 full profile의 typed lifecycle tool 모두 선택적 `contextNote`를 전달한다. full profile은 task create/update, backlog promotion preview/execute, run start, implemented report, confirm/discard의 기존 typed schema와 argument map을 확장하고, rework/block/unblock preview·execute typed tool 6개를 추가했다.
+- `contextNote`가 nil이면 argument map에 key를 만들지 않아 기존 wire/hash를 유지한다. catalog version은 `1.2.0`, compact는 15 tools / 4,700 bytes, full은 89 tools / 46,559 bytes이며 78-tool typed baseline은 39,852 bytes다.
 
 ## Viewer와 진단
 
@@ -68,14 +68,18 @@ canonical `.agents/skills/baley-manage-work/SKILL.md`에 silent extraction, 비�
 - Viewer: `src/App.tsx`, API client/domain model/styles 및 관련 auth/navigation/client tests.
 - 검증: migration 26, application unit, integration journal/auth/rollback/approval tests와 기존 migration count updates.
 - 보존·귀속한 Task #182 선행 산출물: `docs/analysis/development-decision-log-db-audit.md`, `docs/analysis/development-decision-log-readonly.sql`, `task-records/development-decision-log/task-182-detailed-plan.md`, `task-records/development-decision-log/task-182-completion-report.md`.
-- 계획/보고: `task-records/development-decision-log/task-183-detailed-plan.md`, PM 산출물 `task-183-independent-review.md`, 이 완료 보고서. 독립 리뷰 원문은 수정하지 않았다.
+- 계획/보고: `task-records/development-decision-log/task-183-detailed-plan.md`, PM 산출물 `task-183-independent-review.md`, `task-183-independent-rereview.md`, 이 완료 보고서. 두 독립 리뷰 원문은 수정하지 않았다.
 
 ## 검증 결과
 
-- `go test ./... -count=1` with disposable PostgreSQL 17.5: PASS, 모든 package 성공, integration 21.015s.
+- `go test ./integration -run TestMigration26TaskJournalUpDownAndAppendOnly -count=1`: PASS, migration 1→26/up→25/down→26/up 및 append-only 검증(package 0.815s; 상세 실행도 0.71s/package 0.852s PASS).
+- `go test ./internal/application ./cmd/baley-mcp -count=1`: PASS, application 3.305s / MCP 0.748s.
+- `go test ./integration -run 'Test(TaskJournal|RunStartAgainstPostgres)' -count=1 -v`: PASS, PostgreSQL lifecycle/promotion/rollback/approval/run recovery 5 tests 2.035s.
+- `go test ./cmd/baley-mcp -run 'Test(MCPToolCatalogProfilesReduceSerializedSchemaCost|FullProfileLifecycleToolsAdvertiseOptionalContextNote|TypedTaskLifecycleArgumentMapsForwardContextAndPreserveAbsence|BacklogPromotePreviewAndExecuteForwardContextAndPreserveAbsence|MCPToolCatalogMatchesLiteralCommandContract)' -count=1 -v`: PASS(package 1.290s), promotion context present exact-value 전달과 absent key omission 포함.
+- `go test ./... -count=1` with disposable PostgreSQL 17.5: PASS, 모든 package 성공, integration 20.932s.
 - `go vet ./...`: PASS.
-- `npm test -- --silent`: PASS, 17 test files / 108 tests, 4.80s.
-- `npm run build`: PASS, Vite production build 생성.
+- `npm test -- --silent`: PASS, 17 test files / 108 tests, 6.89s.
+- `npm run build`: PASS, 2,112 modules, Vite production build 15.86s.
 - `git diff --check`: PASS; Git의 기존 LF→CRLF working-copy warning만 출력.
 - JSONB round trip/containment, source Event time/provenance, lifecycle coverage, backlog promotion, deterministic pagination/order, cross-Workspace isolation을 실제 PostgreSQL integration test로 검증했다.
 - identical retry no-duplicate, changed-context idempotency conflict, stale CAS no-row, injected projection failure full rollback을 검증했다.
@@ -84,13 +88,15 @@ canonical `.agents/skills/baley-manage-work/SKILL.md`에 silent extraction, 비�
 - append-only UPDATE/DELETE/non-empty TRUNCATE 거부와 migration up/down을 검증했다.
 - lifecycle Event payload seed/digest와 저장된 Event → Journal rebuild 동등성, source Event ID/time 기반 stable envelope를 검증했다.
 - context가 있는 `run.start`의 same-key 및 same-clientRunId cross-key 동일 recovery가 원래 command/Journal/lease를 재사용하고, changed/omitted context와 다른 Task target이 `idempotency_conflict`를 반환함을 검증했다.
-- full-profile typed lifecycle 16개 surface의 optional schema, present forwarding, absent key 보존과 typed confirm context 변경 approval mismatch를 검증했다.
+- full-profile typed backlog promotion preview/execute를 포함한 18개 lifecycle surface의 optional schema와 promotion present/absent forwarding을 검증했다.
 
-리뷰 수정 검증에는 `127.0.0.1:55484`의 일회성 `baley-task183-review-fix` PostgreSQL 17.5 container만 추가 사용했고 검증 후 제거했다. `go run`은 사용하지 않았고 로컬 Go executable도 만들 필요가 없었다.
+1차 리뷰 수정은 `127.0.0.1:55484`의 일회성 `baley-task183-review-fix`, 2차 보정은 `127.0.0.1:55485`의 일회성 `baley-task183-promotion-fix` PostgreSQL 17.5 container만 사용했고 둘 다 검증 후 제거했다. `go run`은 사용하지 않았고 로컬 Go executable도 만들 필요가 없었다.
 
 ## 설계 판단과 선행 감사와의 관계
 
 Task #182의 audit와 read-only SQL을 그대로 입력으로 사용했으며 운영 감사를 반복하지 않았다. #182가 제시한 별도 Decision identity/관계 모델은 이후 PM 계약에서 명시적으로 축소되었으므로, 이 Task는 D#나 추론된 rationale backfill 없이 Event 기반 Task Journal projection만 추가했다. 과거 Event는 사실에 없는 context를 복원하지 않기 위해 backfill하지 않는다.
+
+2차 보정은 generic bridge와 application/repository 경계가 이미 `backlog.promote` context를 올바르게 처리함을 확인한 뒤 첫 divergence인 full-profile typed adapter만 수정했다. 두 기존 typed schema의 호환 확장이므로 tool 수는 유지하고 입력 schema 변경을 catalog version `1.2.0`으로 명시했다.
 
 ## 잔여 위험과 운영 주의
 
@@ -101,6 +107,7 @@ Task #182의 audit와 read-only SQL을 그대로 입력으로 사용했으며 �
 - production build는 성공했지만 Vite가 기존 약 1.95 MB chunk의 500 kB 초과 warning을 출력했다.
 - `npm ci`는 현재 lockfile에서 6개 dependency audit finding(1 moderate, 5 high)을 보고했다. 범위 밖 자동 upgrade는 하지 않았다.
 - migration의 unique constraint/table/index 생성에 운영 DDL lock 검토가 필요하다.
+- full-profile MCP client는 catalog `1.2.0` schema를 다시 읽어야 새 typed promotion 필드를 사용할 수 있다. 이번 작업에서는 실행 중 service나 client registration을 변경하지 않았다.
 
 ## 독립 리뷰와 커밋
 
@@ -110,7 +117,10 @@ Task #182의 audit와 read-only SQL을 그대로 입력으로 사용했으며 �
 - material(run.start recovery): Task target/context digest comparison과 same/different cross-key integration test로 수정했다.
 - material(full typed MCP): 모든 명시된 typed lifecycle schema/argument forwarding, absent compatibility와 approval mismatch test로 수정했다.
 - 리뷰 수정 커밋: `9038f13caaf2d01e58ecf457af5eb7bcc131e914` (`fix: address Task 183 journal review`).
-- 이 보고서는 finding 수정 완료를 기록하지만 독립 재리뷰 통과를 주장하지 않는다. Task의 `implemented` 전환은 재리뷰에서 unresolved blocking/material finding 0건을 확인한 뒤에만 가능하다.
+- 독립 재리뷰: `task-records/development-decision-log/task-183-independent-rereview.md`, verdict `CHANGES_REQUIRED`, blocking 0건과 material 1건. 원문 SHA-256은 `B44931F0554477F38262AEED56C8160B4EE0013217A386F001FC7FDF7EEEE957`이며 보정 중 파일을 변경하지 않았다.
+- material(backlog promotion typed MCP): `baley_backlog_promote_preview`/`execute` schema와 `backlogMutationFields` forwarding에 선택적 `contextNote`를 추가하고 present exact-value/absent omission test를 추가했다.
+- 보정 커밋: 검증 후 기록한다.
+- 이 보고서는 재리뷰 finding 수정 완료를 기록하지만 독립 후속 리뷰 통과를 주장하지 않는다. Task의 `implemented` 전환은 후속 리뷰에서 unresolved blocking/material finding 0건을 확인한 뒤에만 가능하다.
 
 ## 운영 불변
 

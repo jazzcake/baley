@@ -14,7 +14,7 @@
     }
   },
   "mcpCatalog": {
-    "catalogVersion": "1.1.0",
+    "catalogVersion": "1.2.0",
     "defaultProfile": "compact",
     "profiles": {
       "compact": {
@@ -43,23 +43,35 @@
       "full": {
         "path": "/mcp/full",
         "toolCount": 89,
-        "serializedInputSchemaBytes": 46217,
+        "serializedInputSchemaBytes": 46559,
         "legacyToolCount": 78,
         "legacyToolParity": true,
         "typedTaskLifecycleTools": [
+          "baley_backlog_promote_preview",
+          "baley_backlog_promote_execute",
+          "baley_task_create_preview",
+          "baley_task_create_execute",
+          "baley_run_start",
+          "baley_task_update_preview",
+          "baley_task_update_execute",
           "baley_task_rework_preview",
           "baley_task_rework_execute",
           "baley_task_block_preview",
           "baley_task_block_execute",
           "baley_task_unblock_preview",
-          "baley_task_unblock_execute"
+          "baley_task_unblock_execute",
+          "baley_task_report_implemented",
+          "baley_task_confirm_preview",
+          "baley_task_confirm_execute",
+          "baley_task_discard_preview",
+          "baley_task_discard_execute"
         ],
         "purpose": "explicit diagnostics and rare administration opt-in"
       }
     },
     "baseline": {
       "toolCount": 78,
-      "serializedInputSchemaBytes": 39510,
+      "serializedInputSchemaBytes": 39852,
       "minimumReductionPercent": 75,
       "measurement": "sum of JSON-serialized inputSchema bytes"
     },

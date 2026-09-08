@@ -162,6 +162,10 @@ Task lifecycle command는 선택적 `contextNote`를 받는다. 이 필드는 �
 지원 범위는 create/promotion, first Run, update/rework, block/unblock,
 implemented report와 confirm/discard다. 내용이 없으면 field와 projection 모두
 생략하여 기존 JSON, hash, idempotency와 실행 결과를 보존한다.
+compact generic bridge와 full-profile typed
+`baley_backlog_promote_preview`/`baley_backlog_promote_execute`도 이 규칙을
+공유하며, typed adapter는 note가 있을 때만 underlying `backlog.promote`
+arguments에 같은 `contextNote`를 넣는다.
 
 내용이 있으면 typed arguments의 일부로 canonical command hash와 request
 fingerprint에 들어간다. 따라서 preview와 execute, idempotent retry가 같은

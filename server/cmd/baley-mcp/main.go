@@ -191,23 +191,24 @@ type taskJournalInput struct {
 	Limit       int    `json:"limit,omitempty"`
 }
 type backlogMutationFields struct {
-	WorkspaceID             string  `json:"workspaceId"`
-	BacklogUUID             string  `json:"backlogUuid,omitempty"`
-	BacklogPublicID         int     `json:"backlogPublicId,omitempty"`
-	LaneID                  string  `json:"laneId,omitempty"`
-	TargetLaneID            string  `json:"targetLaneId,omitempty"`
-	Title                   *string `json:"title,omitempty"`
-	Description             *string `json:"description,omitempty"`
-	Reason                  string  `json:"reason,omitempty"`
-	OrderedBacklogPublicIDs []int   `json:"orderedBacklogPublicIds,omitempty"`
-	TaskUUID                string  `json:"taskUuid,omitempty"`
-	PhaseID                 string  `json:"phaseId,omitempty"`
-	ParentTaskID            int     `json:"parentTaskId,omitempty"`
-	PredecessorTaskIDs      []int   `json:"predecessorTaskIds,omitempty"`
-	SuccessorTaskIDs        []int   `json:"successorTaskIds,omitempty"`
-	TerminalReason          string  `json:"terminalReason,omitempty"`
-	RequestedAcceptanceMode string  `json:"requestedAcceptanceMode,omitempty"`
-	EvidenceProfileID       string  `json:"evidenceProfileId,omitempty"`
+	WorkspaceID             string                `json:"workspaceId"`
+	BacklogUUID             string                `json:"backlogUuid,omitempty"`
+	BacklogPublicID         int                   `json:"backlogPublicId,omitempty"`
+	LaneID                  string                `json:"laneId,omitempty"`
+	TargetLaneID            string                `json:"targetLaneId,omitempty"`
+	Title                   *string               `json:"title,omitempty"`
+	Description             *string               `json:"description,omitempty"`
+	Reason                  string                `json:"reason,omitempty"`
+	OrderedBacklogPublicIDs []int                 `json:"orderedBacklogPublicIds,omitempty"`
+	TaskUUID                string                `json:"taskUuid,omitempty"`
+	PhaseID                 string                `json:"phaseId,omitempty"`
+	ParentTaskID            int                   `json:"parentTaskId,omitempty"`
+	PredecessorTaskIDs      []int                 `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int                 `json:"successorTaskIds,omitempty"`
+	TerminalReason          string                `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string                `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string                `json:"evidenceProfileId,omitempty"`
+	ContextNote             *taskContextNoteInput `json:"contextNote,omitempty"`
 }
 type backlogCreateFields struct {
 	WorkspaceID string  `json:"workspaceId"`
@@ -238,16 +239,17 @@ type backlogDiscardFields struct {
 	Reason          string `json:"reason"`
 }
 type backlogPromoteFields struct {
-	WorkspaceID             string `json:"workspaceId"`
-	BacklogPublicID         int    `json:"backlogPublicId"`
-	TaskUUID                string `json:"taskUuid"`
-	PhaseID                 string `json:"phaseId"`
-	ParentTaskID            int    `json:"parentTaskId,omitempty"`
-	PredecessorTaskIDs      []int  `json:"predecessorTaskIds,omitempty"`
-	SuccessorTaskIDs        []int  `json:"successorTaskIds,omitempty"`
-	TerminalReason          string `json:"terminalReason,omitempty"`
-	RequestedAcceptanceMode string `json:"requestedAcceptanceMode,omitempty"`
-	EvidenceProfileID       string `json:"evidenceProfileId,omitempty"`
+	WorkspaceID             string                `json:"workspaceId"`
+	BacklogPublicID         int                   `json:"backlogPublicId"`
+	TaskUUID                string                `json:"taskUuid"`
+	PhaseID                 string                `json:"phaseId"`
+	ParentTaskID            int                   `json:"parentTaskId,omitempty"`
+	PredecessorTaskIDs      []int                 `json:"predecessorTaskIds,omitempty"`
+	SuccessorTaskIDs        []int                 `json:"successorTaskIds,omitempty"`
+	TerminalReason          string                `json:"terminalReason,omitempty"`
+	RequestedAcceptanceMode string                `json:"requestedAcceptanceMode,omitempty"`
+	EvidenceProfileID       string                `json:"evidenceProfileId,omitempty"`
+	ContextNote             *taskContextNoteInput `json:"contextNote,omitempty"`
 }
 type acceptancePolicyFields struct {
 	WorkspaceID       string `json:"workspaceId"`
@@ -1473,6 +1475,7 @@ func backlogArguments(in backlogMutationFields) map[string]any {
 	if in.TerminalReason != "" {
 		out["terminalReason"] = in.TerminalReason
 	}
+	addTaskContextNote(out, in.ContextNote)
 	return out
 }
 func (c *client) callBacklogPreview(ctx context.Context, name string, fields backlogMutationFields, envelope previewEnvelope) (*mcp.CallToolResult, any, error) {
@@ -1512,10 +1515,10 @@ func (c *client) backlogDiscardExecute(ctx context.Context, _ *mcp.CallToolReque
 	return c.callBacklogExecute(ctx, "backlog.discard", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, Reason: in.Reason}, in.mutationExecuteEnvelope)
 }
 func (c *client) backlogPromotePreview(ctx context.Context, _ *mcp.CallToolRequest, in backlogPromotePreviewInput) (*mcp.CallToolResult, any, error) {
-	return c.callBacklogPreview(ctx, "backlog.promote", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, TaskUUID: in.TaskUUID, PhaseID: in.PhaseID, ParentTaskID: in.ParentTaskID, PredecessorTaskIDs: in.PredecessorTaskIDs, SuccessorTaskIDs: in.SuccessorTaskIDs, TerminalReason: in.TerminalReason, RequestedAcceptanceMode: in.RequestedAcceptanceMode, EvidenceProfileID: in.EvidenceProfileID}, in.previewEnvelope)
+	return c.callBacklogPreview(ctx, "backlog.promote", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, TaskUUID: in.TaskUUID, PhaseID: in.PhaseID, ParentTaskID: in.ParentTaskID, PredecessorTaskIDs: in.PredecessorTaskIDs, SuccessorTaskIDs: in.SuccessorTaskIDs, TerminalReason: in.TerminalReason, RequestedAcceptanceMode: in.RequestedAcceptanceMode, EvidenceProfileID: in.EvidenceProfileID, ContextNote: in.ContextNote}, in.previewEnvelope)
 }
 func (c *client) backlogPromoteExecute(ctx context.Context, _ *mcp.CallToolRequest, in backlogPromoteExecuteInput) (*mcp.CallToolResult, any, error) {
-	return c.callBacklogExecute(ctx, "backlog.promote", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, TaskUUID: in.TaskUUID, PhaseID: in.PhaseID, ParentTaskID: in.ParentTaskID, PredecessorTaskIDs: in.PredecessorTaskIDs, SuccessorTaskIDs: in.SuccessorTaskIDs, TerminalReason: in.TerminalReason, RequestedAcceptanceMode: in.RequestedAcceptanceMode, EvidenceProfileID: in.EvidenceProfileID}, in.mutationExecuteEnvelope)
+	return c.callBacklogExecute(ctx, "backlog.promote", backlogMutationFields{WorkspaceID: in.WorkspaceID, BacklogPublicID: in.BacklogPublicID, TaskUUID: in.TaskUUID, PhaseID: in.PhaseID, ParentTaskID: in.ParentTaskID, PredecessorTaskIDs: in.PredecessorTaskIDs, SuccessorTaskIDs: in.SuccessorTaskIDs, TerminalReason: in.TerminalReason, RequestedAcceptanceMode: in.RequestedAcceptanceMode, EvidenceProfileID: in.EvidenceProfileID, ContextNote: in.ContextNote}, in.mutationExecuteEnvelope)
 }
 func phaseCreateArguments(in phaseCreateFields) map[string]any {
 	return map[string]any{"workspaceId": in.WorkspaceID, "phaseId": in.PhaseID, "name": in.Name}
