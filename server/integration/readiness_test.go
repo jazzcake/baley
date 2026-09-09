@@ -20,11 +20,11 @@ func TestRepositoryReadinessAgainstPostgres(t *testing.T) {
 	}
 	defer repo.Pool.Close()
 
-	version, err := repo.Readiness(context.Background(), 26)
-	if err != nil || version != 26 {
+	version, err := repo.Readiness(context.Background(), 27)
+	if err != nil || version != 27 {
 		t.Fatalf("Readiness() version=%d err=%v", version, err)
 	}
-	if _, err = repo.Readiness(context.Background(), 25); err == nil {
+	if _, err = repo.Readiness(context.Background(), 26); err == nil {
 		t.Fatal("Readiness accepted an unexpected migration version")
 	}
 }

@@ -1,11 +1,16 @@
 FROM golang:1.26-alpine AS build
+ARG BALEY_BUILD_VERSION=dev
+ARG BALEY_BUILD_COMMIT=unknown
+ARG BALEY_BUILD_TIME=unknown
 WORKDIR /src
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/baley-server ./cmd/baley-server
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${BALEY_BUILD_VERSION} -X main.buildCommit=${BALEY_BUILD_COMMIT} -X main.buildTime=${BALEY_BUILD_TIME}" -o /out/baley-server ./cmd/baley-server
 
 FROM alpine:3.22
+ARG BALEY_BUILD_COMMIT=unknown
+LABEL org.opencontainers.image.revision=$BALEY_BUILD_COMMIT
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=build /out/baley-server /app/baley-server

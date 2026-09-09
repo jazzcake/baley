@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.server
+      args:
+        BALEY_BUILD_VERSION: ${BALEY_BUILD_VERSION:-dev}
+        BALEY_BUILD_COMMIT: ${BALEY_BUILD_COMMIT:-unknown}
+        BALEY_BUILD_TIME: ${BALEY_BUILD_TIME:-unknown}
     restart: unless-stopped
     environment:
       # The Pilot is reached through its Tailscale HTTPS endpoint. Keep the
@@ -52,6 +56,7 @@ services:
       args:
         VITE_BALEY_API_URL: /api
         VITE_BALEY_AUTH_MODE: enforced
+        BALEY_BUILD_COMMIT: ${BALEY_BUILD_COMMIT:-unknown}
     restart: unless-stopped
     ports:
       - "127.0.0.1:5174:5174"

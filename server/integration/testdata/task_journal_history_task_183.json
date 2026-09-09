@@ -1,0 +1,213 @@
+{
+  "snapshot": {
+    "source": "Task #183 development decision log audit and PM checkpoint",
+    "baseCommit": "7a15b5711912272e164f24f9574eb2fb3b2860a2",
+    "databaseSchemaVersion": 25,
+    "captureMode": "REPEATABLE READ, READ ONLY; rolled back; includes the run entity Event emitted by the same run.start command",
+    "workspaceId": "00000000-0000-4000-8000-000000000001",
+    "taskId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+    "taskPublicId": 183
+  },
+  "events": [
+    {
+      "id": "7e40ccb3-a82d-46c8-8bce-eabd02c092b1",
+      "command": {
+        "id": "2b129584-9b46-4295-af4b-6ce3db94022f",
+        "idempotencyKey": "649a6d25-5a80-452f-ba0c-1bcd66431edc",
+        "name": "task.create",
+        "hash": "sha256:70173c7395d9d802429bb7d060bcc2e856e3fcbc81485d6e861cec6a2e58e5a6",
+        "requestFingerprint": "sha256:70173c7395d9d802429bb7d060bcc2e856e3fcbc81485d6e861cec6a2e58e5a6:6235e8f46d9e81344ce1e0575497a2c9bc840ddf2cca74b777cd9ee7c431e226"
+      },
+      "eventType": "task.created",
+      "entityType": "task",
+      "entityId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+      "workspaceRevision": 1327,
+      "initiatedByActorId": "00000000-0000-4000-8000-000000000003",
+      "executedByActorId": "00000000-0000-4000-8000-000000000003",
+      "approvedByActorId": null,
+      "createdAt": "2026-09-08T06:14:17.497802Z",
+      "payload": {
+        "task": {
+          "ID": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+          "Title": "Seamless Task Journal 기반 개발 의사결정 맥락 보전",
+          "LaneID": "server",
+          "Status": "pending",
+          "PhaseID": "multi-user-operations",
+          "PublicID": 183,
+          "BlockedAt": null,
+          "NextAction": "",
+          "Description": "## 쉬운 설명\n\n사용자는 지금처럼 “Task를 만들자”, “진행하자”, “완료하자”, “컨펌한다”고 자연스럽게 말합니다. Baley skill은 그 말에 이미 포함된 문제, 왜 지금 하는지, 달라진 상황, 목표, 완료 계약, 버린 대안과 결과만 조용히 추출해 기존 lifecycle command의 선택적 맥락으로 전달합니다. 추가 질문이나 별도 Decision 번호, 새로운 기록 화면을 기본 흐름에 넣지 않습니다.\n\n## 왜 필요한가\n\nTask #182의 운영 DB 감사에서 Baley가 실행 사실과 상태 변화는 잘 보존하지만 선택 이유·대안·판단 수정·예상과 실제 결과를 일관되게 query하기 어렵다는 점이 확인됐습니다. 반대로 모든 판단을 별도 D# 객체와 규격화된 입력으로 관리하면 사용자가 원하는 seamless한 개발 흐름을 해칩니다. 따라서 Task를 기본 정체성으로 유지하면서 lifecycle 순간에만 얇은 구조화 맥락을 append-only로 남기는 절충이 필요합니다.\n\n## 완료되면 무엇이 달라지는가\n\n관련 Task lifecycle 계약은 선택적 contextNote를 받을 수 있고, 서버는 Task·Workspace·Event·command·revision·actor·시각을 직접 파생합니다. lifecycle Event와 맥락 Event, task_journal_entries 조회 projection은 같은 transaction과 idempotency 경계에서 기록되며 승인 대상 command에서는 맥락도 preview/hash/grant 검증에 포함됩니다. 안정적인 envelope와 versioned JSONB context를 사용하고, Task별 journal 및 Workspace 전체 journal read API로 추후 평가·복기 query가 가능해집니다. baley-manage-work skill은 명시된 사실만 추출하고 근거나 대안을 지어내지 않습니다. confirm 단계에서는 기존 흐름 안에서 축적 맥락을 짧게 요약할 수 있습니다.\n\n## 범위와 제외 사항\n\nTask 생성, 최초 진행, update/rework, block/unblock, implemented, confirm/discard에 필요한 서버·계약·DB migration·조회 API·skill·테스트를 구현합니다. 기존 events는 source of truth로 유지하고 새 journal은 query projection으로 둡니다. 별도 필수 Decision 엔터티나 D# workflow, 운영 DB migration 적용, 서비스 교체, 방화벽 변경, 운영 branch merge·deploy는 제외합니다. 테스트는 disposable PostgreSQL과 격리된 feature worktree에서 수행합니다.",
+          "WorkspaceID": "00000000-0000-4000-8000-000000000001",
+          "ParentTaskID": "230b43e4-c7b0-4aa7-8413-a27399c8a601",
+          "BlockerReason": "",
+          "PhasePosition": 6,
+          "CurrentSummary": "기존 Task 생성·진행·변경·완료·확인 흐름은 그대로 두고, 사용자가 이미 말한 문제·변경 이유·대안·결과를 별도 질문 없이 Task Event와 조회 projection에 보존합니다. 이후 전체 업무 평가와 복기가 DB query로 가능해집니다.",
+          "TerminalReason": "Task 중심 journal 계약·append-only projection·조회·skill 동작이 독립 리뷰와 격리 검증을 통과하고, 증거가 Baley에 연결되어 사람 confirm 가능한 상태가 되면 종료합니다.",
+          "ImplementedAssessment": ""
+        },
+        "relations": {
+          "NewLeafTaskIDs": null,
+          "NewRootTaskIDs": null,
+          "AddedDependencies": null,
+          "RemovedDependencies": null,
+          "BecameDanglingTaskIDs": null,
+          "TerminalReasonChanges": null,
+          "ResolvedDanglingTaskIDs": null
+        }
+      }
+    },
+    {
+      "id": "e21079ed-3b77-4af4-86fd-d395eba8d9b5",
+      "command": {
+        "id": "bb03c8c6-6dd3-43bd-944b-210e145f77c4",
+        "idempotencyKey": "a0abac55-1694-4871-8b09-eb1a726a8a84",
+        "name": "run.start",
+        "hash": "sha256:f673a5ace74f577e2ac13d6aac44501c37d44224229f889a783a2f51ae138183",
+        "requestFingerprint": "sha256:f673a5ace74f577e2ac13d6aac44501c37d44224229f889a783a2f51ae138183:6235e8f46d9e81344ce1e0575497a2c9bc840ddf2cca74b777cd9ee7c431e226"
+      },
+      "eventType": "task.started",
+      "entityType": "task",
+      "entityId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+      "workspaceRevision": 1328,
+      "initiatedByActorId": "00000000-0000-4000-8000-000000000003",
+      "executedByActorId": "00000000-0000-4000-8000-000000000003",
+      "approvedByActorId": null,
+      "createdAt": "2026-09-08T06:14:36.664227Z",
+      "payload": {
+        "taskId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+        "clientRunId": "ab77f6a3-7583-4cd4-a50b-299462580960"
+      }
+    },
+    {
+      "id": "1d49006d-4311-45c0-a56f-fd6a900aeaf3",
+      "command": {
+        "id": "bb03c8c6-6dd3-43bd-944b-210e145f77c4",
+        "idempotencyKey": "a0abac55-1694-4871-8b09-eb1a726a8a84",
+        "name": "run.start",
+        "hash": "sha256:f673a5ace74f577e2ac13d6aac44501c37d44224229f889a783a2f51ae138183",
+        "requestFingerprint": "sha256:f673a5ace74f577e2ac13d6aac44501c37d44224229f889a783a2f51ae138183:6235e8f46d9e81344ce1e0575497a2c9bc840ddf2cca74b777cd9ee7c431e226"
+      },
+      "eventType": "run.started",
+      "entityType": "run",
+      "entityId": "6831827a-5433-4164-9952-d1c20c51a37d",
+      "workspaceRevision": 1328,
+      "initiatedByActorId": "00000000-0000-4000-8000-000000000003",
+      "executedByActorId": "00000000-0000-4000-8000-000000000003",
+      "approvedByActorId": null,
+      "createdAt": "2026-09-08T06:14:36.664227Z",
+      "payload": {
+        "kind": "detailed_planning",
+        "runId": "6831827a-5433-4164-9952-d1c20c51a37d",
+        "taskId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+        "clientRunId": "ab77f6a3-7583-4cd4-a50b-299462580960"
+      }
+    },
+    {
+      "id": "74bb1376-7299-4107-9fdf-3347237cb081",
+      "command": {
+        "id": "33a51744-ec23-4613-86f9-559287e47eda",
+        "idempotencyKey": "task-183-report-implemented-v1",
+        "name": "task.report_implemented",
+        "hash": "sha256:1738eed543d5dfcdead84b6163eb14629ff31852ded76b1af2bdd214264ac983",
+        "requestFingerprint": "sha256:1738eed543d5dfcdead84b6163eb14629ff31852ded76b1af2bdd214264ac983:6235e8f46d9e81344ce1e0575497a2c9bc840ddf2cca74b777cd9ee7c431e226"
+      },
+      "eventType": "task.implemented_reported",
+      "entityType": "task",
+      "entityId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+      "workspaceRevision": 1351,
+      "initiatedByActorId": "00000000-0000-4000-8000-000000000003",
+      "executedByActorId": "00000000-0000-4000-8000-000000000003",
+      "approvedByActorId": null,
+      "createdAt": "2026-09-08T10:06:51.363197Z",
+      "payload": {
+        "taskId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+        "warnings": [],
+        "assessment": "선택적 contextNote가 Task 생성·promotion·최초 Run·update/rework·block/unblock·implemented·confirm/discard lifecycle의 기존 command/event 경계에 통합되었고, Event source of truth에서 append-only Task Journal projection을 동일 transaction·CAS·idempotency·approval 범위로 생성합니다. Task/Workspace journal 조회와 Viewer read-only Inspector, baley-manage-work의 명시 사실만 조용히 추출하는 계약까지 구현했습니다. 독립 최종 리뷰는 blocking 0·material 0으로 PASS했고 전체 Go tests, go vet, UI 108 tests, production build, disposable PostgreSQL replay/rollback/recovery/approval 검증이 통과했습니다. 운영 DB migration·서비스 교체·merge·deploy는 수행하지 않았습니다.",
+        "proceedReason": "",
+        "acknowledgedWarningCodes": []
+      }
+    },
+    {
+      "id": "00ef65c1-8328-45f2-ae34-539b96c214a3",
+      "command": {
+        "id": "c810ee79-df31-4fb8-adea-8686b2d1684c",
+        "idempotencyKey": "task-183-acceptance-evidence-final-v2",
+        "name": "task.evidence.report",
+        "hash": "sha256:10771e29afd82ee7f46ac6f9303306f61a0689d1a2c59c8752c9d565b301b03d",
+        "requestFingerprint": "sha256:10771e29afd82ee7f46ac6f9303306f61a0689d1a2c59c8752c9d565b301b03d:6235e8f46d9e81344ce1e0575497a2c9bc840ddf2cca74b777cd9ee7c431e226"
+      },
+      "eventType": "task.acceptance_evidence_reported",
+      "entityType": "task",
+      "entityId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+      "workspaceRevision": 1352,
+      "initiatedByActorId": "00000000-0000-4000-8000-000000000003",
+      "executedByActorId": "00000000-0000-4000-8000-000000000003",
+      "approvedByActorId": null,
+      "createdAt": "2026-09-08T10:07:08.861369Z",
+      "payload": {
+        "taskId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+        "evaluation": { "reasons": [], "eligible": true },
+        "evidenceId": "5ec4043e-35ed-4af2-a6b1-b6b663946f70"
+      }
+    },
+    {
+      "id": "320bf0d1-618e-4e8f-aae4-9cc13edc15d1",
+      "command": {
+        "id": "7217ce53-a425-49ed-b3ba-8450b660cc1c",
+        "idempotencyKey": "99865cc3-729c-44fe-98d5-45377ff87a1e",
+        "name": "task.confirm",
+        "hash": "sha256:ad820730149e9d943fccbab9c5acdd1f65b0ac2b10615bd084cbc67d5ee95e25",
+        "requestFingerprint": "sha256:ad820730149e9d943fccbab9c5acdd1f65b0ac2b10615bd084cbc67d5ee95e25:ed8a0dd85330252b21c41b8e06d0e6280e1f4f24858b589208c5fbd763c9f9df"
+      },
+      "eventType": "task.confirmed",
+      "entityType": "task",
+      "entityId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+      "workspaceRevision": 1353,
+      "initiatedByActorId": "00000000-0000-4000-8000-000000000002",
+      "executedByActorId": "00000000-0000-4000-8000-000000000002",
+      "approvedByActorId": "00000000-0000-4000-8000-000000000002",
+      "createdAt": "2026-09-08T10:13:51.874242Z",
+      "payload": {
+        "taskId": "0393bf4a-c53d-4ccd-937c-50528b044c32"
+      }
+    },
+    {
+      "id": "b3240903-2ea2-4a1d-94df-55dc3c69835d",
+      "command": {
+        "id": "3d4195d3-4c93-4b28-9212-cd4c09bf9c46",
+        "idempotencyKey": "09a3f189-cda2-46f4-a4c9-84d295a4de5b",
+        "name": "task.clear_terminal",
+        "hash": "sha256:304f44c81df51cbe3bbf4bdede588b1d1323c810f8541f56897517f111b8519d",
+        "requestFingerprint": "sha256:304f44c81df51cbe3bbf4bdede588b1d1323c810f8541f56897517f111b8519d:c4cfceccdca1accdbd391c1c4fe9aedcdbb3acf91ba97d6c133d52ab04e6f315"
+      },
+      "eventType": "task.terminal_cleared",
+      "entityType": "task",
+      "entityId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+      "workspaceRevision": 1354,
+      "initiatedByActorId": "00000000-0000-4000-8000-000000000003",
+      "executedByActorId": "00000000-0000-4000-8000-000000000003",
+      "approvedByActorId": null,
+      "createdAt": "2026-09-08T12:09:01.353420Z",
+      "payload": {
+        "taskId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+        "warnings": ["dangling_path"],
+        "proceedReason": "#183의 확정된 코드 납품 뒤 실제 운영 통합 Task #184를 successor로 즉시 생성하기 위해 기존 terminal reason을 제거합니다. 다음 mutation에서 #183→#184 dependency가 생겨 dangling path가 해소됩니다.",
+        "acknowledgedWarningCodes": ["dangling_path"]
+      }
+    }
+  ],
+  "approvalAttestations": [
+    {
+      "id": "69ffc291-cad0-4031-8ed5-60c37436be77",
+      "approvedByActorId": "00000000-0000-4000-8000-000000000002",
+      "approvedCommandHash": "sha256:ad820730149e9d943fccbab9c5acdd1f65b0ac2b10615bd084cbc67d5ee95e25",
+      "action": "task_confirm",
+      "entityType": "task",
+      "entityId": "0393bf4a-c53d-4ccd-937c-50528b044c32",
+      "workspaceRevision": 1352,
+      "executedCommandId": "7217ce53-a425-49ed-b3ba-8450b660cc1c",
+      "approvedAt": null,
+      "recordedAt": "2026-09-08T10:13:51.874242Z"
+    }
+  ]
+}
