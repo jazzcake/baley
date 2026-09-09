@@ -149,7 +149,7 @@ try {
     Assert-True (-not ($global:TaskJournalDockerCalls -match '^image tag')) 'rollback mutated image tags before compatibility validation'
   }
 
-  Invoke-Case 'Rollback checks exact containers, health, readyz, and versionz fail closed' {
+  Invoke-Case 'Rollback checks exact containers, both health states, Viewer HTTP/proxy, readyz, and versionz fail closed' {
     $apiImage = 'sha256:' + ('c' * 64)
     $viewerImage = 'sha256:' + ('d' * 64)
     $revision = 'e' * 40
@@ -167,11 +167,15 @@ try {
         if ($arguments[-1] -like '*Health*') { return 'healthy' }
         return $apiImage
       }
-      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') { return $viewerImage }
+      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') {
+        if ($arguments[-1] -like '*Health*') { return 'healthy' }
+        return $viewerImage
+      }
       return ''
     }
     function global:Invoke-WebRequest {
       param([switch]$UseBasicParsing, [string]$Uri, [int]$TimeoutSec)
+      if ($Uri -eq 'http://127.0.0.1:5174/') { return [pscustomobject]@{ StatusCode = 200; Content = '<!doctype html>' } }
       if ($Uri -like '*/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":27}' } }
       if ($Uri -like '*/versionz') { return [pscustomobject]@{ StatusCode = 200; Content = ('{"commit":"' + $revision + '","schemaVersion":27}') } }
       throw "unexpected URI $Uri"
@@ -179,6 +183,79 @@ try {
     & $rolloutScript -Action Rollback -RollbackApiImage $apiImage -RollbackViewerImage $viewerImage | Out-Null
     Assert-True ([bool]($global:TaskJournalDockerCalls -match 'compose up -d --no-deps --no-build --force-recreate api viewer')) 'rollback did not restart only API and Viewer'
     Assert-True ([bool]($global:TaskJournalDockerCalls -match 'api-container.*Health')) 'API container health was not checked'
+    Assert-True ([bool]($global:TaskJournalDockerCalls -match 'viewer-container.*Health')) 'Viewer container health was not checked'
+  }
+
+  Invoke-Case 'Rollback returns non-zero when the exact Viewer container has exited' {
+    $apiImage = 'sha256:' + ('4' * 64)
+    $viewerImage = 'sha256:' + ('5' * 64)
+    $revision = '6' * 40
+    $global:TaskJournalDockerCalls = [Collections.Generic.List[string]]::new()
+    function global:docker {
+      $arguments = @($args)
+      $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
+      $global:LASTEXITCODE = 0
+      if ($arguments -contains 'psql') { return '27' }
+      if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return ('{"org.opencontainers.image.baley.schema-version":"27","org.opencontainers.image.revision":"' + $revision + '"}') }
+      if ($arguments[0] -eq 'compose' -and $arguments[1] -eq 'ps') { if ($arguments[-1] -eq 'api') { return 'api-container' } else { return 'viewer-container' } }
+      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'api-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $apiImage }
+      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') { if ($arguments[-1] -like '*Health*') { return 'exited' }; return $viewerImage }
+      return ''
+    }
+    function global:Invoke-WebRequest { throw 'Viewer HTTP must not be reached after an exited state' }
+    $thrown = $false
+    try { & $rolloutScript -Action Rollback -RollbackApiImage $apiImage -RollbackViewerImage $viewerImage | Out-Null } catch { $thrown = $true }
+    Assert-True $thrown 'exited Viewer container was accepted'
+    Assert-True ([bool]($global:TaskJournalDockerCalls -match 'viewer-container.*Health')) 'Viewer state was not inspected'
+  }
+
+  Invoke-Case 'Rollback returns non-zero when the Viewer loopback root is unreachable' {
+    $apiImage = 'sha256:' + ('7' * 64)
+    $viewerImage = 'sha256:' + ('8' * 64)
+    $revision = '9' * 40
+    $global:TaskJournalDockerCalls = [Collections.Generic.List[string]]::new()
+    function global:docker {
+      $arguments = @($args)
+      $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
+      $global:LASTEXITCODE = 0
+      if ($arguments -contains 'psql') { return '27' }
+      if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return ('{"org.opencontainers.image.baley.schema-version":"27","org.opencontainers.image.revision":"' + $revision + '"}') }
+      if ($arguments[0] -eq 'compose' -and $arguments[1] -eq 'ps') { if ($arguments[-1] -eq 'api') { return 'api-container' } else { return 'viewer-container' } }
+      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'api-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $apiImage }
+      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $viewerImage }
+      return ''
+    }
+    function global:Invoke-WebRequest { throw 'connection refused' }
+    $thrown = $false
+    try { & $rolloutScript -Action Rollback -RollbackApiImage $apiImage -RollbackViewerImage $viewerImage | Out-Null } catch { $thrown = $true }
+    Assert-True $thrown 'unreachable Viewer root was accepted'
+  }
+
+  Invoke-Case 'Rollback returns non-zero when the Viewer same-origin readyz proxy is incompatible' {
+    $apiImage = 'sha256:' + ('a' * 64)
+    $viewerImage = 'sha256:' + ('b' * 64)
+    $revision = 'c' * 40
+    $global:TaskJournalDockerCalls = [Collections.Generic.List[string]]::new()
+    function global:docker {
+      $arguments = @($args)
+      $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
+      $global:LASTEXITCODE = 0
+      if ($arguments -contains 'psql') { return '27' }
+      if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return ('{"org.opencontainers.image.baley.schema-version":"27","org.opencontainers.image.revision":"' + $revision + '"}') }
+      if ($arguments[0] -eq 'compose' -and $arguments[1] -eq 'ps') { if ($arguments[-1] -eq 'api') { return 'api-container' } else { return 'viewer-container' } }
+      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'api-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $apiImage }
+      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $viewerImage }
+      return ''
+    }
+    function global:Invoke-WebRequest {
+      param([switch]$UseBasicParsing, [string]$Uri, [int]$TimeoutSec)
+      if ($Uri -eq 'http://127.0.0.1:5174/') { return [pscustomobject]@{ StatusCode = 200; Content = '<!doctype html>' } }
+      if ($Uri -eq 'http://127.0.0.1:5174/api/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":26}' } }
+      throw "API checks must not be reached after an incompatible Viewer proxy: $Uri"
+    }
+    $thrown = $false
+    try { & $rolloutScript -Action Rollback -RollbackApiImage $apiImage -RollbackViewerImage $viewerImage | Out-Null } catch { $thrown = $true }
+    Assert-True $thrown 'schema-incompatible Viewer proxy response was accepted'
   }
 
   Invoke-Case 'Rollback returns non-zero when readyz is incompatible' {
@@ -199,12 +276,14 @@ try {
         if ($arguments[-1] -like '*Health*') { return 'healthy' }
         return $apiImage
       }
-      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') { return $viewerImage }
+      if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $viewerImage }
       return ''
     }
     function global:Invoke-WebRequest {
       param([switch]$UseBasicParsing, [string]$Uri, [int]$TimeoutSec)
-      if ($Uri -like '*/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":26}' } }
+      if ($Uri -eq 'http://127.0.0.1:5174/') { return [pscustomobject]@{ StatusCode = 200; Content = '<!doctype html>' } }
+      if ($Uri -eq 'http://127.0.0.1:5174/api/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":27}' } }
+      if ($Uri -eq 'http://127.0.0.1:8080/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":26}' } }
       throw "versionz must not be reached after an incompatible readyz response"
     }
     $thrown = $false

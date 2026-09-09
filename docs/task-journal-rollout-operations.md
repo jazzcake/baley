@@ -96,7 +96,7 @@ If migration 27 itself fails, it is transactional: fix or explicitly review the 
 .\scripts\task-journal-rollout.ps1 -Action Rollback -RollbackApiImage 'sha256:<64 hex>' -RollbackViewerImage 'sha256:<64 hex>'
 ```
 
-The helper inspects the immutable images before changing tags. It rejects an API without `org.opencontainers.image.baley.schema-version=27`, rejects mismatched or absent 40-character API/Viewer OCI revisions, verifies that the database is still schema 27, starts only API and Viewer, verifies both containers use the requested exact image IDs, waits for API container health, and fail-closed checks `/readyz` and `/versionz` for schema 27 and the artifact revision. Any failed check returns non-zero and the service is not considered recovered.
+The helper inspects the immutable images before changing tags. It rejects an API without `org.opencontainers.image.baley.schema-version=27`, rejects mismatched or absent 40-character API/Viewer OCI revisions, verifies that the database is still schema 27, starts only API and Viewer, and verifies both containers use the requested exact image IDs. It then waits for both Compose healthchecks, requires the Viewer root to return HTTP 200 over its loopback-bound origin, requires the Viewer's same-origin `/api/readyz` proxy to return `ready` on schema 27, and independently checks the API `/readyz` and `/versionz` for schema 27 and the artifact revision. An exited, unhealthy, unreachable, non-200, malformed, or schema-mismatched Viewer/API condition returns non-zero; rollback success is not emitted until every boundary passes.
 
 | Database | API artifact | Viewer/MCP artifact | Allowed outcome |
 | --- | --- | --- | --- |

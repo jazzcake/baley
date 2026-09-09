@@ -14,7 +14,8 @@ param(
   [string]$DeploySha,
   [string]$RollbackApiImage,
   [string]$RollbackViewerImage,
-  [string]$ApiBaseUrl = 'http://127.0.0.1:8080'
+  [string]$ApiBaseUrl = 'http://127.0.0.1:8080',
+  [string]$ViewerBaseUrl = 'http://127.0.0.1:5174'
 )
 
 Set-StrictMode -Version Latest
@@ -127,28 +128,40 @@ function Get-ImageLabel([string]$Image, [string]$Label) {
 }
 
 function Get-ComposeContainerId([string]$Service) {
-  $containerId = docker compose ps -q $Service
+  $containerId = docker compose ps -q --all $Service
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($containerId | Out-String))) { throw "$Service container was not created" }
   return ($containerId | Out-String).Trim()
 }
 
-function Wait-HealthyContainer([string]$ContainerId) {
+function Wait-HealthyContainer([string]$ContainerId, [string]$ServiceLabel) {
   $deadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
   do {
     $health = docker inspect $ContainerId --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}'
-    if ($LASTEXITCODE -ne 0) { throw 'failed to inspect rollback API container health' }
+    if ($LASTEXITCODE -ne 0) { throw "failed to inspect rollback $ServiceLabel container health" }
     $health = ($health | Out-String).Trim()
     if ($health -eq 'healthy') { return }
-    if ($health -in 'unhealthy','exited','dead') { throw "rollback API container is $health" }
+    if ($health -in 'unhealthy','exited','dead') { throw "rollback $ServiceLabel container is $health" }
     Start-Sleep -Seconds 2
   } while ([DateTimeOffset]::UtcNow -lt $deadline)
-  throw "rollback API container did not become healthy (last state: $health)"
+  throw "rollback $ServiceLabel container did not become healthy (last state: $health)"
 }
 
-function Read-JsonEndpoint([string]$Path) {
-  try { $response = Invoke-WebRequest -UseBasicParsing -Uri ($ApiBaseUrl.TrimEnd('/') + $Path) -TimeoutSec 5 } catch { throw "$Path check failed: $($_.Exception.Message)" }
-  if ($response.StatusCode -ne 200) { throw "$Path returned HTTP $($response.StatusCode)" }
-  try { return $response.Content | ConvertFrom-Json } catch { throw "$Path did not return JSON" }
+function Read-SuccessEndpoint([string]$BaseUrl, [string]$Path, [string]$Label) {
+  try { $response = Invoke-WebRequest -UseBasicParsing -Uri ($BaseUrl.TrimEnd('/') + $Path) -TimeoutSec 5 } catch { throw "$Label check failed: $($_.Exception.Message)" }
+  if ($response.StatusCode -ne 200) { throw "$Label returned HTTP $($response.StatusCode)" }
+  return $response
+}
+
+function Read-JsonEndpoint([string]$BaseUrl, [string]$Path, [string]$Label) {
+  $response = Read-SuccessEndpoint $BaseUrl $Path $Label
+  try { return $response.Content | ConvertFrom-Json } catch { throw "$Label did not return JSON" }
+}
+
+function Assert-LoopbackOrigin([string]$Value, [string]$Label) {
+  try { $parsed = [uri]$Value } catch { throw "$Label must be an HTTP loopback origin" }
+  if ($parsed.Scheme -ne 'http' -or $parsed.Host -notin '127.0.0.1','localhost','::1' -or $parsed.UserInfo -or $parsed.Query -or $parsed.Fragment -or $parsed.AbsolutePath -ne '/') {
+    throw "$Label must be an HTTP loopback origin"
+  }
 }
 
 Assert-ExactIdentifier $PostgresContainer '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$' 'container name'
@@ -261,8 +274,8 @@ switch ($Action) {
     $apiRevision = Get-ImageLabel $RollbackApiImage 'org.opencontainers.image.revision'
     $viewerRevision = Get-ImageLabel $RollbackViewerImage 'org.opencontainers.image.revision'
     if ($apiRevision -notmatch '^[0-9a-f]{40}$' -or $viewerRevision -ne $apiRevision) { throw 'rollback API and Viewer must declare the same exact 40-character revision' }
-    $parsedApiBase = [uri]$ApiBaseUrl
-    if ($parsedApiBase.Scheme -ne 'http' -or $parsedApiBase.Host -notin '127.0.0.1','localhost','::1' -or $parsedApiBase.UserInfo -or $parsedApiBase.Query -or $parsedApiBase.Fragment -or $parsedApiBase.AbsolutePath -ne '/') { throw 'ApiBaseUrl must be an HTTP loopback origin' }
+    Assert-LoopbackOrigin $ApiBaseUrl 'ApiBaseUrl'
+    Assert-LoopbackOrigin $ViewerBaseUrl 'ViewerBaseUrl'
     docker image tag $RollbackApiImage baley-api:latest
     if ($LASTEXITCODE -ne 0) { throw 'failed to tag rollback API image' }
     docker image tag $RollbackViewerImage baley-viewer:latest
@@ -275,11 +288,15 @@ switch ($Action) {
     if ($LASTEXITCODE -ne 0 -or $apiContainerImage -ne $RollbackApiImage) { throw 'rollback API container is not running the requested exact image ID' }
     $viewerContainerImage = (docker inspect $viewerContainerId --format '{{.Image}}' | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $viewerContainerImage -ne $RollbackViewerImage) { throw 'rollback Viewer container is not running the requested exact image ID' }
-    Wait-HealthyContainer $apiContainerId
-    $ready = Read-JsonEndpoint '/readyz'
+    Wait-HealthyContainer $apiContainerId 'API'
+    Wait-HealthyContainer $viewerContainerId 'Viewer'
+    $viewerRoot = Read-SuccessEndpoint $ViewerBaseUrl '/' 'rollback Viewer root'
+    $viewerReady = Read-JsonEndpoint $ViewerBaseUrl '/api/readyz' 'rollback Viewer /api/readyz proxy'
+    if ($viewerReady.status -ne 'ready' -or [int]$viewerReady.schemaVersion -ne 27) { throw 'rollback Viewer /api/readyz proxy did not report ready on schema 27' }
+    $ready = Read-JsonEndpoint $ApiBaseUrl '/readyz' 'rollback API /readyz'
     if ($ready.status -ne 'ready' -or [int]$ready.schemaVersion -ne 27) { throw 'rollback /readyz did not report ready on schema 27' }
-    $version = Read-JsonEndpoint '/versionz'
+    $version = Read-JsonEndpoint $ApiBaseUrl '/versionz' 'rollback API /versionz'
     if ([int]$version.schemaVersion -ne 27 -or $version.commit -ne $apiRevision) { throw 'rollback /versionz does not match schema 27 and the rollback artifact revision' }
-    [pscustomobject]@{ action = $Action; apiImage = $RollbackApiImage; viewerImage = $RollbackViewerImage; revision = $apiRevision; schemaVersion = 27; containerHealth = 'healthy'; ready = $ready; version = $version }
+    [pscustomobject]@{ action = $Action; apiImage = $RollbackApiImage; viewerImage = $RollbackViewerImage; revision = $apiRevision; schemaVersion = 27; containerHealth = 'healthy'; apiContainerHealth = 'healthy'; viewerContainerHealth = 'healthy'; viewerRootStatus = [int]$viewerRoot.StatusCode; viewerReady = $viewerReady; ready = $ready; version = $version }
   }
 }
