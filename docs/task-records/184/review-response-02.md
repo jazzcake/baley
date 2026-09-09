@@ -3,7 +3,7 @@ baley_record: 1
 record_id: "1970e53d-c35d-4fda-82c3-59970b1361ce"
 task_id: 184
 record_type: review-response
-run_id: "pending-registration"
+run_id: "870bf57f-3c5e-42dd-becc-2ce25cf7416c"
 created_at: "2026-09-10T03:12:30+09:00"
 created_by: "codex-worker-term_e4c314e8"
 responds_to: "independent-review-02.md"
