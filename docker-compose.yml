@@ -1,5 +1,6 @@
 services:
   api:
+    image: baley-api:latest
     build:
       context: .
       dockerfile: docker/Dockerfile.server
@@ -50,6 +51,7 @@ services:
       retries: 12
 
   viewer:
+    image: baley-viewer:latest
     build:
       context: .
       dockerfile: docker/Dockerfile.viewer

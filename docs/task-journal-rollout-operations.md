@@ -10,25 +10,28 @@ Stop before migration if any of these are true: the checkout is not the reviewed
 
 ## Preflight, freeze, backup, and restore drill
 
-Record the deployment SHA, API and Viewer image IDs, current MCP executable path and SHA-256, schema version, Workspace revision, Task #183/#184 status, table and allow-list Event counts, and `tailscale serve status`. Preserve any unrelated dirty or untracked file; do not delete it to satisfy a deployment helper.
+Record the deployment SHA, API and Viewer image IDs, current MCP executable path and SHA-256, schema version, Workspace revision, Task #183/#184 status, every public table count, and `tailscale serve status`. Preserve any unrelated dirty or untracked file; do not delete it to satisfy a deployment helper. Set `$workspaceId` to the exact Workspace UUID that owns Tasks #183 and #184; the helper refuses to infer it.
 
 ```powershell
 .\scripts\task-journal-rollout.ps1 -Action Preflight
 docker compose stop api
 Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 8080 -ErrorAction SilentlyContinue
 
+$workspaceId = '00000000-0000-4000-8000-000000000001'
 $stamp = [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssZ')
 $backup = "D:\Project_AI\baley-backups\task-184\$stamp"
-.\scripts\task-journal-rollout.ps1 -Action Backup -BackupDirectory $backup
+.\scripts\task-journal-rollout.ps1 -Action Backup -WorkspaceId $workspaceId -BackupDirectory $backup
 $restoreDb = 'baley_task184_restore_' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddHHmmss') + '_' + ([guid]::NewGuid().ToString('N').Substring(0,8))
-.\scripts\task-journal-rollout.ps1 -Action VerifyRestore -BackupFile "$backup\baley-schema25.dump" -RestoreDatabase $restoreDb
+.\scripts\task-journal-rollout.ps1 -Action VerifyRestore -WorkspaceId $workspaceId -BackupFile "$backup\baley-schema25.dump" -BackupMetadataFile "$backup\backup.json" -RestoreDatabase $restoreDb
 ```
 
-The accepted recovery point objective is the write-freeze boundary. If restore verification fails, restart the old API image and do not migrate. Keep the dump and `backup.json` outside the repository.
+`backup.json` format 2 pins the dump SHA-256, every public table count, Workspace ID/revision, Task #183/#184 database IDs and statuses, and the sorted Event, command, and approval IDs associated with those Tasks and their Runs. `VerifyRestore` checks the dump hash before creating a database, restores it, and compares every pinned value. Any mismatch exits non-zero. A database is dropped only if that invocation's `createdb` succeeded; a pre-existing database with the requested name is never dropped. Keep the dump and `backup.json` outside the repository.
+
+The accepted recovery point objective is the write-freeze boundary. If restore verification fails, restart the schema-25 API image while the database is still schema 25 and do not migrate.
 
 ## Immutable build and migration
 
-Pin the reviewed commit and old image IDs before building. The Dockerfiles embed the build version, commit, time, and OCI revision; `/versionz` must later report the same commit.
+Pin the reviewed commit and old image IDs before building. The API image labels its exact OCI revision and `org.opencontainers.image.baley.schema-version=27`; the Viewer labels the same revision. `/versionz` must later report that revision and schema 27.
 
 ```powershell
 $deploySha = (git rev-parse HEAD).Trim()
@@ -62,14 +65,44 @@ Invoke-WebRequest https://jazzcake-home.tail87e929.ts.net/api/versionz -UseBasic
 
 Both local and tailnet endpoints must report schema 27 and the pinned deployment commit. Confirm ports 8080, 5174, and 8090 remain loopback-bound and `tailscale serve status` is unchanged. Build the MCP executable under `C:\dev-bin\baley\` only, preserve the existing credential-store metadata, and verify `baley_task_journal` returns the same four #183 rows and paired cursor order as HTTP. In the signed-in Viewer, inspect #183's read-only Journal; the UI intentionally shows only the newest 50 rows, so use HTTP/MCP cursors for a complete history.
 
-Finally create a canary Task with only facts the operator actually states, start one Run, and confirm the new Event-backed row appears through API, Viewer, and MCP. Do not invent missing context to populate the canary.
+## Lifecycle canary and approval stop point
+
+Use one explicitly disposable canary Task and preserve each exact request envelope, response, command ID, Event ID, Journal ID, actor ID, timestamp, Workspace revision, and `contextNote`. Do not invent context. The lifecycle is strictly:
+
+1. `task.create` with the operator-stated goal and completion contract.
+2. `run.start(kind=implementation)` with the observed rollout-start fact.
+3. `task.report_implemented` with the observed outcome and residual risks.
+4. **Stop Agent/Operator writes.** A signed-in human opens the canary Task Inspector, reads its journal/evidence, clicks `Confirm task` to create a fresh preview, and explicitly confirms that exact preview. The browser-bound grant is not copied into chat or manufactured by an Agent.
+
+At steps 1 through 3, send the command once over the authenticated HTTP command endpoint and save the full envelope. Re-send the byte-equivalent envelope with the same idempotency key and expected revision: it must return the original result, command ID, and Journal ID without changing the Workspace revision or any table count. Then change one payload field while retaining the same idempotency key: it must return `idempotency_conflict`, with zero new command, Event, Journal, Task, or Run rows. Send the otherwise-valid next command with a stale Workspace revision: it must fail with the stale-revision diagnostic and the same zero-write proof. These negative checks use test/canary requests only; never alter a successful command's preserved envelope.
+
+For step 4, record counts immediately before the human preview. An old preview or grant bound to an earlier Workspace revision, a different command hash, target, browser session, or warning acknowledgement must fail. Record counts again and prove zero writes. The human then creates a new preview in the signed-in Viewer and confirms only that exact preview. This is the human-only stop point: the Agent may observe the result after the Viewer completes it, but may not execute or synthesize the approval.
+
+After every successful step, compare all three projections:
+
+| Surface | Required provenance match |
+| --- | --- |
+| HTTP Task/Workspace journal routes | Event ID, Journal ID, command ID/name, lifecycle stage, actor, timestamp, context, Task/Run identity, Workspace revision |
+| Viewer Task Inspector | Same newest journal rows and human approval actor/time; read-only, no invented narrative |
+| MCP `baley_task_journal` | Same fields and paired cursor order as HTTP; retry returns the same IDs |
+
+For `task.confirm`, additionally match the `task.confirmed` Event, its command, the consumed `human_approval_attestation`, approval grant binding, human actor, and final `confirmed` status across HTTP, Viewer, and MCP. Any missing or divergent field is a failed canary; do not report the rollout complete. Run `task.confirm` only once through the signed-in Viewer after negative stale-grant testing has proved zero writes.
 
 ## Rollback
 
-If migration 27 itself fails, it is transactional: fix or explicitly review the historical data before retrying. Do not bypass fail-closed checks. If service smoke fails after schema 27 succeeds, restore the exact old API and Viewer image IDs:
+If migration 27 itself fails, it is transactional: fix or explicitly review the historical data before retrying. Do not bypass fail-closed checks. After schema 27 succeeds, a pre-rollout API is forbidden even if its image ID is known. Roll forward, or use only an exact API image that declares schema 27 compatibility and a Viewer image carrying the identical OCI revision:
 
 ```powershell
 .\scripts\task-journal-rollout.ps1 -Action Rollback -RollbackApiImage 'sha256:<64 hex>' -RollbackViewerImage 'sha256:<64 hex>'
 ```
 
-Do not run migration 26 down as an application rollback: migration 27 down intentionally retains history, while migration 26 down removes the table and is incompatible with the old API's expected schema. Keep schema 27 and the append-only rows, roll back only application images, and diagnose forward. Restore the schema-25 dump only for a separately authorized disaster recovery event that accepts losing all writes after the freeze boundary.
+The helper inspects the immutable images before changing tags. It rejects an API without `org.opencontainers.image.baley.schema-version=27`, rejects mismatched or absent 40-character API/Viewer OCI revisions, verifies that the database is still schema 27, starts only API and Viewer, verifies both containers use the requested exact image IDs, waits for API container health, and fail-closed checks `/readyz` and `/versionz` for schema 27 and the artifact revision. Any failed check returns non-zero and the service is not considered recovered.
+
+| Database | API artifact | Viewer/MCP artifact | Allowed outcome |
+| --- | --- | --- | --- |
+| schema 25 | reviewed pre-rollout schema-25 API | matching pre-rollout artifacts | Allowed only before migration 27 or after separately authorized destructive recovery |
+| schema 27 | API image labeled schema 27, `/versionz` revision equals the immutable image revision | Same-commit Viewer; same-commit MCP is preferred, older read-only-compatible Viewer/MCP only with explicit compatibility evidence | Allowed application rollback/roll-forward target |
+| schema 27 | schema-25/pre-rollout API, missing compatibility label, or unknown revision | any | Forbidden; `/readyz` would fail and mutation availability is not recoverable |
+| schema 25 | schema-27-only API | any | Forbidden; `/readyz` must fail closed |
+
+Do not run migration 26 down as an application rollback: migration 27 down intentionally retains history, while migration 26 down removes the table and is incompatible with schema-27 APIs. Keep schema 27 and the append-only rows, roll back only to a proven schema-27-compatible application set, and diagnose forward. Restore the schema-25 dump only for a separately authorized disaster recovery event that accepts losing all writes after the freeze boundary.
