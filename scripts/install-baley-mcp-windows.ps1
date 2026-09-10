@@ -13,9 +13,9 @@ if ($ServerURL.TrimEnd('/') -ne "https://jazzcake-home.tail87e929.ts.net/api") {
 }
 $installRoot = Join-Path $env:LOCALAPPDATA "Baley\mcp"
 $buildRoot = "C:\dev-bin\baley"
-$worktreeChanges = git -C $repoRoot status --porcelain
+$worktreeChanges = git -C $repoRoot status --porcelain --untracked-files=no
 if ($LASTEXITCODE -ne 0) { throw "Unable to inspect the Baley MCP source worktree" }
-if ($worktreeChanges) { throw "Commit or stash Baley MCP source changes before creating a release install" }
+if ($worktreeChanges) { throw "Commit or stash tracked Baley MCP source changes before creating a release install" }
 $releaseID = (git -C $repoRoot rev-parse --short=12 HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releaseID)) { throw "Unable to determine the Baley MCP release ID" }
 $binary = if ([string]::IsNullOrWhiteSpace($PrebuiltBinary)) {

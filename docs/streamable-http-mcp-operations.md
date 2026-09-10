@@ -65,6 +65,10 @@ macOS installer provides the same single-Gateway model through a per-user
 LaunchAgent and macOS Keychain. No firewall rule is required or created on
 either platform.
 
+The Windows source gate rejects tracked or staged changes that could make the
+binary differ from its Git revision. It deliberately ignores unrelated
+untracked operator files and never moves, deletes, or rewrites them.
+
 For a reviewed rollout that builds an immutable executable in a separately
 pinned path under `C:\dev-bin\baley`, pass that existing artifact explicitly;
 the installer validates the path and reuses the same scheduled-task, credential
