@@ -2,7 +2,7 @@
 baley_record: 1
 record_id: "e6cb529d-c74e-4163-905d-461dcb1d1a1a"
 task_id: 184
-record_type: rollout-report
+record_type: completion-report
 run_id: "97491670-5d41-40b5-bbda-50224f78d151"
 created_at: "2026-09-10T11:10:00+09:00"
 created_by: "codex-worker-term_76c61e49"
@@ -16,7 +16,7 @@ status: completed
 
 Task Journal was deployed forward from schema 25 to schema 27 on the existing local Baley PostgreSQL/API/Viewer/MCP stack. API, Viewer, and MCP application artifacts were built from reviewed deploy commit `04977a7cf7679c8b57462b99aac84c3d9ef6ffec`; the operating branch then received rollout-only helper, installer, and report commits.
 
-The initial rollout Run `2e80d5d1-4c16-48c6-9b69-f9863735dd16` was interrupted after Orca terminal loss with zero rollout changes. Continuation Run `97491670-5d41-40b5-bbda-50224f78d151` performed this deployment. The stale planning placeholder `79d027c7-f92f-46c2-8495-8e67a1910aba` was not present in the live database and is not claimed as an actual Run.
+The initial rollout Run `2e80d5d1-4c16-48c6-9b69-f9863735dd16` was interrupted after Orca terminal loss with zero rollout changes. Continuation Run `97491670-5d41-40b5-bbda-50224f78d151` performed this deployment and succeeded at version 3; its terminal command was `b7777f49-1792-4e15-9b18-a03a3cff5d00` and Event was `391cd657-cff6-4545-a62d-b21133b78bbc`. The stale planning placeholder `79d027c7-f92f-46c2-8495-8e67a1910aba` was not present in the live database and is not claimed as an actual Run.
 
 ## Source and artifact pinning
 
@@ -38,7 +38,7 @@ The initial rollout Run `2e80d5d1-4c16-48c6-9b69-f9863735dd16` was interrupted a
 - Dump: `baley-schema25.dump`, SHA-256 `1C0D7630BFB7BCB8256229D7BF0D552C7AD19173CABEC9902FEAE57AAB07AD2F`.
 - Metadata: `backup.json`, format 2, SHA-256 `13EECE548EA7E59759B59107939DF9D466BCE8CD60E4E85B82254E6EBF81F0CC`.
 - Isolated restore database: `baley_task184_restore_20260910013125_f16bc070`. The helper verified dump hash, schema 25, every table count, Workspace revision 1379, #183/#184 identity/status, and fixed Event/command/approval IDs, then dropped only the database it created.
-- At freeze, #183 was `confirmed` (database ID `0393bf4a-c53d-4ccd-937c-50528b044c32`) and #184 was `in_progress` (database ID `c95aeaf0-8be3-4cc5-a99d-bdb0db23f50f`).
+- At freeze, #183 was `confirmed` (database ID `0393bf4a-c53d-4ccd-937c-50528b044c32`) and #184 was `in_progress` (database ID `62786a24-2a62-4f55-9007-bd7c09441df3`).
 
 ## Database before and after
 
@@ -51,13 +51,13 @@ Schema moved from 25 to 27. The helper's first live fixed-four-row check correct
 | account_sessions | 94 | 94 |
 | accounts | 2 | 2 |
 | actors | 3 | 3 |
-| agent_tokens | 68 | 71 |
+| agent_tokens | 68 | 72 |
 | approval_grants | 2 | 2 |
 | auth_login_limits | 2 | 2 |
 | backlog_items | 74 | 74 |
-| commands | 3313 | 3317 |
+| commands | 3313 | 3318 |
 | commit_references | 68 | 68 |
-| events | 3231 | 3236 |
+| events | 3231 | 3237 |
 | evidence_profiles | 6 | 6 |
 | gate_entry_tasks | 0 | 0 |
 | gate_tasks | 23 | 23 |
@@ -67,13 +67,13 @@ Schema moved from 25 to 27. The helper's first live fixed-four-row check correct
 | lanes | 22 | 22 |
 | mcp_connection_requests | 1 | 1 |
 | mcp_gateway_registrations | 5 | 5 |
-| mutation_attempts | 4092 | 4106 |
+| mutation_attempts | 4092 | 4107 |
 | oidc_authorization_flows | 28 | 28 |
 | phases | 16 | 16 |
 | repositories | 5 | 5 |
 | run_git_observations | 5 | 5 |
 | runs | 713 | 714 |
-| security_events | 227 | 230 |
+| security_events | 227 | 231 |
 | task_acceptance_assignments | 213 | 214 |
 | task_acceptance_evidence | 18 | 18 |
 | task_dependencies | 184 | 184 |
@@ -85,7 +85,7 @@ Schema moved from 25 to 27. The helper's first live fixed-four-row check correct
 | workspace_memberships | 12 | 12 |
 | workspaces | 6 | 6 |
 
-The post-canary Workspace revision is 1383. Agent-token, mutation-attempt, and security-event growth includes normal MCP gateway credential renewal and the explicitly recorded negative probes; successful domain writes account for four commands and five Events.
+The final Workspace revision is 1384. Agent-token, mutation-attempt, and security-event growth includes normal MCP gateway credential renewal and the explicitly recorded negative probes; successful canary writes account for four commands and five Events, and closing the rollout Run added one command and one Event.
 
 ## Service and network verification
 
