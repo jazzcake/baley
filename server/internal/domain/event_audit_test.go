@@ -82,12 +82,12 @@ func TestImplementedEvidenceAllowsExplicitEmptyWarningSnapshots(t *testing.T) {
 
 func TestImplementedEvidenceBindsWarningsToAcknowledgementAndReason(t *testing.T) {
 	base := PlannedEvent{Type: "task.implemented_reported", EntityType: "task", EntityID: "task", Payload: map[string]any{
-		"taskId": "task", "assessment": "done", "warnings": []string{CodeDanglingPath}, "acknowledgedWarningCodes": []string{CodeDanglingPath}, "proceedReason": "intentional leaf",
+		"taskId": "task", "assessment": "done", "warnings": []string{CodeMissingDetailedPlan}, "acknowledgedWarningCodes": []string{CodeMissingDetailedPlan}, "proceedReason": "plan recorded elsewhere",
 	}}
 	if evaluation := ValidateEventEvidence(base); evaluation.HasErrors() {
 		t.Fatalf("bound warning evidence rejected: %+v", evaluation)
 	}
-	base.Payload["acknowledgedWarningCodes"] = []string{CodeMissingDetailedPlan}
+	base.Payload["acknowledgedWarningCodes"] = []string{CodeMissingIndependentReview}
 	if evaluation := ValidateEventEvidence(base); !evaluation.HasErrors() {
 		t.Fatal("mismatched warning acknowledgement accepted")
 	}

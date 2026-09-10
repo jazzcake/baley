@@ -851,6 +851,7 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		return result, err
 	}
 	grantID := ""
+	decisionEvidenceID := ""
 	if req.Principal != nil {
 		if req.Principal.WorkspaceID != "" && req.Principal.WorkspaceID != wid {
 			return result, &application.CommandError{Code: "forbidden", Message: "credential is scoped to another Workspace"}
@@ -863,7 +864,11 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		humanOnly := plan.ForceHumanApproval || commandRequiresHumanApproval(req.Name)
 		if humanOnly {
 			var approverActorID string
-			grantID, approverActorID, err = validateApprovalGrant(ctx, tx, wid, req, preview, plan, required)
+			if req.Envelope.DecisionEvidence != nil || req.Name == "task.confirm" && req.Envelope.ApprovalGrantID == "" {
+				decisionEvidenceID, approverActorID, err = validateConversationalDecision(ctx, tx, wid, req, preview, plan, required)
+			} else {
+				grantID, approverActorID, err = validateApprovalGrant(ctx, tx, wid, req, preview, plan, required)
+			}
 			if err != nil {
 				grantRejectionReason = commandErrorCode(err)
 				return result, err
@@ -871,6 +876,13 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 			req.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
 				ApprovedByActorID: approverActorID, ApprovedCommandHash: preview.CommandHash,
 				DecisionSnapshotHash: preview.DecisionSnapshotHash,
+			}
+			if evidence := req.Envelope.DecisionEvidence; evidence != nil {
+				req.Envelope.HumanApprovalAttestation.StatementHash = digestText(evidence.Statement)
+				req.Envelope.HumanApprovalAttestation.ConversationRef = strings.TrimSpace(evidence.ConversationRef)
+				approvedAt := time.Now().UTC()
+				req.Envelope.HumanApprovalAttestation.ApprovedAt = &approvedAt
+				req.Envelope.InitiatedByActorID = approverActorID
 			}
 		} else {
 			decision := authz.Authorize(authz.AuthorizationInput{
@@ -943,7 +955,15 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 				payload["decisionSnapshotHash"] = preview.DecisionSnapshotHash
 			}
 		}
-		eventWrites = append(eventWrites, application.EventWrite{Type: "human_approval_attestation.recorded", EntityType: "attestation", EntityID: attestationID, Payload: map[string]any{"action": approvalAction, "entityType": plan.EntityType, "entityId": plan.EntityID, "workspaceRevision": snapshot.Workspace.Revision, "approvedByActorId": att.ApprovedByActorID, "approvedCommandHash": att.ApprovedCommandHash, "decisionSnapshotHash": att.DecisionSnapshotHash}})
+		payload := map[string]any{"action": approvalAction, "entityType": plan.EntityType, "entityId": plan.EntityID, "workspaceRevision": snapshot.Workspace.Revision, "approvedByActorId": att.ApprovedByActorID, "approvedCommandHash": att.ApprovedCommandHash, "decisionSnapshotHash": att.DecisionSnapshotHash}
+		if evidence := req.Envelope.DecisionEvidence; evidence != nil {
+			payload["approvalProtocol"] = "linked_account_conversation"
+			payload["decisionEvidenceId"] = evidence.DecisionID
+			payload["decisionSource"] = evidence.Source
+			payload["conversationRef"] = evidence.ConversationRef
+			payload["statementHash"] = att.StatementHash
+		}
+		eventWrites = append(eventWrites, application.EventWrite{Type: "human_approval_attestation.recorded", EntityType: "attestation", EntityID: attestationID, Payload: payload})
 	}
 	for index := range eventWrites {
 		eventWrites[index] = normalizeEventWrite(eventWrites[index], plan)
@@ -1377,7 +1397,9 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 	}
 	result = application.ExecutionResult{CommandID: commandID, WorkspaceRevision: newRevision, EventIDs: make([]string, 0, len(eventWrites)), Projection: preview.ProjectedDiff, LeaseToken: plan.RunLeaseToken, Idempotent: plan.IdempotentNoMutation, CommandHash: preview.CommandHash}
 	if req.Envelope.HumanApprovalAttestation != nil {
-		if grantID != "" {
+		if decisionEvidenceID != "" {
+			result.ApprovalProtocol = "linked_account_conversation"
+		} else if grantID != "" {
 			result.ApprovalProtocol = "browser_session_approval_grant"
 		} else {
 			result.ApprovalProtocol = "legacy_unenforced_attestation"
@@ -1400,6 +1422,21 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 	if _, err = tx.Exec(ctx, "INSERT INTO commands(id,workspace_id,idempotency_key,command_name,command_hash,request_fingerprint,workspace_revision,result,initiated_by_actor_id,executed_by_actor_id,authenticated_credential_kind,authenticated_credential_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,NULLIF($11,''),NULLIF($12,''))", commandID, wid, req.Envelope.IdempotencyKey, req.Name, preview.CommandHash, requestFingerprint, newRevision, resultJSON, req.Envelope.InitiatedByActorID, req.Envelope.ExecutedByActorID, credentialKind, credentialID); err != nil {
 		return result, err
 	}
+	if decisionEvidenceID != "" {
+		evidence := req.Envelope.DecisionEvidence
+		idempotencyDigest := sha256.Sum256([]byte(req.Envelope.IdempotencyKey))
+		if _, err = tx.Exec(ctx, `INSERT INTO conversational_decision_evidence(
+			id,workspace_id,linked_account_id,linked_human_actor_id,executed_by_agent_actor_id,gateway_registration_id,
+			action,entity_type,entity_id,task_public_id,workspace_revision,command_hash,decision_scope,source,
+			conversation_ref,statement_hash,idempotency_key_hash,executed_command_id)
+			VALUES($1,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+			decisionEvidenceID, wid, req.Principal.LinkedAccountID, req.Principal.LinkedHumanActorID,
+			req.Principal.Subject.ActorID, req.Principal.GatewayRegistrationID, req.Name, plan.EntityType, plan.EntityID,
+			evidence.TaskID, snapshot.Workspace.Revision, preview.CommandHash, evidence.Scope, evidence.Source,
+			strings.TrimSpace(evidence.ConversationRef), digestText(evidence.Statement), hex.EncodeToString(idempotencyDigest[:]), commandID); err != nil {
+			return result, err
+		}
+	}
 	if grantID != "" {
 		tag, consumeErr := tx.Exec(ctx, `UPDATE approval_grants
 			SET status='consumed',consumed_at=$1,consumed_by_command_id=$2
@@ -1419,7 +1456,7 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		}
 	}
 	if att := req.Envelope.HumanApprovalAttestation; att != nil {
-		if _, err = tx.Exec(ctx, "INSERT INTO human_approval_attestations(id,workspace_id,approved_by_actor_id,approved_command_hash,decision_snapshot_hash,action,entity_type,entity_id,workspace_revision,executed_command_id,statement_hash,conversation_ref,approved_at,approval_grant_id) VALUES($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,$9,$10,NULLIF($11,''),NULLIF($12,''),$13,NULLIF($14,'')::uuid)", attestationID, wid, att.ApprovedByActorID, att.ApprovedCommandHash, att.DecisionSnapshotHash, approvalAction, plan.EntityType, plan.EntityID, snapshot.Workspace.Revision, commandID, att.StatementHash, att.ConversationRef, att.ApprovedAt, grantID); err != nil {
+		if _, err = tx.Exec(ctx, "INSERT INTO human_approval_attestations(id,workspace_id,approved_by_actor_id,approved_command_hash,decision_snapshot_hash,action,entity_type,entity_id,workspace_revision,executed_command_id,statement_hash,conversation_ref,approved_at,approval_grant_id,decision_evidence_id) VALUES($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,$9,$10,NULLIF($11,''),NULLIF($12,''),$13,NULLIF($14,'')::uuid,NULLIF($15,'')::uuid)", attestationID, wid, att.ApprovedByActorID, att.ApprovedCommandHash, att.DecisionSnapshotHash, approvalAction, plan.EntityType, plan.EntityID, snapshot.Workspace.Revision, commandID, att.StatementHash, att.ConversationRef, att.ApprovedAt, grantID, decisionEvidenceID); err != nil {
 			return result, err
 		}
 	}
@@ -1622,6 +1659,62 @@ func validateApprovalGrant(ctx context.Context, tx pgx.Tx, workspaceID string, r
 		}
 	}
 	return grantID, approverActorID, nil
+}
+
+func validateConversationalDecision(ctx context.Context, tx pgx.Tx, workspaceID string, req application.CommandRequest, preview application.PreviewResult, plan application.MutationPlan, required authz.Capability) (string, string, error) {
+	evidence := req.Envelope.DecisionEvidence
+	if evidence == nil || req.Principal == nil || req.Principal.Subject.Kind != authz.ActorAgent {
+		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceRequired, Message: "an explicit conversational decision from the linked human member is required"}
+	}
+	if req.Name != "task.confirm" || strings.TrimSpace(evidence.DecisionID) == "" || evidence.Source != "conversation" ||
+		strings.TrimSpace(evidence.ConversationRef) == "" || strings.TrimSpace(evidence.Statement) == "" ||
+		(evidence.Scope != "task" && evidence.Scope != "all_awaiting_confirmation") || evidence.Action != req.Name ||
+		evidence.TaskID <= 0 || evidence.WorkspaceRevision != preview.ExpectedWorkspaceRevision || evidence.CommandHash != preview.CommandHash {
+		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceMismatch, Message: "conversational decision evidence does not match the locked Task confirmation"}
+	}
+	if strings.TrimSpace(req.Principal.LinkedAccountID) == "" || strings.TrimSpace(req.Principal.LinkedHumanActorID) == "" || strings.TrimSpace(req.Principal.GatewayRegistrationID) == "" {
+		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceInvalid, Message: "Agent credential is not linked to a human Workspace member"}
+	}
+	var replayed bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM conversational_decision_evidence WHERE id=$1::uuid)", evidence.DecisionID).Scan(&replayed); err != nil {
+		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceInvalid, Message: "decisionId must be a UUID"}
+	}
+	if replayed {
+		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceReplayed, Message: "conversational decision evidence was already consumed"}
+	}
+	var accountID, humanActorID, gatewayID string
+	err := tx.QueryRow(ctx, `SELECT account.id::text,gateway.account_actor_id,gateway.id
+		FROM agent_tokens token
+		JOIN mcp_gateway_registrations gateway ON gateway.id=token.gateway_registration_id
+		  AND gateway.workspace_id=token.workspace_id AND gateway.agent_actor_id=token.actor_id AND gateway.status='active'
+		JOIN accounts account ON account.actor_id=gateway.account_actor_id AND account.status='active'
+		WHERE token.id=$1::uuid AND token.workspace_id=$2 AND token.actor_id=$3 AND token.revoked_at IS NULL
+		  AND (token.expires_at IS NULL OR token.expires_at>now())`, req.Principal.CredentialID, workspaceID, req.Principal.Subject.ActorID).
+		Scan(&accountID, &humanActorID, &gatewayID)
+	if errors.Is(err, pgx.ErrNoRows) || accountID != req.Principal.LinkedAccountID || humanActorID != req.Principal.LinkedHumanActorID || gatewayID != req.Principal.GatewayRegistrationID {
+		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceInvalid, Message: "linked human provenance is no longer active"}
+	}
+	if err != nil {
+		return "", "", err
+	}
+	humanMembership, err := membershipFromQuerier(ctx, tx, workspaceID, humanActorID)
+	if err != nil {
+		return "", "", err
+	}
+	human := authz.Subject{ActorID: humanActorID, Kind: authz.ActorHuman, Credential: authz.HumanSession, Scopes: append([]authz.Capability(nil), authz.Capabilities...)}
+	decision := authz.Authorize(authz.AuthorizationInput{Subject: human, Membership: humanMembership, WorkspaceID: workspaceID, EntityWorkspaceID: workspaceID, Capability: required})
+	if !decision.Allowed {
+		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceInvalid, Message: "linked human member no longer has the required capability"}
+	}
+	executorMembership, err := membershipFromQuerier(ctx, tx, workspaceID, req.Principal.Subject.ActorID)
+	if err != nil {
+		return "", "", err
+	}
+	executor := authz.Authorize(authz.AuthorizationInput{Subject: req.Principal.Subject, Membership: executorMembership, WorkspaceID: workspaceID, EntityWorkspaceID: workspaceID, Capability: authz.WorkspaceOperate})
+	if !executor.Allowed {
+		return "", "", &application.CommandError{Code: "forbidden", Message: "decision command executor lacks operator capability"}
+	}
+	return evidence.DecisionID, humanActorID, nil
 }
 
 func digestText(value string) string {

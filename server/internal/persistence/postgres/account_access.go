@@ -525,7 +525,8 @@ func (r *Repository) ChangePasswordAndRevokeSessions(ctx context.Context, accoun
 func (r *Repository) AgentByTokenHash(ctx context.Context, hash []byte, now time.Time) (authn.AgentTokenRecord, error) {
 	var value authn.AgentTokenRecord
 	var raw []byte
-	err := r.Pool.QueryRow(ctx, `SELECT token.id::text,token.actor_id,token.workspace_id,token.scopes
+	err := r.Pool.QueryRow(ctx, `SELECT token.id::text,token.actor_id,token.workspace_id,token.scopes,
+		COALESCE(gateway_account.id::text,''),COALESCE(gateway.account_actor_id,''),COALESCE(gateway.id,'')
 		FROM agent_tokens token
 		JOIN workspaces workspace ON workspace.id=token.workspace_id AND workspace.state='active'
 		JOIN actors actor ON actor.id=token.actor_id AND actor.actor_type='agent'
@@ -539,7 +540,7 @@ func (r *Repository) AgentByTokenHash(ctx context.Context, hash []byte, now time
 		WHERE token.token_hash=$1 AND token.revoked_at IS NULL
 		  AND (token.gateway_registration_id IS NULL OR (gateway.status='active' AND gateway.agent_actor_id=token.actor_id AND gateway_member.actor_id IS NOT NULL AND gateway_account.actor_id IS NOT NULL))
 		  AND (token.expires_at IS NULL OR token.expires_at>$2)`, hash, now).
-		Scan(&value.TokenID, &value.ActorID, &value.WorkspaceID, &raw)
+		Scan(&value.TokenID, &value.ActorID, &value.WorkspaceID, &raw, &value.LinkedAccountID, &value.LinkedHumanActorID, &value.GatewayRegistrationID)
 	if err != nil {
 		return value, err
 	}

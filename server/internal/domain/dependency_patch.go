@@ -68,13 +68,11 @@ type TerminalReasonChange struct {
 }
 
 type DependencyPatchDiff struct {
-	AddedDependencies       []Dependency
-	RemovedDependencies     []Dependency
-	TerminalReasonChanges   []TerminalReasonChange
-	NewRootTaskIDs          []string
-	NewLeafTaskIDs          []string
-	BecameDanglingTaskIDs   []string
-	ResolvedDanglingTaskIDs []string
+	AddedDependencies     []Dependency
+	RemovedDependencies   []Dependency
+	TerminalReasonChanges []TerminalReasonChange
+	NewRootTaskIDs        []string
+	NewLeafTaskIDs        []string
 }
 
 type DependencyPatchPreview struct {
@@ -135,9 +133,6 @@ func (g *WorkspaceGraph) PreviewPatch(patch DependencyPatch) DependencyPatchPrev
 		}
 	}
 	diff := projectPatchDiff(g, candidate)
-	for _, id := range diff.BecameDanglingTaskIDs {
-		evaluation.Warnings = append(evaluation.Warnings, Diagnostic{Code: CodeDanglingPath, EntityID: id})
-	}
 	evaluation.sort()
 	return DependencyPatchPreview{Diff: diff, Evaluation: evaluation, candidate: candidate}
 }

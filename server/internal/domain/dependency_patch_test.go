@@ -93,17 +93,14 @@ func TestDependencyPatchTerminalReasonIsAtomicWithEdgesAndGateConditions(t *test
 	}
 }
 
-func TestDependencyPatchProjectsRootLeafAndDanglingChanges(t *testing.T) {
+func TestDependencyPatchProjectsNormalRootAndLeafWithoutWarning(t *testing.T) {
 	graph := graphForPatch(t, []Task{{ID: "a", WorkspaceID: "w"}, {ID: "b", WorkspaceID: "w"}, {ID: "c", WorkspaceID: "w"}}, []Dependency{{FromTaskID: "a", ToTaskID: "b"}, {FromTaskID: "b", ToTaskID: "c"}}, nil)
 	preview := graph.ApplyPatch(DependencyPatch{Remove: []Dependency{{FromTaskID: "a", ToTaskID: "b"}}, Add: []Dependency{{FromTaskID: "c", ToTaskID: "a"}}})
 	if !reflect.DeepEqual(preview.Diff.NewRootTaskIDs, []string{"b"}) || !reflect.DeepEqual(preview.Diff.NewLeafTaskIDs, []string{"a"}) {
 		t.Fatalf("path diff: %+v", preview.Diff)
 	}
-	if !reflect.DeepEqual(preview.Diff.BecameDanglingTaskIDs, []string{"a"}) || !reflect.DeepEqual(preview.Diff.ResolvedDanglingTaskIDs, []string{"c"}) {
-		t.Fatalf("dangling diff: %+v", preview.Diff)
-	}
-	if !hasDiagnostic(preview.Evaluation.Warnings, CodeDanglingPath) {
-		t.Fatalf("missing dangling warning: %+v", preview.Evaluation)
+	if len(preview.Evaluation.Warnings) != 0 {
+		t.Fatalf("ordinary leaf emitted warning: %+v", preview.Evaluation)
 	}
 }
 

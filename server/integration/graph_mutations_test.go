@@ -110,11 +110,8 @@ func TestTaskAndDependencyMutationsAgainstPostgres(t *testing.T) {
 	execute("task.set_terminal", map[string]any{"workspaceId": wid, "taskId": 150, "reason": "Temporary leaf"}, "created-task-terminal", 9)
 	clear := request("task.clear_terminal", map[string]any{"workspaceId": wid, "taskId": 150}, "created-task-clear", 10)
 	clear.Envelope.ProceedReason = "The path will be connected later"
-	_, err = service.Execute(ctx, clear)
-	assertCode(t, err, domain.CodeInvalidStateTransition)
-	clear.Envelope.AcknowledgedWarningCodes = []string{domain.CodeDanglingPath}
 	if _, err = service.Execute(ctx, clear); err != nil {
-		t.Fatalf("acknowledged terminal clear failed: %v", err)
+		t.Fatalf("terminal clear creating ordinary leaf failed: %v", err)
 	}
 	execute("gate.create", map[string]any{"workspaceId": wid, "gateId": "validation-ready-internal", "alias": "validation-ready", "name": "Validation Ready", "fromPhaseId": "validate", "toPhaseId": "deploy"}, "gate-create", 11)
 	snapshot, _ = repo.LoadSnapshot(ctx, wid)

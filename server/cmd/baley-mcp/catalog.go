@@ -13,11 +13,11 @@ import (
 
 const (
 	mcpImplementationVersion = "0.2.0"
-	mcpToolCatalogVersion    = "1.2.0"
+	mcpToolCatalogVersion    = "1.3.0"
 	mcpCompactToolCount      = 15
-	mcpCompactSchemaBytes    = 4700
+	mcpCompactSchemaBytes    = 5306
 	mcpFullToolCount         = 89
-	mcpFullSchemaBytes       = 46559
+	mcpFullSchemaBytes       = 50602
 
 	mcpToolProfileCompact mcpToolProfile = "compact"
 	mcpToolProfileFull    mcpToolProfile = "full"
@@ -28,7 +28,7 @@ const (
 
 	bridgePreview         bridgeMode = "preview"
 	bridgeExecuteOperator bridgeMode = "execute_operator"
-	bridgeExecuteApproval bridgeMode = "execute_with_approval"
+	bridgeExecuteDecision bridgeMode = "execute_human_decision"
 )
 
 type mcpToolProfile string
@@ -189,8 +189,8 @@ func addCommandBridgeTools(server *mcp.Server, c *client) {
 	mcp.AddTool(server, commandBridgeTool("baley_command_execute", "Execute one routine Operator command after preview; human-approval commands are rejected", bridgeExecuteOperator), func(ctx context.Context, req *mcp.CallToolRequest, in commandBridgeInput) (*mcp.CallToolResult, any, error) {
 		return c.commandBridge(ctx, in, bridgeExecuteOperator)
 	})
-	mcp.AddTool(server, commandBridgeTool("baley_command_execute_with_approval", "Execute one human or conditionally approved command; the HTTP server validates any required fresh browser grant", bridgeExecuteApproval), func(ctx context.Context, req *mcp.CallToolRequest, in commandBridgeInput) (*mcp.CallToolResult, any, error) {
-		return c.commandBridge(ctx, in, bridgeExecuteApproval)
+	mcp.AddTool(server, commandBridgeTool("baley_command_execute_with_approval", "Execute a human-only command; task.confirm accepts exact linked-account conversation evidence while other boundaries retain browser grants", bridgeExecuteDecision), func(ctx context.Context, req *mcp.CallToolRequest, in commandBridgeInput) (*mcp.CallToolResult, any, error) {
+		return c.commandBridge(ctx, in, bridgeExecuteDecision)
 	})
 }
 
@@ -199,7 +199,7 @@ func commandBridgeTool(name, description string, mode bridgeMode) *mcp.Tool {
 	switch mode {
 	case bridgePreview:
 		tool = readOnlyTool(name, description)
-	case bridgeExecuteApproval:
+	case bridgeExecuteDecision:
 		tool = humanApprovalTool(name, description)
 	default:
 		tool = operatorTool(name, description)
@@ -219,9 +219,20 @@ func commandBridgeSchema(mode bridgeMode) json.RawMessage {
 		"acknowledgedWarningCodes":{"type":"array","items":{"type":"string"}},
 		"proceedReason":{"type":"string"}`
 	}
-	if mode == bridgeExecuteApproval {
+	if mode == bridgeExecuteDecision {
 		envelopeProperties += `,
-		"approvalGrantId":{"type":"string"}`
+		"approvalGrantId":{"type":"string"},
+		"decisionEvidence":{"type":"object","properties":{
+			"decisionId":{"type":"string","format":"uuid"},
+			"source":{"const":"conversation"},
+			"conversationRef":{"type":"string","minLength":1},
+			"statement":{"type":"string","minLength":1},
+			"scope":{"enum":["task","all_awaiting_confirmation"]},
+			"action":{"const":"task.confirm"},
+			"taskId":{"type":"integer","minimum":1},
+			"workspaceRevision":{"type":"integer","minimum":1},
+			"commandHash":{"type":"string","minLength":1}
+		},"required":["decisionId","source","conversationRef","statement","scope","action","taskId","workspaceRevision","commandHash"],"additionalProperties":false}`
 	}
 	return json.RawMessage(fmt.Sprintf(`{
 		"type":"object",
@@ -282,11 +293,18 @@ func (c *client) commandBridge(ctx context.Context, in commandBridgeInput, mode 
 		if _, present := in.Envelope["approvalGrantId"]; present {
 			return nil, nil, errors.New("routine Operator commands must not carry approvalGrantId")
 		}
-	case bridgeExecuteApproval:
+	case bridgeExecuteDecision:
 		if descriptor.Classification == commandClassOperator {
 			return nil, nil, fmt.Errorf("command %q is classified operator; use baley_command_execute", in.Command)
 		}
-		if descriptor.Classification == commandClassHuman {
+		if in.Command == "task.confirm" {
+			if value, ok := in.Envelope["decisionEvidence"].(map[string]any); !ok || len(value) == 0 {
+				return nil, nil, errors.New("task.confirm requires explicit decisionEvidence from the current conversation")
+			}
+			if _, present := in.Envelope["approvalGrantId"]; present {
+				return nil, nil, errors.New("ordinary task.confirm must use decisionEvidence, not a browser approval grant")
+			}
+		} else if descriptor.Classification == commandClassHuman {
 			if value, ok := in.Envelope["approvalGrantId"].(string); !ok || strings.TrimSpace(value) == "" {
 				return nil, nil, fmt.Errorf("command %q requires a fresh browser-issued approvalGrantId", in.Command)
 			}

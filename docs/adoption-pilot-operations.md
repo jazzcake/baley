@@ -52,7 +52,7 @@ lane Backlog
   → 구현·검증·독립 리뷰
   → Record/Git evidence
   → 모든 Task는 implemented에서 사람 결정 대기
-  → Task confirmation 및 Gate는 browser-session approval grant 필요
+  → explicit conversational Task confirmation은 linked-account MCP evidence, Gate 등 다른 사람 전용 경계는 browser-session grant
 ```
 
 Backlog 항목은 Lane에는 속하지만 생성 시 Phase를 가정하지 않는다. Run
@@ -68,11 +68,11 @@ Record/Git mismatch는 자동 수정하지 않는다. lane brief는 mismatch를
 ## 승인 경계
 
 - 모든 Task는 human_required이며 typed evidence가 충족돼도 auto-confirm하지 않는다.
-- Task는 implemented에서 signed-in human browser approval을 기다린다.
+- Task는 implemented에서 인간의 명시적 대화 결정을 기다리며 Agent가 MCP로 확인을 실행한다.
 - Gate pass, active Gate 조건 변경, Lane close/discard, Workspace close:
   fresh preview 뒤 authenticated human approval이 항상 필요하다.
 
-여러 implemented Task도 각각 fresh preview와 single-use browser grant가 필요하다.
+여러 implemented Task도 각각 fresh preview와 target-bound single-use decision evidence가 필요하다.
 Gate pass는 Task 확인 뒤 새 revision으로 다시 preview하는 별도 결정이다.
 
 ## PilotMeasurement

@@ -19,6 +19,17 @@ export type CommandRequest = {
     proceedReason?: string;
     humanApprovalAttestation?: unknown;
     approvalGrantId?: string;
+    decisionEvidence?: {
+      decisionId: string;
+      source: "conversation";
+      conversationRef: string;
+      statement: string;
+      scope: "task" | "all_awaiting_confirmation";
+      action: "task.confirm";
+      taskId: number;
+      workspaceRevision: number;
+      commandHash: string;
+    };
   };
 };
 export type Diagnostic = { code: string; message: string; details?: unknown };

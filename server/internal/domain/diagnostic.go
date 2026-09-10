@@ -24,6 +24,10 @@ const (
 	CodeActiveGateDetachForbidden     = "active_gate_detach_forbidden"
 	CodeHumanApprovalRequired         = "human_approval_required"
 	CodeHumanApprovalMismatch         = "human_approval_mismatch"
+	CodeDecisionEvidenceRequired      = "decision_evidence_required"
+	CodeDecisionEvidenceInvalid       = "decision_evidence_invalid"
+	CodeDecisionEvidenceMismatch      = "decision_evidence_mismatch"
+	CodeDecisionEvidenceReplayed      = "decision_evidence_replayed"
 	CodeApprovalGrantRequired         = "approval_grant_required"
 	CodeApprovalGrantInvalid          = "approval_grant_invalid"
 	CodeApprovalGrantMismatch         = "approval_grant_mismatch"
@@ -39,7 +43,6 @@ const (
 	CodeBacklogOrderUnchanged         = "backlog_order_unchanged"
 	CodeInvalidBacklogFilter          = "invalid_backlog_filter"
 	CodeLaneHasActiveBacklog          = "lane_has_active_backlog"
-	CodeDanglingPath                  = "dangling_path"
 	CodePhaseOrderInversion           = "phase_order_inversion"
 	CodeMissingDetailedPlan           = "missing_detailed_plan_record"
 	CodeMissingIndependentReview      = "missing_independent_review_record"
@@ -71,6 +74,10 @@ var UsedDiagnosticCodes = []string{
 	CodeActiveGateDetachForbidden,
 	CodeHumanApprovalRequired,
 	CodeHumanApprovalMismatch,
+	CodeDecisionEvidenceRequired,
+	CodeDecisionEvidenceInvalid,
+	CodeDecisionEvidenceMismatch,
+	CodeDecisionEvidenceReplayed,
 	CodeStaleRevision,
 	CodeStaleRunVersion,
 	CodeRunLeaseMismatch,
@@ -83,7 +90,6 @@ var UsedDiagnosticCodes = []string{
 	CodeBacklogOrderUnchanged,
 	CodeInvalidBacklogFilter,
 	CodeLaneHasActiveBacklog,
-	CodeDanglingPath,
 	CodePhaseOrderInversion,
 	CodeMissingDetailedPlan,
 	CodeMissingIndependentReview,

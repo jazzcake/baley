@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -18,11 +19,11 @@ import (
 
 const (
 	legacyCatalogToolCount    = 78
-	legacyCatalogSchemaBytes  = 39852
+	legacyCatalogSchemaBytes  = 43289
 	compactCatalogToolCount   = 15
-	compactCatalogSchemaBytes = 4700
+	compactCatalogSchemaBytes = 5306
 	fullCatalogToolCount      = 89
-	fullCatalogSchemaBytes    = 46559
+	fullCatalogSchemaBytes    = 50602
 )
 
 var expectedCompactToolNames = []string{
@@ -165,6 +166,16 @@ func TestCompactCatalogHasExactDeterministicDefaultToolList(t *testing.T) {
 	}
 }
 
+func TestCompactHumanExecutionToolNameRemainsBackwardCompatible(t *testing.T) {
+	names := toolNames(listMCPTools(t, newMCPServer(&client{})))
+	if !slices.Contains(names, "baley_command_execute_with_approval") {
+		t.Fatal("compatibility-stable human execution tool is missing")
+	}
+	if slices.Contains(names, "baley_command_execute_human") {
+		t.Fatal("renamed alias must not increase or drift the advertised compact catalog")
+	}
+}
+
 func TestFullCatalogPreservesEveryLegacyToolName(t *testing.T) {
 	legacy := toolNames(listMCPTools(t, newLegacyMCPServer(&client{})))
 	if !reflect.DeepEqual(legacy, expectedLegacyToolNames) {
@@ -277,8 +288,8 @@ func TestGenericCommandBridgeRejectsUnknownMalformedAndMisclassifiedCalls(t *tes
 		{name: "malformed arguments", tool: "baley_command_preview", command: "task.update", arguments: []any{"workspace"}, envelope: envelope},
 		{name: "legacy approval authority", tool: "baley_command_execute_with_approval", command: "task.confirm", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1}, envelope: map[string]any{"idempotencyKey": "test", "expectedWorkspaceRevision": 1, "executedByActorId": "agent", "humanApprovalAttestation": map[string]any{}}},
 		{name: "human command on operator bridge", tool: "baley_command_execute", command: "task.confirm", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1}, envelope: envelope},
-		{name: "operator command on approval bridge", tool: "baley_command_execute_with_approval", command: "task.update", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1}, envelope: envelope},
-		{name: "missing browser grant", tool: "baley_command_execute_with_approval", command: "task.confirm", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1}, envelope: envelope},
+		{name: "operator command on human bridge", tool: "baley_command_execute_with_approval", command: "task.update", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1}, envelope: envelope},
+		{name: "missing decision evidence", tool: "baley_command_execute_with_approval", command: "task.confirm", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1}, envelope: envelope},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -319,8 +330,8 @@ func TestGenericCommandBridgeForwardsOnlyToFixedCommandEndpoints(t *testing.T) {
 		envelope                map[string]any
 	}{
 		{"baley_command_preview", "task.update", "/v1/commands/preview", map[string]any{"idempotencyKey": "preview", "executedByActorId": "agent"}},
-		{"baley_command_execute", "task.update", "/v1/commands/execute", map[string]any{"idempotencyKey": "execute", "expectedWorkspaceRevision": 2, "executedByActorId": "agent", "acknowledgedWarningCodes": []any{"dangling_path"}}},
-		{"baley_command_execute_with_approval", "task.confirm", "/v1/commands/execute", map[string]any{"idempotencyKey": "human", "expectedWorkspaceRevision": 3, "executedByActorId": "agent", "approvalGrantId": "browser-grant"}},
+		{"baley_command_execute", "task.update", "/v1/commands/execute", map[string]any{"idempotencyKey": "execute", "expectedWorkspaceRevision": 2, "executedByActorId": "agent"}},
+		{"baley_command_execute_with_approval", "task.confirm", "/v1/commands/execute", map[string]any{"idempotencyKey": "human", "expectedWorkspaceRevision": 3, "executedByActorId": "agent", "decisionEvidence": map[string]any{"decisionId": "11111111-1111-4111-8111-111111111111", "source": "conversation", "conversationRef": "turn:1", "statement": "confirm #7", "scope": "task", "action": "task.confirm", "taskId": 7, "workspaceRevision": 3, "commandHash": "sha256:test"}}},
 		{"baley_command_execute_with_approval", "gate.attach_task", "/v1/commands/execute", map[string]any{"idempotencyKey": "conditional", "expectedWorkspaceRevision": 4, "executedByActorId": "agent"}},
 	}
 	for _, call := range calls {
@@ -465,7 +476,7 @@ func TestMCPToolCatalogMatchesLiteralCommandContract(t *testing.T) {
 				CatalogTool                string `json:"catalogTool"`
 				PreviewTool                string `json:"previewTool"`
 				OperatorExecuteTool        string `json:"operatorExecuteTool"`
-				ApprovalExecuteTool        string `json:"approvalExecuteTool"`
+				HumanDecisionExecuteTool   string `json:"humanDecisionExecuteTool"`
 				HTTPCommandCount           int    `json:"httpCommandCount"`
 				UnknownCommandHandling     string `json:"unknownCommandHandling"`
 				CommandValidationAuthority string `json:"commandValidationAuthority"`
@@ -492,7 +503,7 @@ func TestMCPToolCatalogMatchesLiteralCommandContract(t *testing.T) {
 	}
 	bridge := mcpContract.CommandBridge
 	if bridge.CatalogTool != "baley_command_catalog" || bridge.PreviewTool != "baley_command_preview" || bridge.OperatorExecuteTool != "baley_command_execute" ||
-		bridge.ApprovalExecuteTool != "baley_command_execute_with_approval" || bridge.HTTPCommandCount != len(commandDescriptors) ||
+		bridge.HumanDecisionExecuteTool != "baley_command_execute_with_approval" || bridge.HTTPCommandCount != len(commandDescriptors) ||
 		bridge.UnknownCommandHandling != "reject_before_http" || bridge.CommandValidationAuthority != "server" {
 		t.Fatalf("MCP command bridge contract drifted: %+v", bridge)
 	}

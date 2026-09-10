@@ -25,12 +25,6 @@ func projectPatchDiff(before, after *WorkspaceGraph) DependencyPatchDiff {
 		if exists && before.hasOutgoing(id) && !after.hasOutgoing(id) {
 			diff.NewLeafTaskIDs = append(diff.NewLeafTaskIDs, id)
 		}
-		if exists && !before.isDangling(id) && after.isDangling(id) {
-			diff.BecameDanglingTaskIDs = append(diff.BecameDanglingTaskIDs, id)
-		}
-		if exists && before.isDangling(id) && !after.isDangling(id) {
-			diff.ResolvedDanglingTaskIDs = append(diff.ResolvedDanglingTaskIDs, id)
-		}
 	}
 	sort.Slice(diff.AddedDependencies, func(i, j int) bool { return edgeID(diff.AddedDependencies[i]) < edgeID(diff.AddedDependencies[j]) })
 	sort.Slice(diff.RemovedDependencies, func(i, j int) bool { return edgeID(diff.RemovedDependencies[i]) < edgeID(diff.RemovedDependencies[j]) })
@@ -39,7 +33,5 @@ func projectPatchDiff(before, after *WorkspaceGraph) DependencyPatchDiff {
 	})
 	sort.Strings(diff.NewRootTaskIDs)
 	sort.Strings(diff.NewLeafTaskIDs)
-	sort.Strings(diff.BecameDanglingTaskIDs)
-	sort.Strings(diff.ResolvedDanglingTaskIDs)
 	return diff
 }

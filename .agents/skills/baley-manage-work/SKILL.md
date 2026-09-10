@@ -34,14 +34,13 @@ Treat Baley as command-first and its web graph as read-only. A human or Agent ma
    - for an additional Task in an existing workflow, the proposed predecessor or independent-root intent is known. If the LLM cannot establish either from context, do not preview or create the Task; present a candidate and ask the human whether it is independent or follows a specific Task.
    - a later-Phase to earlier-Phase dependency preserves `phase_order_inversion` as a warning.
    - dependency does not affect Gate readiness unless the Task is explicitly attached to that Gate.
-   - a completed path either reaches a successor, joins the outgoing Gate, or has an intentional terminal reason.
    - a Task attached to a Gate belongs to the Gate's `fromPhase`.
    - every attached Gate Task is confirmed or explicitly passed for that Gate before transition.
    - Gate pass and Gate Task pass/revoke target the current active Phase's outgoing Gate.
    - only detailed-planning Runs start in a future inactive Phase.
-   - the requested action does not exercise human-only authority without a fresh browser-session approval grant for that exact command.
+   - `task.confirm` has explicit current-conversation decision evidence for the exact Task or an explicit all-awaiting-confirmation scope; other human-only boundaries have their applicable fresh browser-session grant.
 9. For routine Operator mutations, treat the user's clear request as authorization: prepare the concise preview internally, execute immediately, and report the result without asking a confirmation question. This includes Task and Backlog create/update/move/reorder, normal dependency changes, Run lifecycle, and Task Record registration. Ask for a human decision only for the human-only authority boundaries below.
-10. On the compact MCP profile, use `baley_command_catalog` only when command discovery is needed, preview with `baley_command_preview`, execute routine Operator commands with `baley_command_execute`, and route human or conditionally approved commands through `baley_command_execute_with_approval` only after any required fresh browser grant is available. The explicit full profile may expose the legacy per-command typed tools for diagnostics or rare administration.
+10. On the compact MCP profile, use `baley_command_catalog` only when command discovery is needed, preview with `baley_command_preview`, execute routine Operator commands with `baley_command_execute`, and route human or conditionally approved commands through the compatibility-stable `baley_command_execute_with_approval`. For `task.confirm`, attach the exact typed `decisionEvidence` from the user's explicit current-conversation decision; never infer it. Other human-only boundaries continue to use a fresh browser grant where specified. The explicit full profile may expose per-command typed tools for diagnostics or rare administration.
 11. If neither the compact command bridge nor an applicable legacy Baley command tool is available, stop after the preview. Do not patch fixtures, application source, or a database as a substitute.
 12. Report the resulting Task IDs and Event IDs after execution.
 
@@ -102,7 +101,7 @@ The compact `baley_command_preview` and execution bridges accept
 `contextNote` inside `arguments`. Because it is part of the typed command
 arguments, do not change it between preview and execute or while retrying the
 same idempotency key. For a human-only action, the exact note is also bound to
-the fresh browser approval grant.
+the exact conversational decision evidence or applicable fresh browser approval grant.
 
 Before presenting a Task confirmation decision brief, read that Task with
 `baley_task_journal` and summarize the accumulated context that materially
@@ -191,7 +190,7 @@ task.update {
 
 When adding a Task after work already exists, establish its predecessor or obtain an explicit user statement that it is an independent root. If neither is available, keep the proposed row in chat or a planning document and ask for the missing context; do not create a standalone Task merely to make the graph valid.
 
-Use `dependency.patch` for edge reversal or any rewrite that removes and adds edges together. Include terminal-reason changes in that same patch when the path shape changes. Never disconnect first and hope a later connect succeeds. If a path has no successor or Gate condition, either add the intended continuation or record an intentional leaf reason; otherwise preserve the `dangling_path` warning.
+Use `dependency.patch` for edge reversal or any rewrite that removes and adds edges together. Include terminal-reason changes in that same patch when the path shape changes. Never disconnect first and hope a later connect succeeds. A Task with no successor or Gate condition is a normal leaf; `terminalReason` is optional descriptive metadata, while `terminal_path_conflict` still prevents combining that metadata with a successor or Gate condition.
 
 ## Automatic Workflow
 
@@ -246,7 +245,9 @@ Use `dependency.patch` for edge reversal or any rewrite that removes and adds ed
 
 For every human-only action, create the fresh preview before asking for approval, but present a human decision brief rather than a transport dump. Lead with what was delivered, how it was verified, independent review results when available, and any residual risk that could change the decision. Keep Workspace revision, command hash, capability, and snapshot hash as internal audit-binding data unless the human asks for them or a stale/mismatch error requires explanation.
 
-The human makes the authoritative decision in Baley's signed-in Viewer approval surface. The browser creates a fresh preview, acknowledges its exact warnings, and issues a short-lived single-use grant bound to that browser session and command. The Agent may execute the exact command only by referencing the resulting grant ID; an Agent bearer never derives `approvedByActorId` and may not manufacture approval fields. Never ask for a plaintext secret, custom header, environment variable, or copied approval token.
+The human may make a Task confirmation decision explicitly in the conversation. For ordinary `task.confirm`, fresh-preview the exact command, create a unique decision ID, and execute through MCP with typed `decisionEvidence`: source `conversation`, a stable non-secret conversation reference, the verbatim decision statement, scope `task` or `all_awaiting_confirmation`, action `task.confirm`, target Task public ID, Workspace revision, and canonical command hash. Never infer approval from tone, implementation status, silence, or an ambiguous statement.
+
+Baley derives the initiating human from the authenticated MCP gateway's linked account and revalidates that member's current `task:approve` capability. The body never supplies an approver Actor ID. Each target consumes a unique evidence ID bound to action, target, revision, hash, idempotency, provenance, and executor; a statement explicitly covering all awaiting confirmations may support sequential confirmations, but each Task still gets fresh preview and target-bound evidence. Browser grants remain only for other explicitly applicable human-only boundaries or compatibility.
 
 For one `task.confirm`, use this concise pattern:
 
@@ -254,15 +255,15 @@ For one `task.confirm`, use this concise pattern:
 #<id>은 <delivered outcome>, <test/build verification>, <independent review result>를 완료했습니다. 완료로 확인할까요?
 ```
 
-When the signed-in Viewer provides a Task-specific confirmation action, direct the human to that Task's Inspector and its `Confirm task` button. The first click must create a fresh preview and the final explicit click must issue and consume the browser-bound single-use grant. Never ask the human to compose or paste command JSON for ordinary `task.confirm`; the generic command panel is an advanced diagnostic fallback, not the default Task workflow. After the Viewer confirms the Task, fresh-read its status before continuing.
+When the user says `confirm #<id>`, treat that exact utterance as the decision statement, preview and execute seamlessly, then fresh-read the Task. For `complete all awaiting confirmation`, read the eligible implemented Tasks, preserve the same explicit statement and conversation reference, and sequentially fresh-preview each Task with a new decision ID and current revision. Do not ask for Viewer clicks or command JSON.
 
-When several Tasks are already `implemented`, present them separately. Each Task requires its own Viewer preview, human decision, and command-specific grant. After one confirmation changes the Workspace revision, fresh-read and fresh-preview the next Task. Never treat a chat reply or a prior grant as authority for another Task.
+When several Tasks are already `implemented`, present them separately before requesting a decision. An explicit all-awaiting-confirmation statement can authorize the sequence, but every Task requires a fresh MCP preview, current revision, exact target binding, and unique decision ID. Never reuse evidence or infer authority from a vague reply.
 
-Do not present routine topology diagnostics as though they were implementation-quality failures. In particular, acknowledge `dangling_path` only as a warning when confirmation is otherwise approved; never invent or approve a terminal reason to suppress it. Surface the diagnostic in the decision brief only when it materially changes the human decision.
+Do not invent a terminal reason for an ordinary DAG leaf. The absence of a successor or Gate is valid and emits no warning.
 
 Apply the same outcome-first approach to human-only Gate, Lane, `task.discard`, and Workspace decisions: describe the real-world effect and decision evidence first, while preserving exact revision/hash/snapshot binding internally. `task.rework` is an Agent Operator action and does not require human approval. V1 has no persisted approval inbox.
 
-The server enforces each command's current revision, canonical hash, target, warnings, single-use browser grant, issuing session, and the issuing human's current capability. Grouped confirmation is not supported because each command requires a separate browser decision and grant. Do not claim the server provides an atomic approval bundle.
+The server enforces each command's current revision, canonical hash, target, warnings, single-use evidence or applicable grant, and the initiating human's current capability. An all-awaiting-confirmation statement is not an atomic server batch: execute one target-bound command at a time with a fresh revision.
 
 Treat Viewer, Operator, Approver, and Owner as capability bundles for the future authenticated API. Never assume an Agent Operator has human approval capability.
 

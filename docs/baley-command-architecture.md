@@ -53,7 +53,7 @@ Operator가 정상 workflow에서 수행:
 
 Run 상태 갱신과 Record 등록을 매번 사람에게 확인하지 않는다. manual correction은 예외이며 사유와 Event를 요구한다.
 
-Agent credential은 인간 승인 권한을 파생하거나 위임하지 않는다. 사람 전용 command는 로그인한 Viewer 세션에서 fresh preview를 확인한 사람이 발급한 5분 single-use approval grant ID를 실행 envelope의 `approvalGrantId`로 참조한다. 서버는 grant를 Account, human Actor, browser session, Workspace, action, entity, revision, canonical command hash, decision snapshot, warning acknowledgement, proceed-reason digest와 결속하고 실행 transaction에서 원자적으로 소비한다. session/membership/capability가 철회되거나 grant가 만료·소비되면 재사용할 수 없다. enforced HTTP/MCP는 `humanApprovalAttestation`, `approvedByActorId` 같은 legacy body authority를 거부한다. grant ID는 secret이 아니며 plaintext secret, header, 환경 변수 또는 token 복사 경로를 두지 않는다.
+Agent credential에는 인간 승인 capability를 부여하지 않는다. ordinary `task.confirm`은 사용자가 현재 대화에서 명시한 결정을 typed `decisionEvidence`로 전달한다. 서버는 MCP gateway에 링크된 Account와 human Actor를 credential에서 파생하고 현재 membership과 `task:approve`를 재검증한다. evidence는 decision ID, source, conversation reference, statement hash, scope, action, Task target, Workspace revision, canonical command hash, idempotency key hash, gateway와 실행 Agent에 결속되어 성공 transaction에서 한 번만 소비된다. body의 임의 `approvedByActorId`는 계속 거부한다. 다른 사람 전용 경계와 호환 경로에는 기존 browser-session grant를 유지한다.
 
 ## 3. Skill, MCP와 로컬 filesystem
 
@@ -86,7 +86,7 @@ task 104
 
 정확한 query와 mutation 이름, capability 및 승인 요구는 [`contracts/v1/commands.json`](../contracts/v1/commands.json)을 따른다. 이 문서는 도구를 어떤 흐름으로 사용하는지 설명하고 목록을 복제하지 않는다.
 
-기본 MCP catalog는 고정된 compact profile이다. `baley_command_catalog`로 허용된 HTTP command 이름과 실행 분류를 필요할 때 조회하고, `baley_command_preview`, `baley_command_execute`, `baley_command_execute_with_approval`로 동일한 typed command envelope를 전달한다. generic bridge는 임의 URL을 받지 않고 알려지지 않은 command 또는 잘못 분류된 실행을 HTTP 전송 전에 거부한다. capability, Workspace filter, revision, idempotency, warning, domain invariant와 browser approval grant 검증은 계속 HTTP command service의 단일 권한이다. client의 동적 MCP tool-list 갱신에는 의존하지 않는다. 기존 개별 typed tool 이름이 필요한 진단 또는 드문 관리 작업만 `/mcp/full`을 명시적으로 사용한다.
+기본 MCP catalog는 고정된 compact profile이다. `baley_command_catalog`로 허용된 HTTP command 이름과 실행 분류를 필요할 때 조회하고, `baley_command_preview`, `baley_command_execute`, 호환성 이름을 유지한 `baley_command_execute_with_approval`로 동일한 typed command envelope를 전달한다. 마지막 도구는 `task.confirm`에서 conversational evidence를, 다른 사람 전용 경계에서 browser grant를 전달한다. generic bridge는 임의 URL을 받지 않고 알려지지 않은 command 또는 잘못 분류된 실행을 HTTP 전송 전에 거부한다. capability, Workspace filter, revision, idempotency, warning, domain invariant, conversational evidence와 browser grant 검증은 계속 HTTP command service의 단일 권한이다. client의 동적 MCP tool-list 갱신에는 의존하지 않는다. 기존 개별 typed tool 이름이 필요한 진단 또는 드문 관리 작업만 `/mcp/full`을 명시적으로 사용한다.
 
 ### 5.1 Graph mutation
 
@@ -103,7 +103,7 @@ Inspector에서 alias와 내부 gateId를 함께 보여준다.
 
 새 Task는 `task.create`의 `predecessorTaskIds`와 `successorTaskIds`로 초기 관계까지 같은 transaction에서 만든다. 두 집합 사이에 기존 direct edge가 있으면 새 Task가 그 route에 삽입된 것으로 해석하여 기존 edge를 제거하고 새 두 edge로 원자적으로 대체한다. Task를 먼저 만들고 나중에 연결하다 실패하는 부분 성공을 피한다.
 
-후행 Task와 Gate 조건이 없는 경로는 `task.set_terminal`의 사유가 없으면 `dangling_path` warning이다. Operator는 후행 연결, Gate 합류 또는 intentional leaf 중 하나를 선택한다.
+후행 Task와 Gate 조건이 없는 경로는 정상 DAG leaf다. `task.set_terminal` 사유는 선택적 설명 metadata이고, reason과 후행 dependency 또는 Gate 조건을 동시에 두는 `terminal_path_conflict`는 유지한다.
 
 Lane Backlog는 Task와 분리된 Phase 미정 planning intake다. `backlog.create`,
 `update`, `move`, `reorder`, `discard`는 active item을 lane 범위에서 운용한다.
@@ -125,9 +125,9 @@ Gate 조건 또는 Gate entry Task를 자동 변경하지 않는다.
 - Gate entry binding은 `toPhase` Task만 explicit attach/detach하며 Gate readiness나 dependency를 바꾸지 않는다.
 - explicit entry가 없으면 `toPhase`의 same-Phase incoming dependency가 없는 DAG root를 public ID 순으로 read-only 투영한다.
 
-Query는 action, target, expected Workspace revision과 condition snapshot hash를 반환한다. `task.confirm`은 implemented Task의 Inspector에서 사람이 구현 결과와 evidence를 읽고 `Confirm task` 버튼을 명시적으로 누르는 전용 흐름을 기본으로 한다. 버튼은 내부적으로 exact command의 fresh preview를 만들고 warning과 잔여 위험을 보여준 뒤, 같은 CSRF-protected browser session으로 command-specific single-use grant를 발급해 즉시 실행한다. 사용자는 일반 Task 확인을 위해 command JSON을 작성하지 않는다. 범용 Human approval panel의 JSON 입력은 다른 사람 전용 명령을 위한 고급 진단 fallback으로만 유지한다. 서버는 Agent bearer에서 승인 Actor를 파생하지 않는다. 하나의 grant는 하나의 command만 승인하므로 grouped `task.confirm` 실행은 지원하지 않는다.
+Query는 action, target, expected Workspace revision과 condition snapshot hash를 반환한다. `task.confirm`은 PM이 대화에서 `confirm #178` 또는 `complete all awaiting confirmation`처럼 명시한 결정을 Agent가 fresh preview 뒤 MCP로 실행하는 흐름이 기본이다. exact Task scope는 한 target을, all-awaiting scope는 당시 eligible Task 집합을 의도하지만 서버 mutation은 항상 Task별이다. 각 command는 현재 revision과 새 decision ID를 사용한다. Viewer Task Inspector는 결과와 evidence를 읽는 surface이며 TaskConfirmation mutation UI를 제공하지 않는다.
 
-Task 완료 확인은 Task별 Viewer approval로 수행한다. 여러 Task가 `implemented`여도 각각 fresh preview와 별도 browser grant가 필요하며, 앞 command의 revision 변화 뒤에는 다음 Task를 다시 preview해야 한다. `dangling_path` 같은 topology warning은 구현 품질 실패나 terminal 승인으로 표현하지 않으며, 사람이 exact warning을 확인하고 grant를 발급해야 한다.
+여러 Task를 명시적으로 모두 확인하라는 결정도 원자 batch가 아니다. 각 implemented Task를 fresh-read/fresh-preview하고, 동일한 conversation reference와 statement를 보존하되 target별 새 evidence ID로 순차 실행한다. 앞 command의 revision 변화 뒤에는 다음 Task를 다시 preview한다.
 
 주 Task 구현이 다른 Task에도 영향을 주면 LLM이 관련 열린 Task를 분류한다. 이미 `implemented`여도 assessment와 commit·test/build·독립 리뷰 증거가 acceptance를 실제로 충족하는지 다시 확인한 뒤 공동 확인 대상에 넣는다. 부족하면 Agent가 `task.rework`로 되돌린다. 같은 증거가 `pending` 또는 `in_progress` Task의 범위를 완전히 충족하면 공유 증거 assessment를 남기고 정상 workflow로 먼저 `implemented` 보고한 뒤 공동 확인한다. 실제 구현이 아니라 필요성이 사라진 Task는 완료가 아니라 `task.discard`로 제안하고, 대체된 경우 사유에 `superseded by #<id>`를 기록한다. 부분 충족 또는 불확실한 Task는 열린 상태를 유지하며, 이미 confirmed/discarded인 terminal Task에 새 일이 생기면 follow-up Task를 생성한다. 사람 승인은 이 분류나 상태 머신을 우회하지 않는다.
 

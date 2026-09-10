@@ -148,12 +148,6 @@ func (g *WorkspaceGraph) hasOutgoing(id string) bool {
 	return false
 }
 
-func (g *WorkspaceGraph) isDangling(id string) bool {
-	task := g.Tasks[id]
-	_, gate := g.GateConditionTaskIDs[id]
-	return !g.hasOutgoing(id) && !gate && task.TerminalReason == ""
-}
-
 func dependencyKey(d Dependency) DependencyKey {
 	return DependencyKey{FromTaskID: d.FromTaskID, ToTaskID: d.ToTaskID}
 }

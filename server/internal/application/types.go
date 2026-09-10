@@ -18,20 +18,34 @@ type CommandRequest struct {
 }
 
 type CommandPrincipal struct {
-	AccountID, CredentialID, WorkspaceID, SessionID string
-	Subject                                         authz.Subject
+	AccountID, CredentialID, WorkspaceID, SessionID            string
+	LinkedAccountID, LinkedHumanActorID, GatewayRegistrationID string
+	Subject                                                    authz.Subject
 }
 
 type CommandEnvelope struct {
-	IdempotencyKey            string                    `json:"idempotencyKey"`
-	ExpectedWorkspaceRevision int64                     `json:"expectedWorkspaceRevision,omitempty"`
-	InitiatedByActorID        string                    `json:"initiatedByActorId,omitempty"`
-	ExecutedByActorID         string                    `json:"executedByActorId"`
-	AcknowledgedWarningCodes  []string                  `json:"acknowledgedWarningCodes,omitempty"`
-	ProceedReason             string                    `json:"proceedReason,omitempty"`
-	HumanApprovalAttestation  *HumanApprovalAttestation `json:"humanApprovalAttestation,omitempty"`
-	ApprovalGrantID           string                    `json:"approvalGrantId,omitempty"`
-	AttemptID                 string                    `json:"-"`
+	IdempotencyKey            string                          `json:"idempotencyKey"`
+	ExpectedWorkspaceRevision int64                           `json:"expectedWorkspaceRevision,omitempty"`
+	InitiatedByActorID        string                          `json:"initiatedByActorId,omitempty"`
+	ExecutedByActorID         string                          `json:"executedByActorId"`
+	AcknowledgedWarningCodes  []string                        `json:"acknowledgedWarningCodes,omitempty"`
+	ProceedReason             string                          `json:"proceedReason,omitempty"`
+	HumanApprovalAttestation  *HumanApprovalAttestation       `json:"humanApprovalAttestation,omitempty"`
+	ApprovalGrantID           string                          `json:"approvalGrantId,omitempty"`
+	DecisionEvidence          *ConversationalDecisionEvidence `json:"decisionEvidence,omitempty"`
+	AttemptID                 string                          `json:"-"`
+}
+
+type ConversationalDecisionEvidence struct {
+	DecisionID        string `json:"decisionId"`
+	Source            string `json:"source"`
+	ConversationRef   string `json:"conversationRef"`
+	Statement         string `json:"statement"`
+	Scope             string `json:"scope"`
+	Action            string `json:"action"`
+	TaskID            int    `json:"taskId"`
+	WorkspaceRevision int64  `json:"workspaceRevision"`
+	CommandHash       string `json:"commandHash"`
 }
 
 type HumanApprovalAttestation struct {

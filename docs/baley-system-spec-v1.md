@@ -137,7 +137,7 @@ V1에는 회원가입, 로그인 UI와 다중 사용자 인증을 구현하지 �
 - 외부 서버는 Tailscale, VPN, reverse proxy 인증 또는 동등한 배포 계층으로 보호한다.
 - 인증 token과 secret은 repository의 `baley.yaml`에 저장하지 않는다.
 
-제품 인증과 Workspace membership enforcement를 적용한다. 로컬 MCP Gateway는 로그인한 Account에 연결되며 Workspace별 연결 결정이나 추가 절차를 만들지 않는다. 최초 기기 연결은 loopback 시작 URL과 명시적 `Connect local Gateway` 클릭을 사용하며, 서버는 2분 browser code와 해당 PC에만 남은 pending connection secret을 한 transaction에서 검증한 뒤 membership을 다시 확인한다. Agent token scope는 해당 Account의 Workspace 역할과 Agent-safe capability의 교집합으로 계산하고, 사람 전용 capability는 절대 포함하지 않는다. 사람 전용 command는 로그인한 브라우저 세션이 fresh preview에 결속된 단기·단발성 grant를 발급·소비해야 하며, Agent token이나 MCP body가 승인 Actor를 만들 수 없다. 서버는 실행 시 grant의 session, Workspace, command hash, target, snapshot, revision과 issuing human의 현재 membership·capability를 다시 검사한다.
+제품 인증과 Workspace membership enforcement를 적용한다. 로컬 MCP Gateway는 로그인한 Account에 연결되며 Workspace별 연결 결정이나 추가 절차를 만들지 않는다. 최초 기기 연결은 loopback 시작 URL과 명시적 `Connect local Gateway` 클릭을 사용하며, 서버는 2분 browser code와 해당 PC에만 남은 pending connection secret을 한 transaction에서 검증한 뒤 membership을 다시 확인한다. Agent token scope는 해당 Account의 Workspace 역할과 Agent-safe capability의 교집합으로 계산하고, 사람 전용 capability는 절대 포함하지 않는다. ordinary `task.confirm`은 현재 대화의 명시적 결정을 typed evidence로 전달하고 서버가 gateway에 링크된 human Actor와 현재 capability를 파생·검증한다. MCP body는 승인 Actor를 지정할 수 없다. 다른 사람 전용 경계와 호환 경로에는 fresh browser-session grant를 유지한다.
 
 ## 5. 프로젝트 통합
 
@@ -494,9 +494,9 @@ Task → intentional leaf
 
 여러 branch가 본류로 합류할 때는 여러 predecessor를 가진 merge Task를 만든다. Gate에 합류하는 경로는 마지막 Task를 Gate 조건으로 attach한다.
 
-후행 Task와 Gate 연결이 모두 없는 Task는 기본적으로 `dangling_path`다. 독립적이고 지엽적인 결과로 끝나는 것이 의도라면 `task.set_terminal { taskId, reason }`으로 `terminal_reason`을 남긴다. `terminal_reason`이 있는 Task에는 후행 dependency나 Gate 조건을 연결할 수 없으며, 새 경로를 연결할 때는 같은 `dependency.patch`의 terminal update로 사유를 지운다.
+후행 Task와 Gate 연결이 모두 없는 Task는 정상 DAG leaf다. `task.set_terminal { taskId, reason }`의 `terminal_reason`은 선택적 설명 metadata다. `terminal_reason`이 있는 Task에는 후행 dependency나 Gate 조건을 연결할 수 없으며, 새 경로를 연결할 때는 같은 `dependency.patch`의 terminal update로 사유를 지운다.
 
-`dangling_path`는 graph를 무효로 만들지 않는다. Task를 아직 계획 중일 수 있으므로 생성 시에는 경고하지 않고 `task.report_implemented`, `task.confirm`, `lane.brief`와 `gate.status`에서 warning으로 반환한다. 사람 또는 Operator는 후행 Task 연결, Gate attach, intentional leaf 선언 중 하나로 해소하거나 warning을 acknowledge할 수 있다.
+leaf 자체는 diagnostic을 만들지 않고 terminal reason을 요구하지 않는다. cycle, relationship, Gate, revision, idempotency와 `terminal_path_conflict` 검증은 그대로 유지한다.
 
 ### 9.4 Atomic dependency patch
 
@@ -514,7 +514,7 @@ dependency.patch {
 - 서버는 terminal update, remove와 add를 적용한 최종 Workspace graph에서 self-link, duplicate, cross-Workspace 연결, cycle과 terminal exclusivity를 검증한다.
 - 최종 graph가 invalid이면 전체 patch를 rollback한다.
 - `dependency.connect/disconnect`와 `task.set_terminal/clear_terminal`은 한 변경짜리 patch의 convenience command다.
-- preview는 제거·추가 edge, 새 root/leaf, `dangling_path` 변화를 함께 보여준다.
+- preview는 제거·추가 edge와 새 root/leaf를 함께 보여준다.
 
 미해소 predecessor가 있으면 코드를 바꿀 수 있는 `run.start(kind=implementation | review_response)`은 hard error다. 상세계획, 독립 Agent 리뷰와 완료보고 Run은 시작할 수 있다. dependency를 무시하려면 관계를 명시적으로 끊어야 하며 V1에는 숨은 override를 두지 않는다.
 
@@ -898,12 +898,12 @@ executed_command_id UNIQUE
 
 - 승인 진술은 action, 대상 entity, canonical command payload hash와 Workspace revision에 결속된다. Gate 통과처럼 조건 snapshot이 있는 action은 snapshot hash에도 결속된다.
 - `task_confirm/task_discard`는 Task ID, `lane_close_out/lane_discard`는 Lane ID, `gate_attach_task/gate_pass`는 Gate ID, `gate_pass_task/gate_revoke_task_pass`는 `gate_tasks.id`, `workspace_close`는 Workspace ID를 대상으로 사용한다.
-- 승인 대상 command는 공통 mutation envelope에 `approvalGrantId`를 포함한다.
-- approval grant는 로그인한 human browser session만 fresh preview에 대해 발급할 수 있다. Agent bearer와 Agent credential creator는 승인 Actor를 설정하거나 파생하지 못한다.
+- ordinary `task.confirm`은 공통 mutation envelope에 `decisionEvidence`를 포함한다. required field는 unique decision ID, source=`conversation`, conversation reference, verbatim statement, scope, action, Task public ID, Workspace revision, canonical command hash다.
+- 서버는 authenticated MCP gateway registration에서 linked Account와 human Actor를 파생하고 실행 transaction에서 Account 상태, membership과 `task:approve` capability를 다시 확인한다. caller는 approver Actor ID를 제공하지 않는다.
 - grant는 Workspace/account/actor/session/action/entity/revision/command hash/decision snapshot/warnings/proceed reason/expiry에 결속된 5분 single-use reference이며 CSRF, membership, capability와 Owner-only close 검사를 거친다.
 - 서버는 mutation transaction 안에서 grant 소비, command별 attestation audit와 실행 command를 1:1로 기록한다. session 또는 membership 철회는 미사용 grant를 revoke한다.
 - 같은 idempotency key와 request fingerprint의 재시도는 같은 결과를 반환할 수 있지만, grant를 다른 command·action·entity·revision에 재사용할 수 없다.
-- grant 하나는 command 하나만 승인하며 grouped confirmation은 지원하지 않는다. 다음 command는 revision 변화 뒤 다시 preview하고 별도 grant를 발급한다.
+- decision evidence 하나는 exact Task command 하나에만 소비된다. `all_awaiting_confirmation` scope도 batch mutation이 아니며 다음 Task는 revision 변화 뒤 다시 preview하고 새 target-bound decision ID를 사용한다.
 - grant ID는 secret이 아니고 Viewer는 plaintext secret, custom header, 환경 변수나 copy/paste token을 만들거나 노출하지 않는다.
 - enforced transport는 legacy `humanApprovalAttestation`, `approvedByActorId`, statement/conversation body authority를 거부한다.
 
@@ -924,13 +924,13 @@ Gate ready
 
 `task.get`, `gate.status`, `workspace.get`과 `decision.list`는 대상 action, 대상 ID, expected Workspace revision, 관련 criteria/condition snapshot hash와 warning을 반환한다. Viewer는 각각 “완료확인 대기”, “Gate 통과 승인 대기”, “Workspace 종료 가능”으로 표시한다.
 
-Operator는 사람 전용 action에 도달하면 실행을 멈추고 Viewer의 해당 결정 surface로 안내한다. `task.confirm`의 기본 surface는 implemented Task Inspector의 `Confirm task` 버튼이다. 로그인한 사람은 구현 결과와 evidence를 읽고 버튼으로 fresh preview를 만든 뒤 warning과 잔여 위험을 확인하고, 최종 명시적 클릭으로 같은 browser session에서 grant를 발급해 실행한다. 일반 Task 확인에서 command JSON 입력을 요구하지 않으며 범용 Human approval panel은 고급 진단 fallback으로만 남긴다. Task마다 별도 grant가 필요하고 Agent 대화의 긍정 응답 자체는 서버 authority가 아니다.
+Operator는 사람 전용 action을 추론하지 않는다. 사람이 현재 대화에서 exact Task 확인 또는 모든 awaiting confirmation을 명시하면 Agent는 outcome/evidence를 확인하고 fresh preview 뒤 typed conversational evidence로 `task.confirm`을 MCP 실행한다. Viewer Task Inspector는 read-first inspection만 제공하고 TaskConfirmation mutation UI를 갖지 않는다. 모호한 긍정, 침묵, implemented 상태 자체는 authority가 아니다.
 
-여러 Task를 한 번에 확인하는 공동 승인은 지원하지 않는다. 각 `task.confirm`은 현재 revision에서 Viewer가 fresh preview하고 별도 single-use grant를 발급해야 한다. 앞 command가 revision을 바꾸면 다음 command는 다시 preview한다.
+명시적 `all_awaiting_confirmation` 결정은 여러 eligible Task를 순차 처리할 수 있지만 atomic batch mutation은 아니다. 각 `task.confirm`은 MCP에서 현재 revision을 fresh preview하고 exact target과 command hash에 결속된 새 single-use decision ID를 사용한다. 앞 command가 revision을 바꾸면 다음 command는 다시 preview한다.
 
-서버는 각 command의 현재 revision, canonical hash, target, warning acknowledgement, issuing browser session과 command별 grant를 강제하고 성공 transaction에서 grant를 소비한다. V1 서버는 batch mutation이나 persisted ApprovalRequest를 제공하지 않는다.
+서버는 각 command의 현재 revision, canonical hash, target, warning acknowledgement, linked-account provenance, idempotency와 command별 decision ID를 강제하고 성공 transaction에서 evidence를 소비한다. initiating human과 executing Agent는 분리 기록한다. V1 서버는 batch mutation이나 persisted ApprovalRequest를 제공하지 않는다.
 
-`dangling_path` 같은 topology warning은 구현 품질 실패가 아니며 Task 확인을 위해 terminal reason을 만들라는 뜻도 아니다. 승인된 확인 command가 정확한 warning acknowledgement를 요구하면 Operator가 이를 audit evidence로 전달하되, warning이 사람의 판단을 실제로 바꿀 때만 사람용 요약에 노출한다.
+정상 leaf는 topology warning이 아니며 Task 확인을 위해 terminal reason을 만들지 않는다.
 
 사람 전용 mutation을 승인 없이 preview하면 서버는 `human_approval_required`와 canonical command hash를 반환한다. 이는 pending row를 만들지 않는 일회성 decision preview다. active Gate 조건 attach처럼 파생 상태가 아닌 제안도 같은 방식으로 승인받는다.
 
@@ -983,6 +983,7 @@ executedByActorId
 acknowledgedWarningCodes []
 proceedReason nullable
 approvalGrantId nullable
+decisionEvidence nullable; ordinary task.confirm에서 required
 ```
 
 Warning acknowledgement와 진행 사유는 개별 command payload가 아니라 공통 envelope에 둔다. 각 command는 자신이 평가한 warning code만 수락하며 Event payload에 평가 결과를 기록한다.
@@ -1043,7 +1044,7 @@ Warning 예시:
 - 상세계획 Record 없음
 - 독립 Agent 리뷰 Record 없음
 - 완료보고 Record 없음
-- 후행 Task, Gate 연결과 terminal reason이 모두 없는 `dangling_path`
+- 후행 Task와 Gate 연결이 없는 정상 leaf
 - 뒤 Phase Task가 앞 Phase Task를 막는 `phase_order_inversion`
 - Branch observation이 오래됨
 - 등록 Record의 현재 hash가 달라짐
@@ -1150,7 +1151,7 @@ Viewer는 상태를 읽고 탐색한다.
 - Multi-lane, Lane Focus, Gate Focus
 - Phase/Lane/Task/Gate 관계
 - Task의 숫자 ID와 상태
-- Task 경로의 후행 Task, Gate 합류, intentional leaf 또는 `dangling_path`
+- Task 경로의 후행 Task, Gate 합류 또는 정상 leaf와 선택적 terminal reason
 - Run 이력과 자동 갱신 상태
 - Task Record 종류, 요약, repository 상대 경로
 - 연결 commit과 remote link
@@ -1317,7 +1318,7 @@ cross-table 상태 전이, cycle, Phase 순서와 Gate readiness는 Go command s
 - 구현완료 assessment 누락은 hard error
 - Task confirm/discard의 사람 승인 진술 대상·command hash·revision·executed command 1:1 결속
 - intentional leaf의 terminal reason 기록과 해제
-- `dangling_path`가 생성은 막지 않고 구현완료·완료확인·brief에서 warning
+- 정상 leaf가 구현완료·완료확인·brief에서 warning을 만들지 않음
 - terminal Task에 outgoing dependency 또는 Gate condition 연결 거부
 
 ### Dependency

@@ -74,18 +74,20 @@ type Store interface {
 }
 
 type Principal struct {
-	AccountID    string
-	ActorID      string
-	DisplayName  string
-	Subject      authz.Subject
-	SessionID    string
-	CredentialID string
-	WorkspaceID  string
+	AccountID                                                  string
+	ActorID                                                    string
+	DisplayName                                                string
+	Subject                                                    authz.Subject
+	SessionID                                                  string
+	CredentialID                                               string
+	WorkspaceID                                                string
+	LinkedAccountID, LinkedHumanActorID, GatewayRegistrationID string
 }
 
 type AgentTokenRecord struct {
-	TokenID, ActorID, WorkspaceID string
-	Scopes                        []authz.Capability
+	TokenID, ActorID, WorkspaceID                              string
+	LinkedAccountID, LinkedHumanActorID, GatewayRegistrationID string
+	Scopes                                                     []authz.Capability
 }
 
 type LoginResult struct {
@@ -259,6 +261,7 @@ func (s *Service) AuthenticateBearer(ctx context.Context, token string) (Princip
 		return Principal{}, ErrSessionInvalid
 	}
 	return Principal{ActorID: record.ActorID, CredentialID: record.TokenID, WorkspaceID: record.WorkspaceID,
+		LinkedAccountID: record.LinkedAccountID, LinkedHumanActorID: record.LinkedHumanActorID, GatewayRegistrationID: record.GatewayRegistrationID,
 		Subject: authz.Subject{ActorID: record.ActorID, Kind: authz.ActorAgent, Credential: authz.AgentToken, Scopes: record.Scopes}}, nil
 }
 

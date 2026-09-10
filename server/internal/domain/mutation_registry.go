@@ -420,7 +420,7 @@ func planTaskImplementedMutation(context MutationContext) DomainMutationPlan {
 	if !exists || graphTask.WorkspaceID != context.Workspace.ID {
 		return invalidMutationPlan("task.report_implemented", context.Task.ID, CodeInvalidStateTransition)
 	}
-	result := PlanTaskReportImplemented(context.Task, context.Assessment, context.Records, context.Graph.isDangling(context.Task.ID), context.Workspace.Revision+1, context.Acknowledgement)
+	result := PlanTaskReportImplemented(context.Task, context.Assessment, context.Records, false, context.Workspace.Revision+1, context.Acknowledgement)
 	plan := newDomainPlan("task.report_implemented", false)
 	plan.ProjectedDiff, plan.Evaluation = map[string]any{"task": result.Task, "decision": result.Decision}, result.Evaluation
 	if result.Event.Type != "" {

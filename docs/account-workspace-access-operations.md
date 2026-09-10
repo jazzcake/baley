@@ -142,18 +142,20 @@ storage, Git, or logs. Use the loopback Gateway installer and redacted
 2. The Agent presents an outcome-first decision brief in chat. Transport fields such
    as revision, command hash, and capability remain internal unless a mismatch needs
    explanation.
-3. The signed-in human opens the Task Inspector (or the equivalent dedicated
-   Viewer action), reviews a fresh preview, and explicitly confirms that exact
-   command.
-4. The browser issues and consumes a short-lived, single-use grant bound to the
-   human session, Workspace, command hash, target, snapshot, warnings, and
-   revision. The MCP Agent never creates this grant or derives a human Actor.
-5. The server rechecks the issuing human's active membership and capability at
-   execution time.
+3. For ordinary `task.confirm`, the human states the exact Task or all-awaiting
+   decision explicitly in the current conversation. The Agent creates a fresh MCP
+   preview and transmits typed, target-bound decision evidence without a Viewer click.
+4. The server derives the human Actor from the authenticated Gateway's linked
+   Account, rechecks current membership and `task:approve`, records the Agent as
+   executor, and consumes the unique evidence transactionally. It never accepts a
+   caller-supplied approver Actor ID.
+5. Other human-only boundaries continue to use a short-lived browser-session grant
+   where their command contract explicitly requires one.
 
 No command JSON paste or copied token is needed for ordinary Task confirmation.
-Stale revisions, changed hashes or snapshots, revoked roles, cross-Workspace
-credentials, expired/reused grants, and Actor mismatches are rejected.
+Missing, vague, negated, stale, replayed, cross-target or cross-revision evidence,
+revoked roles, cross-Workspace credentials, expired/reused grants, and Actor
+mismatches are rejected.
 
 ## 7. Recovery and rollback
 
