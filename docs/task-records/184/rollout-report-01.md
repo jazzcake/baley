@@ -3,7 +3,7 @@ baley_record: 1
 record_id: "e6cb529d-c74e-4163-905d-461dcb1d1a1a"
 task_id: 184
 record_type: rollout-report
-run_id: "97491670-5d41-40b5-8b6e30e4355c"
+run_id: "97491670-5d41-40b5-bbda-50224f78d151"
 created_at: "2026-09-10T11:10:00+09:00"
 created_by: "codex-worker-term_76c61e49"
 supersedes: null
@@ -16,7 +16,7 @@ status: completed
 
 Task Journal was deployed forward from schema 25 to schema 27 on the existing local Baley PostgreSQL/API/Viewer/MCP stack. API, Viewer, and MCP application artifacts were built from reviewed deploy commit `04977a7cf7679c8b57462b99aac84c3d9ef6ffec`; the operating branch then received rollout-only helper, installer, and report commits.
 
-The initial rollout Run `2e80d5d1-4c16-48c6-9b69-f9863735dd16` was interrupted after Orca terminal loss with zero rollout changes. Continuation Run `97491670-5d41-40b5-8b6e30e4355c` performed this deployment. The stale planning placeholder `79d027c7-f92f-46c2-8495-8e67a1910aba` was not present in the live database and is not claimed as an actual Run.
+The initial rollout Run `2e80d5d1-4c16-48c6-9b69-f9863735dd16` was interrupted after Orca terminal loss with zero rollout changes. Continuation Run `97491670-5d41-40b5-bbda-50224f78d151` performed this deployment. The stale planning placeholder `79d027c7-f92f-46c2-8495-8e67a1910aba` was not present in the live database and is not claimed as an actual Run.
 
 ## Source and artifact pinning
 
