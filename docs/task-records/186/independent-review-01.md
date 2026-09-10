@@ -1,12 +1,13 @@
 ---
 baley_record: 1
-record_id: "d83c91a5-e132-42c3-b47d-8565fd1819de"
+record_id: "af2f5d88-67fc-49cc-89dc-6bd340eb2e2d"
 task_id: 186
 record_type: independent-review
 run_id: "8e932014-ae7d-4a1a-ae7c-c02011eceef5"
 reviewed_commit: "4230d497eeb660194be18722e9288c4139be36ea"
 created_at: "2026-09-10T15:45:01+09:00"
 created_by: "codex"
+supersedes: "d83c91a5-e132-42c3-b47d-8565fd1819de"
 verdict: PASS
 ---
 

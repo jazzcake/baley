@@ -1,12 +1,12 @@
 ---
 baley_record: 1
-record_id: "0a70b0b1-4988-4b3f-9fc9-7348cb3a81fa"
+record_id: "ac781e3d-47db-4928-925a-1b3b437b26b7"
 task_id: 186
 record_type: completion-report
 run_id: "8e932014-ae7d-4a1a-ae7c-c02011eceef5"
 created_at: "2026-09-10T14:38:06+09:00"
 created_by: "codex"
-supersedes: null
+supersedes: "0a70b0b1-4988-4b3f-9fc9-7348cb3a81fa"
 status: ready_for_registration
 ---
 

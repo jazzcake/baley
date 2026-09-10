@@ -1,12 +1,12 @@
 ---
 baley_record: 1
-record_id: "644e3728-d3e7-4930-9f57-857323c2eeb2"
+record_id: "1ed75684-d8a1-4b37-a1c9-8ccabb62d32c"
 task_id: 186
 record_type: completion-report
 run_id: "687582d6-6f76-46e4-89c7-a0a485136a7c"
 created_at: "2026-09-10T17:15:00+09:00"
 created_by: "codex-worker-term_22739825"
-supersedes: null
+supersedes: "644e3728-d3e7-4930-9f57-857323c2eeb2"
 status: completed
 ---
 
@@ -58,6 +58,10 @@ Tasks #184-#186 are integrated on pushed commit `e64c2fbe38561ce68755f162e3e3735
 - `npm test -- --run --reporter=dot`: 16 files and 100 tests passed.
 - `npm run build`: passed with 2,111 modules; the existing large-chunk warning remains.
 - The earlier fresh PostgreSQL 17.5 full suite remains bound to this commit: 15 packages and 663 test/subtest events passed, with only the intentional external `BALEY_MCP_E2E` skip.
+
+## Record attachment correction
+
+The first attachment attempt incorrectly expanded abbreviated commit `c7d517c` to nonexistent SHA `c7d517ce9408ab27e0b55b4f284786b2500b80d5`. Baley correctly rejected later replacement on the immutable rows with `record_hash_conflict`. This record and the other three #186 records therefore use new UUIDs that explicitly supersede those rows; the correction commit and each exact Git blob are attached from direct `git rev-parse` output. No database row was edited or deleted.
 
 ## Residual boundary
 
