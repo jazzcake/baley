@@ -819,6 +819,27 @@ verification_state: reported | remote_verified
 created_at
 ```
 
+#### 13.3.1 Provider-authoritative remote verification
+
+`commit.verify_remote(workspaceId, commitId, remoteRef)` is the only supported
+transition from `reported` to `remote_verified`. `remoteRef` must be a full
+`refs/heads/*` name. The server fetches that ref from the `remote_url` stored on
+the referenced Repository with interactive credentials disabled; caller-supplied
+claims about remote presence, ref tips, blobs, or content hashes are not accepted.
+
+The fetched ref must contain the exact CommitReference commit. For every
+`committed_unverified` TaskRecord with the same Repository and commit, the server
+resolves `commit:path`, compares the provider-fetched blob ID with `blob_sha`,
+hashes the fetched blob bytes with SHA-256, and compares that digest with
+`working_tree_hash`. Only after all checks pass does one transaction mark the
+CommitReference `remote_verified`, mark every matching TaskRecord `verified`,
+append one `commit.remote_verified` Event and one `record.remote_verified` Event
+per record, and advance the Workspace revision. Any unavailable remote, invalid
+ref, unreachable commit, missing path, non-blob object, hash mismatch, mixed
+state, concurrent state change, or verifier timeout fails closed without a state
+transition. Command idempotency and actor/capability provenance use the normal
+command service boundary.
+
 ### 13.4 RunGitObservation
 
 진행 중 복귀를 돕는 선택적 관찰 metadata다.

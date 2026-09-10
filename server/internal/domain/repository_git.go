@@ -73,6 +73,38 @@ func (c CommitReference) MarkRemoteVerified() CommitReference {
 	return c
 }
 
+type RemoteRecordVerification struct {
+	RecordID, RelativePath, BlobSHA, ContentHash string
+}
+
+func ApplyRemoteVerification(commit CommitReference, records []TaskRecord, repositoryID, remoteRef, refTipSHA, commitSHA string, evidence []RemoteRecordVerification) (CommitReference, []TaskRecord, error) {
+	if commit.VerificationState != CommitReported || commit.RepositoryID != repositoryID || commit.CommitSHA != strings.ToLower(strings.TrimSpace(commitSHA)) ||
+		strings.TrimSpace(remoteRef) == "" || !validGitObjectID(strings.ToLower(strings.TrimSpace(refTipSHA))) || len(records) != len(evidence) {
+		return commit, nil, &Violation{Code: CodeCommitRemoteUnverified}
+	}
+	byID := make(map[string]RemoteRecordVerification, len(evidence))
+	for _, item := range evidence {
+		if item.RecordID == "" || byID[item.RecordID].RecordID != "" {
+			return commit, nil, &Violation{Code: CodeCommitRemoteUnverified}
+		}
+		byID[item.RecordID] = item
+	}
+	verified := make([]TaskRecord, 0, len(records))
+	for _, record := range records {
+		item, ok := byID[record.ID]
+		if !ok || record.RepositoryID != repositoryID || record.CommitSHA != commit.CommitSHA || record.RelativePath != item.RelativePath ||
+			record.BlobSHA != strings.ToLower(strings.TrimSpace(item.BlobSHA)) || record.WorkingTreeHash == "" || record.WorkingTreeHash != strings.ToLower(strings.TrimSpace(item.ContentHash)) {
+			return commit, nil, &Violation{Code: CodeCommitRemoteUnverified}
+		}
+		next, err := record.MarkVerified()
+		if err != nil {
+			return commit, nil, &Violation{Code: CodeCommitRemoteUnverified}
+		}
+		verified = append(verified, next)
+	}
+	return commit.MarkRemoteVerified(), verified, nil
+}
+
 type RunGitObservation struct {
 	ID, WorkspaceID, RunID, RepositoryID     string
 	ObservedAt                               time.Time

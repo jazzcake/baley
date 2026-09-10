@@ -395,6 +395,13 @@ func validMutationContext(t *testing.T, command string) MutationContext {
 		context.CommitSHA, context.BlobSHA = repeatHex("a", 40), repeatHex("b", 40)
 	case "commit.attach":
 		context.Commit = CommitReference{ID: "commit", WorkspaceID: workspace.ID, TaskID: task.ID, RepositoryID: "repository", CommitSHA: repeatHex("a", 40), Relation: CommitProduced}
+	case "commit.verify_remote":
+		contentHash := "sha256:" + repeatHex("c", 64)
+		context.Repository = Repository{ID: "repository", WorkspaceID: workspace.ID, Name: "repository", RemoteURL: "https://example.com/repository.git", DefaultBranch: "main"}
+		context.Commit = CommitReference{ID: "commit", WorkspaceID: workspace.ID, TaskID: task.ID, RepositoryID: "repository", CommitSHA: repeatHex("a", 40), Relation: CommitProduced, VerificationState: CommitReported}
+		context.Records = []TaskRecord{{ID: "record", WorkspaceID: workspace.ID, TaskID: task.ID, RepositoryID: "repository", RelativePath: "task-records/1/report.md", WorkingTreeHash: contentHash, CommitSHA: repeatHex("a", 40), BlobSHA: repeatHex("b", 40), State: RecordCommittedUnverified}}
+		context.RemoteRef, context.RefTipSHA = "refs/heads/main", repeatHex("d", 40)
+		context.RemoteRecords = []RemoteRecordVerification{{RecordID: "record", RelativePath: "task-records/1/report.md", BlobSHA: repeatHex("b", 40), ContentHash: contentHash}}
 	case "git.observe":
 		context.GitObservation = RunGitObservation{ID: "observation", WorkspaceID: workspace.ID, RunID: "run", RepositoryID: "repository", ObservedAt: now}
 	default:

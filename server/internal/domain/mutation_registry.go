@@ -48,6 +48,9 @@ type MutationContext struct {
 	ExistingRecords map[string]TaskRecord
 	TaskRecordsRoot string
 	Commit          CommitReference
+	RemoteRecords   []RemoteRecordVerification
+	RemoteRef       string
+	RefTipSHA       string
 	GitObservation  RunGitObservation
 
 	Run             Run
@@ -149,6 +152,7 @@ var MutationHandlers = map[string]MutationHandler{
 	"record.register":               planRecordRegistration,
 	"record.attach_commit":          planRecordCommitAttachment,
 	"commit.attach":                 planCommitAttachment,
+	"commit.verify_remote":          planCommitRemoteVerification,
 	"git.observe":                   planGitObservation,
 }
 
@@ -694,6 +698,35 @@ func planCommitAttachment(context MutationContext) DomainMutationPlan {
 	}
 	plan.ProjectedDiff = commit
 	plan.Events = []PlannedEvent{{Type: "commit.attached", EntityType: "commit_reference", EntityID: commit.ID, Payload: map[string]any{"commitId": commit.ID, "taskId": commit.TaskID, "repositoryId": commit.RepositoryID, "commitSha": commit.CommitSHA, "relation": commit.Relation}}}
+	return plan
+}
+
+func planCommitRemoteVerification(context MutationContext) DomainMutationPlan {
+	plan := newDomainPlan("commit.verify_remote", false)
+	if context.Workspace.State == WorkspaceClosed || context.Commit.WorkspaceID != context.Workspace.ID || context.Repository.ID != context.Commit.RepositoryID {
+		return invalidPlan(plan, context.Commit.ID, CodeCommitRemoteUnverified)
+	}
+	commit, records, err := ApplyRemoteVerification(context.Commit, context.Records, context.Repository.ID, context.RemoteRef, context.RefTipSHA, context.Commit.CommitSHA, context.RemoteRecords)
+	if err != nil {
+		return invalidPlan(plan, context.Commit.ID, CodeCommitRemoteUnverified)
+	}
+	recordIDs := make([]string, 0, len(records))
+	for _, record := range records {
+		recordIDs = append(recordIDs, record.ID)
+	}
+	plan.ProjectedDiff = map[string]any{"commit": commit, "records": records}
+	plan.Events = []PlannedEvent{{Type: "commit.remote_verified", EntityType: "commit_reference", EntityID: commit.ID, Payload: map[string]any{
+		"commitId": commit.ID, "repositoryId": context.Repository.ID, "remoteUrl": context.Repository.RemoteURL,
+		"remoteRef": context.RemoteRef, "refTipSha": context.RefTipSHA, "commitSha": commit.CommitSHA,
+		"verifiedAt": context.Now, "verifier": "provider-authoritative-test", "recordIds": recordIDs,
+	}}}
+	for _, item := range context.RemoteRecords {
+		plan.Events = append(plan.Events, PlannedEvent{Type: "record.remote_verified", EntityType: "task_record", EntityID: item.RecordID, Payload: map[string]any{
+			"recordId": item.RecordID, "commitId": commit.ID, "repositoryId": context.Repository.ID, "commitSha": commit.CommitSHA,
+			"relativePath": item.RelativePath, "blobSha": item.BlobSHA, "contentHash": item.ContentHash,
+			"remoteRef": context.RemoteRef, "refTipSha": context.RefTipSHA,
+		}})
+	}
 	return plan
 }
 

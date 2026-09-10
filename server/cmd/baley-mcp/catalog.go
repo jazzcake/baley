@@ -13,7 +13,7 @@ import (
 
 const (
 	mcpImplementationVersion = "0.2.0"
-	mcpToolCatalogVersion    = "1.3.0"
+	mcpToolCatalogVersion    = "1.4.0"
 	mcpCompactToolCount      = 15
 	mcpCompactSchemaBytes    = 5306
 	mcpFullToolCount         = 89
@@ -63,6 +63,7 @@ var commandDescriptors = []commandDescriptor{
 	{Name: "backlog.reorder"},
 	{Name: "backlog.update"},
 	{Name: "commit.attach"},
+	{Name: "commit.verify_remote"},
 	{Name: "dependency.connect"},
 	{Name: "dependency.disconnect"},
 	{Name: "dependency.patch"},

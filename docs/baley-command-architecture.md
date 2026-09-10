@@ -237,6 +237,25 @@ LLM이 로컬 파일을 작성한 후 등록한다.
 
 서버는 로컬 절대 경로를 받지 않는다. Git commit 후 같은 Record에 commit SHA와 blob SHA를 연결한다.
 
+Remote verification is a separate supported command:
+
+```json
+{
+  "name": "commit.verify_remote",
+  "arguments": {
+    "workspaceId": "uuid",
+    "commitId": "uuid",
+    "remoteRef": "refs/heads/feature/task-records"
+  }
+}
+```
+
+The generic compact command bridge carries this command without adding another
+MCP tool. The server ignores self-asserted remote facts: it fetches the supplied
+branch ref from the Repository's stored remote URL and verifies the commit,
+every matching `commit:path` blob, and each blob's SHA-256 content digest before
+atomically changing the commit and record states and writing immutable Events.
+
 ## 8. Hard error와 warning
 
 Hard error는 구조 무결성과 권한 위반이고 warning은 진행 전 확인할 업무상 위험이며 advisory는 비차단 참고 정보다. 정확한 code는 [`contracts/v1/diagnostics.json`](../contracts/v1/diagnostics.json)을 따른다. 잔여 위험은 warning이 아니라 advisory다. Warning과 advisory는 command를 막지 않으며 적용 command는 평가 결과와 acknowledgement를 Event에 기록한다.

@@ -13,7 +13,7 @@ ARG BALEY_BUILD_COMMIT=unknown
 ARG BALEY_SCHEMA_VERSION=28
 LABEL org.opencontainers.image.revision=$BALEY_BUILD_COMMIT \
       org.opencontainers.image.baley.schema-version=$BALEY_SCHEMA_VERSION
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates git openssh-client
 WORKDIR /app
 COPY --from=build /out/baley-server /app/baley-server
 COPY server/migrations /app/migrations

@@ -40,6 +40,23 @@ func TestCommitReferenceSupportsMultipleRepositoriesWithoutBranch(t *testing.T) 
 	assertViolation(t, err, CodeInvalidStateTransition)
 }
 
+func TestApplyRemoteVerificationFailsClosedAndMarksAllEvidence(t *testing.T) {
+	commitSHA, blobSHA := repeatHex("a", 40), repeatHex("b", 40)
+	contentHash := "sha256:" + repeatHex("c", 64)
+	commit := CommitReference{ID: "commit", WorkspaceID: "workspace", TaskID: "task", RepositoryID: "repository", CommitSHA: commitSHA, Relation: CommitProduced, VerificationState: CommitReported}
+	records := []TaskRecord{{ID: "record", WorkspaceID: "workspace", TaskID: "task", RepositoryID: "repository", RelativePath: "task-records/1/report.md", WorkingTreeHash: contentHash, CommitSHA: commitSHA, BlobSHA: blobSHA, State: RecordCommittedUnverified}}
+	evidence := []RemoteRecordVerification{{RecordID: "record", RelativePath: records[0].RelativePath, BlobSHA: blobSHA, ContentHash: contentHash}}
+	verifiedCommit, verifiedRecords, err := ApplyRemoteVerification(commit, records, "repository", "refs/heads/main", repeatHex("d", 40), commitSHA, evidence)
+	if err != nil || verifiedCommit.VerificationState != CommitRemoteVerified || len(verifiedRecords) != 1 || verifiedRecords[0].State != RecordVerified {
+		t.Fatalf("verification commit=%+v records=%+v err=%v", verifiedCommit, verifiedRecords, err)
+	}
+	evidence[0].ContentHash = "sha256:" + repeatHex("e", 64)
+	failedCommit, failedRecords, err := ApplyRemoteVerification(commit, records, "repository", "refs/heads/main", repeatHex("d", 40), commitSHA, evidence)
+	if err == nil || failedCommit.VerificationState != CommitReported || failedRecords != nil || records[0].State != RecordCommittedUnverified {
+		t.Fatalf("mismatch did not fail closed: commit=%+v records=%+v err=%v", failedCommit, failedRecords, err)
+	}
+}
+
 func TestRunGitObservationIsMetadataOnlyAndRejectsAbsoluteWorktreePath(t *testing.T) {
 	dirty := true
 	value, err := NewRunGitObservation(RunGitObservation{ID: "obs", WorkspaceID: "workspace", RunID: "run", RepositoryID: "repo", ObservedAt: time.Now(), HeadCommitSHA: repeatHex("a", 64), BranchHint: " feature/run ", WorktreeLabel: "wave-2", Dirty: &dirty})

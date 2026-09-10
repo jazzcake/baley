@@ -293,16 +293,17 @@ func auditCommandEventRelation(command, eventType string, activeGate bool) (bool
 }
 
 var secondaryAuditEvents = map[string][]string{
-	"backlog.promote":    {"task.created"},
-	"project.bootstrap":  {"workspace.created", "repository.registered"},
-	"workspace.activate": {"phase.activated"},
-	"workspace.close":    {"phase.completed"},
-	"gate.pass":          {"phase.completed", "phase.activated"},
-	"run.start":          {"task.started"},
+	"backlog.promote":      {"task.created"},
+	"project.bootstrap":    {"workspace.created", "repository.registered"},
+	"workspace.activate":   {"phase.activated"},
+	"workspace.close":      {"phase.completed"},
+	"gate.pass":            {"phase.completed", "phase.activated"},
+	"commit.verify_remote": {"record.remote_verified"},
+	"run.start":            {"task.started"},
 }
 
 func eventRequiresTaskScope(eventType string) bool {
-	return strings.HasPrefix(eventType, "task.") || strings.HasPrefix(eventType, "dependency.") || strings.HasPrefix(eventType, "run.") || strings.HasPrefix(eventType, "record.") || eventType == "commit.attached" || strings.HasPrefix(eventType, "gate.task_")
+	return strings.HasPrefix(eventType, "task.") || strings.HasPrefix(eventType, "dependency.") || strings.HasPrefix(eventType, "run.") || strings.HasPrefix(eventType, "record.") || strings.HasPrefix(eventType, "commit.") || strings.HasPrefix(eventType, "gate.task_")
 }
 
 func approvalEvidenceMatches(event AuditEvent) bool {
@@ -379,7 +380,9 @@ var auditEventImportance = map[string]bool{
 	"run.corrected":                       true,
 	"record.registered":                   false,
 	"record.commit_attached":              false,
+	"record.remote_verified":              true,
 	"commit.attached":                     false,
+	"commit.remote_verified":              true,
 	"git.observed":                        false,
 	"human_approval_attestation.recorded": false,
 }

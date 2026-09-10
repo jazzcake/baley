@@ -1376,6 +1376,28 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO commit_references(workspace_id,id,task_id,run_id,repository_id,commit_sha,relation,verification_state)
 			VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8)`, wid, commit.ID, commit.TaskID, commit.RunID, commit.RepositoryID, commit.CommitSHA, commit.Relation, commit.VerificationState)
+	case "commit.verify_remote":
+		if plan.IdempotentNoMutation {
+			break
+		}
+		commit := plan.CommitReference
+		if commit == nil || plan.RemoteVerification == nil {
+			return result, fmt.Errorf("commit.verify_remote plan is missing verified evidence")
+		}
+		var tag pgconn.CommandTag
+		tag, err = tx.Exec(ctx, "UPDATE commit_references SET verification_state=$1 WHERE workspace_id=$2 AND id=$3 AND verification_state='reported'", commit.VerificationState, wid, commit.ID)
+		if err == nil && tag.RowsAffected() != 1 {
+			err = &application.CommandError{Code: domain.CodeCommitRemoteUnverified, Message: "commit reference state changed during remote verification"}
+		}
+		for _, record := range plan.VerifiedRecords {
+			if err != nil {
+				break
+			}
+			tag, err = tx.Exec(ctx, "UPDATE task_record_indexes SET state=$1 WHERE workspace_id=$2 AND id=$3 AND state='committed_unverified' AND repository_id=$4 AND commit_sha=$5 AND blob_sha=$6 AND working_tree_hash=$7", record.State, wid, record.ID, record.RepositoryID, record.CommitSHA, record.BlobSHA, record.WorkingTreeHash)
+			if err == nil && tag.RowsAffected() != 1 {
+				err = &application.CommandError{Code: domain.CodeCommitRemoteUnverified, Message: "Task Record state changed during remote verification"}
+			}
+		}
 	case "git.observe":
 		if plan.IdempotentNoMutation {
 			break
@@ -1543,9 +1565,9 @@ func normalizeEventWrite(event application.EventWrite, plan application.Mutation
 		event.EntityType, key = "gate_task", "gateTaskId"
 	case "run.started", "run.succeeded", "run.failed", "run.cancelled", "run.interrupted", "run.corrected":
 		event.EntityType, key = "run", "runId"
-	case "record.registered", "record.commit_attached":
+	case "record.registered", "record.commit_attached", "record.remote_verified":
 		event.EntityType, key = "task_record", "recordId"
-	case "commit.attached":
+	case "commit.attached", "commit.remote_verified":
 		event.EntityType, key = "commit_reference", "commitId"
 	case "git.observed":
 		event.EntityType, key = "run_git_observation", "observationId"
