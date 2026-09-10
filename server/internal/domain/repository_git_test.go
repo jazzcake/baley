@@ -55,6 +55,13 @@ func TestApplyRemoteVerificationFailsClosedAndMarksAllEvidence(t *testing.T) {
 	if err == nil || failedCommit.VerificationState != CommitReported || failedRecords != nil || records[0].State != RecordCommittedUnverified {
 		t.Fatalf("mismatch did not fail closed: commit=%+v records=%+v err=%v", failedCommit, failedRecords, err)
 	}
+	if _, _, err = ApplyRemoteVerification(commit, nil, "repository", "refs/heads/main", repeatHex("d", 40), commitSHA, nil); err == nil {
+		t.Fatal("zero-record verification was accepted")
+	}
+	verifiedCommit, verifiedRecords, err = ApplyRemoteVerification(commit.MarkRemoteVerified(), records, "repository", "refs/heads/main", repeatHex("d", 40), commitSHA, []RemoteRecordVerification{{RecordID: "record", RelativePath: records[0].RelativePath, BlobSHA: blobSHA, ContentHash: contentHash}})
+	if err != nil || verifiedCommit.VerificationState != CommitRemoteVerified || len(verifiedRecords) != 1 || verifiedRecords[0].State != RecordVerified {
+		t.Fatalf("late record verification failed: commit=%+v records=%+v err=%v", verifiedCommit, verifiedRecords, err)
+	}
 }
 
 func TestRunGitObservationIsMetadataOnlyAndRejectsAbsoluteWorktreePath(t *testing.T) {

@@ -13,7 +13,9 @@ import (
 	"time"
 )
 
-const remoteVerificationTimeout = 2 * time.Minute
+var remoteVerificationTimeout = 2 * time.Minute
+
+var gitCommandContext = exec.CommandContext
 
 var ErrRemoteVerificationFailed = errors.New("provider-authoritative remote Git verification failed")
 
@@ -44,16 +46,16 @@ type commandRemoteGitVerifier struct{}
 func newCommandRemoteGitVerifier() RemoteGitVerifier { return commandRemoteGitVerifier{} }
 
 func (commandRemoteGitVerifier) Verify(ctx context.Context, repository RepositoryProjection, commit CommitReferenceProjection, remoteRef string, records []TaskRecordProjection) (RemoteVerificationEvidence, error) {
+	verifyCtx, cancel := context.WithTimeout(ctx, remoteVerificationTimeout)
+	defer cancel()
 	remoteRef = strings.TrimSpace(remoteRef)
-	if !strings.HasPrefix(remoteRef, "refs/heads/") || strings.TrimPrefix(remoteRef, "refs/heads/") == "" || strings.ContainsAny(remoteRef, "\x00\r\n") {
+	if len(records) == 0 || !strings.HasPrefix(remoteRef, "refs/heads/") || strings.TrimPrefix(remoteRef, "refs/heads/") == "" || strings.ContainsAny(remoteRef, "\x00\r\n") {
 		return RemoteVerificationEvidence{}, ErrRemoteVerificationFailed
 	}
-	check := exec.CommandContext(ctx, "git", "check-ref-format", remoteRef)
+	check := protectedGitCommand(verifyCtx, "git", "check-ref-format", remoteRef)
 	if err := check.Run(); err != nil {
 		return RemoteVerificationEvidence{}, ErrRemoteVerificationFailed
 	}
-	verifyCtx, cancel := context.WithTimeout(ctx, remoteVerificationTimeout)
-	defer cancel()
 	root, err := os.MkdirTemp("", "baley-remote-verify-")
 	if err != nil {
 		return RemoteVerificationEvidence{}, ErrRemoteVerificationFailed
@@ -110,8 +112,14 @@ func (commandRemoteGitVerifier) Verify(ctx context.Context, repository Repositor
 
 func gitVerifyCommand(ctx context.Context, gitDir string, arguments ...string) *exec.Cmd {
 	args := append([]string{"-c", "credential.interactive=never", "--git-dir", gitDir}, arguments...)
-	command := exec.CommandContext(ctx, "git", args...)
+	command := protectedGitCommand(ctx, "git", args...)
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+	return command
+}
+
+func protectedGitCommand(ctx context.Context, name string, arguments ...string) *exec.Cmd {
+	command := gitCommandContext(ctx, name, arguments...)
+	configureProcessTree(command)
 	return command
 }
 

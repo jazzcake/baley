@@ -255,6 +255,9 @@ MCP tool. The server ignores self-asserted remote facts: it fetches the supplied
 branch ref from the Repository's stored remote URL and verifies the commit,
 every matching `commit:path` blob, and each blob's SHA-256 content digest before
 atomically changing the commit and record states and writing immutable Events.
+The first successful Event binds that full ref. A different ref cannot reuse
+the verified state, zero-Record verification is rejected, and Records attached
+later are provider-verified by replaying the command on the same bound ref.
 
 ## 8. Hard error와 warning
 

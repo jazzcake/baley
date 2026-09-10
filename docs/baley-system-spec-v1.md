@@ -840,6 +840,14 @@ state, concurrent state change, or verifier timeout fails closed without a state
 transition. Command idempotency and actor/capability provenance use the normal
 command service boundary.
 
+The first successful verification binds the full remote ref in immutable Event
+evidence. A later request for a different ref fails closed instead of reusing
+the commit state. Verification requires at least one matching Record. If a new
+`committed_unverified` Record is attached later, replay on the same bound ref
+performs a fresh provider fetch and verifies only the late Record in a new
+atomic command; a replay after all matching Records are verified is idempotent.
+Verifier deadlines terminate the Git process tree, including transport helpers.
+
 ### 13.4 RunGitObservation
 
 진행 중 복귀를 돕는 선택적 관찰 metadata다.

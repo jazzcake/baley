@@ -78,8 +78,8 @@ type RemoteRecordVerification struct {
 }
 
 func ApplyRemoteVerification(commit CommitReference, records []TaskRecord, repositoryID, remoteRef, refTipSHA, commitSHA string, evidence []RemoteRecordVerification) (CommitReference, []TaskRecord, error) {
-	if commit.VerificationState != CommitReported || commit.RepositoryID != repositoryID || commit.CommitSHA != strings.ToLower(strings.TrimSpace(commitSHA)) ||
-		strings.TrimSpace(remoteRef) == "" || !validGitObjectID(strings.ToLower(strings.TrimSpace(refTipSHA))) || len(records) != len(evidence) {
+	if (commit.VerificationState != CommitReported && commit.VerificationState != CommitRemoteVerified) || commit.RepositoryID != repositoryID || commit.CommitSHA != strings.ToLower(strings.TrimSpace(commitSHA)) ||
+		strings.TrimSpace(remoteRef) == "" || !validGitObjectID(strings.ToLower(strings.TrimSpace(refTipSHA))) || len(records) == 0 || len(records) != len(evidence) {
 		return commit, nil, &Violation{Code: CodeCommitRemoteUnverified}
 	}
 	byID := make(map[string]RemoteRecordVerification, len(evidence))
