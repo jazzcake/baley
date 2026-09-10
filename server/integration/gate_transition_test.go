@@ -31,6 +31,13 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 	if err = repo.SeedDemo(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err = repo.BootstrapOwner(ctx, postgres.DemoWorkspaceID,
+		"22222222-2222-4222-8222-222222222229", postgres.DemoHumanActorID,
+		"gate-owner", "gate-owner", "Gate Owner", "test-password-phc"); err != nil {
+		t.Fatal(err)
+	}
+	principal := linkedConversationalPrincipal(t, ctx, repo, postgres.DemoWorkspaceID,
+		postgres.DemoHumanActorID, postgres.DemoAgentActorID, "gate-transition-gateway")
 	service := application.NewService(repo)
 	for _, statement := range []string{
 		"INSERT INTO phases(workspace_id,id,name,position,state) VALUES($1,'release','Release',2,'planned')",
@@ -50,17 +57,17 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 	_, err = service.Execute(ctx, future)
 	assertCode(t, err, domain.CodeGateNotCurrent)
 
-	oldPreview, oldRequest := previewTask(t, ctx, service, 101, "old-101", 1)
+	oldPreview, oldRequest := previewTask(t, ctx, service, &principal, 101, "old-101", 1)
 	withoutApproval := oldRequest
 	_, err = service.Execute(ctx, withoutApproval)
-	assertCode(t, err, domain.CodeHumanApprovalMismatch)
+	assertCode(t, err, domain.CodeDecisionEvidenceRequired)
 	graph, _ := repo.LoadSnapshot(ctx, postgres.DemoWorkspaceID)
 	if graph.Workspace.Revision != 1 {
 		t.Fatalf("approval failure wrote revision %d", graph.Workspace.Revision)
 	}
 
-	preview104, request104 := previewTask(t, ctx, service, 104, "task-104", 1)
-	request104.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{ApprovedByActorID: postgres.DemoHumanActorID, ApprovedCommandHash: preview104.CommandHash}
+	preview104, request104 := previewTask(t, ctx, service, &principal, 104, "task-104", 1)
+	attachTaskDecisionEvidence(t, &request104, preview104, 104, "33333333-3333-4333-8333-333333333334")
 	type outcome struct {
 		result application.ExecutionResult
 		err    error
@@ -82,11 +89,11 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 	if one.result.CommandID != two.result.CommandID || one.result.Idempotent == two.result.Idempotent {
 		t.Fatalf("concurrent idempotency failed: %#v %#v", one.result, two.result)
 	}
-	oldRequest.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{ApprovedByActorID: postgres.DemoHumanActorID, ApprovedCommandHash: oldPreview.CommandHash}
+	attachTaskDecisionEvidence(t, &oldRequest, oldPreview, 101, "33333333-3333-4333-8333-333333333331")
 	_, err = service.Execute(ctx, oldRequest)
 	assertCode(t, err, domain.CodeStaleRevision)
-	confirmTask(t, ctx, service, 101, "task-101", 2)
-	result106, request106 := confirmTask(t, ctx, service, 106, "task-106", 3)
+	confirmTask(t, ctx, service, &principal, 101, "task-101", 2, "33333333-3333-4333-8333-333333333332")
+	result106, request106 := confirmTask(t, ctx, service, &principal, 106, "task-106", 3, "33333333-3333-4333-8333-333333333336")
 	retry, err := service.Execute(ctx, request106)
 	if err != nil || !retry.Idempotent || retry.CommandID != result106.CommandID {
 		t.Fatalf("idempotent retry failed: %#v %v", retry, err)
@@ -157,19 +164,20 @@ func TestGateTransitionAgainstPostgres(t *testing.T) {
 	}
 }
 
-func previewTask(t *testing.T, ctx context.Context, s *application.Service, id int, key string, revision int64) (application.PreviewResult, application.CommandRequest) {
+func previewTask(t *testing.T, ctx context.Context, s *application.Service, principal *application.CommandPrincipal, id int, key string, revision int64) (application.PreviewResult, application.CommandRequest) {
 	t.Helper()
 	req := request("task.confirm", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "taskId": id}, key, revision)
+	req.Principal = principal
 	preview, err := s.Preview(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return preview, req
 }
-func confirmTask(t *testing.T, ctx context.Context, s *application.Service, id int, key string, revision int64) (application.ExecutionResult, application.CommandRequest) {
+func confirmTask(t *testing.T, ctx context.Context, s *application.Service, principal *application.CommandPrincipal, id int, key string, revision int64, decisionID string) (application.ExecutionResult, application.CommandRequest) {
 	t.Helper()
-	preview, req := previewTask(t, ctx, s, id, key, revision)
-	req.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{ApprovedByActorID: postgres.DemoHumanActorID, ApprovedCommandHash: preview.CommandHash}
+	preview, req := previewTask(t, ctx, s, principal, id, key, revision)
+	attachTaskDecisionEvidence(t, &req, preview, id, decisionID)
 	result, err := s.Execute(ctx, req)
 	if err != nil {
 		t.Fatal(err)

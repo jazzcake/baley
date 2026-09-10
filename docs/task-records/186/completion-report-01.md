@@ -33,7 +33,8 @@ Initial implementation commit: `150c2ef69aa824585b96e870f7abd1af18a22f7b`.
 
 ## Verification evidence
 
-- `go test ./... -count=1`: passed across 15 test-bearing packages. JSON accounting recorded 597 passing test/subtest events and 43 PostgreSQL-gated skips because `BALEY_TEST_DATABASE_URL` was not configured.
+- `go test ./... -count=1 -parallel=1 -p=1` with a process-scoped `BALEY_TEST_DATABASE_URL`: passed against a fresh loopback-only PostgreSQL 17.5 database at schema 28. JSON accounting recorded 15 passed packages, 663 passed test/subtest events, one intentional `BALEY_MCP_E2E` skip, and zero failures; the two packages reported skipped contain no tests.
+- Focused DB regression rerun: `TestLinkedAccountConversationalTaskConfirmationTrustBoundary` and `TestEmbeddingEnablementSingleRepositoryScenarioAgainstPostgres` passed 2/2 with zero skips or failures in a separate fresh PostgreSQL 17.5 container.
 - `go vet ./...`: passed.
 - Focused application, domain, and MCP tests: passed, including 47 positive/negative conversational grammar cases, exact compact compatibility name/count/schema, bridge routing, and ordinary-leaf behavior.
 - `npm test -- --run --reporter=dot`: 16 files and 100 tests passed, including the absence of TaskConfirmation mutation UI.
@@ -42,13 +43,13 @@ Initial implementation commit: `150c2ef69aa824585b96e870f7abd1af18a22f7b`.
 - `go build -trimpath`: server and MCP executables built successfully under `C:\dev-bin\baley\task-186\`.
 - `git diff --check`: passed.
 
-The disposable-PostgreSQL integration cases for migration 28 and the full linked-account conversational transaction were added but intentionally not executed in this run because no disposable database URL was configured and Task #186 prohibited starting or touching services/databases.
+Both successful DB runs used unique container/database/user/credential identities, Docker `HEALTHCHECK`, a post-health stabilization interval, and `TestValidateDisposableDatabaseConnection` to prove the effective host URL before applying migrations to the disposable database. Each exact container was removed in `finally` and verified absent. Existing Baley databases, containers, and services were not modified.
 
 ## Trust boundary and residual risks
 
 Baley authenticates the Agent credential and linked Account/member, revalidates capability, and persists cryptographic bindings and actor provenance. It cannot independently authenticate the semantics of the external conversation transcript; the Agent is trusted only to transmit the explicit statement into the typed envelope. Conservative verb/target/scope and negation checks reduce accidental or ambiguous execution but are not a general natural-language proof system.
 
-The database-backed transaction and migration tests should run in CI against a disposable PostgreSQL instance before rollout. The existing Viewer bundle-size warning remains unrelated to Task #186.
+The prior database-verification gap is closed locally. CI should continue running the same disposable PostgreSQL suite as regression coverage. The remaining known test skip requires the separate `BALEY_MCP_E2E` external transport harness and is unrelated to PostgreSQL or Task #186 behavior. The existing Viewer bundle-size warning also remains unrelated to Task #186.
 
 ## Migration and rollout
 
