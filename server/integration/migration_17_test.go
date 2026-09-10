@@ -18,7 +18,7 @@ func TestMigration17And23ReplaceLegacyApprovalGrantSecretStorage(t *testing.T) {
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "migration-17-integration-secret")
 	migrations := filepath.Join("..", "migrations")
 	// Reach schema 16, where the original secret-bearing grant table existed.
-	for range 12 {
+	for range 13 {
 		if err := postgres.Migrate(url, migrations, "down"); err != nil {
 			t.Fatal(err)
 		}

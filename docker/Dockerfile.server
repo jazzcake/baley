@@ -10,10 +10,10 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${BALE
 
 FROM alpine:3.22
 ARG BALEY_BUILD_COMMIT=unknown
-ARG BALEY_SCHEMA_VERSION=28
+ARG BALEY_SCHEMA_VERSION=29
 LABEL org.opencontainers.image.revision=$BALEY_BUILD_COMMIT \
       org.opencontainers.image.baley.schema-version=$BALEY_SCHEMA_VERSION
-RUN apk add --no-cache ca-certificates git openssh-client
+RUN apk add --no-cache ca-certificates git openssh-client tini
 WORKDIR /app
 COPY --from=build /out/baley-server /app/baley-server
 COPY server/migrations /app/migrations
@@ -26,4 +26,4 @@ ENV BALEY_ENV=development \
     BALEY_ALLOW_CONTAINER_BIND=true \
     BALEY_HTTP_ADDR=0.0.0.0:8080 \
     BALEY_MIGRATIONS_DIR=/app/migrations
-ENTRYPOINT ["/usr/local/bin/baley-server-entrypoint"]
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/baley-server-entrypoint"]

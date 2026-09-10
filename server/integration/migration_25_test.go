@@ -20,7 +20,7 @@ func TestMigration25FailsClosedForPreSessionMCPLinks(t *testing.T) {
 	if err := postgres.Migrate(url, migrations, "up"); err != nil {
 		t.Fatal(err)
 	}
-	for range 4 {
+	for range 5 {
 		if err := postgres.Migrate(url, migrations, "down"); err != nil {
 			t.Fatal(err)
 		}

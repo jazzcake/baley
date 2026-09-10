@@ -847,6 +847,10 @@ the commit state. Verification requires at least one matching Record. If a new
 performs a fresh provider fetch and verifies only the late Record in a new
 atomic command; a replay after all matching Records are verified is idempotent.
 Verifier deadlines terminate the Git process tree, including transport helpers.
+Schema 29 makes the `events` table append-only at the PostgreSQL boundary:
+UPDATE, DELETE, and TRUNCATE fail while normal command/Event INSERTs continue.
+The production API image runs its entrypoint below `tini`, so timed-out Git
+transport descendants are reaped even when the container process is PID 1.
 
 ### 13.4 RunGitObservation
 
