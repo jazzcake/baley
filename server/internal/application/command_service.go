@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1874,43 +1875,41 @@ func validConversationalDecision(evidence ConversationalDecisionEvidence, typed 
 
 func statementSupportsConversationalDecision(statement, scope string, taskID int) bool {
 	normalized := strings.ToLower(strings.Join(strings.Fields(statement), " "))
-	for _, negation := range []string{
-		"do not confirm", "do not complete", "do not approve",
-		"don't confirm", "don't complete", "don't approve",
-		"don’t confirm", "don’t complete", "don’t approve",
-		"dont confirm", "dont complete", "dont approve",
-		"not confirm", "not complete", "not approve",
-		"never confirm", "never complete", "never approve",
-		"확인하지", "완료하지", "승인하지",
-		"확인 안", "완료 안", "승인 안", "하지 마", "하지마", "취소",
-	} {
-		if strings.Contains(normalized, negation) {
-			return false
-		}
-	}
-	decisionVerb := strings.Contains(normalized, "confirm") || strings.Contains(normalized, "complete") ||
-		strings.Contains(normalized, "approve") || strings.Contains(normalized, "확인") || strings.Contains(normalized, "완료")
-	if !decisionVerb {
+	if normalized == "" || strings.ContainsAny(normalized, "?？") {
 		return false
 	}
+	normalized = strings.TrimSpace(strings.TrimRight(normalized, ".!。！"))
 	if scope == "all_awaiting_confirmation" {
-		universal := strings.Contains(normalized, "all") || strings.Contains(normalized, "모든") || strings.Contains(normalized, "전부")
-		confirmationSet := strings.Contains(normalized, "awaiting") || strings.Contains(normalized, "implemented") ||
-			strings.Contains(normalized, "confirmation") || strings.Contains(normalized, "대기") || strings.Contains(normalized, "구현")
-		return universal && confirmationSet
+		if regexp.MustCompile(`#[0-9]+`).MatchString(normalized) {
+			return false
+		}
+		return matchesDecisionGrammar(normalized,
+			`(?:confirm|complete) all (?:tasks )?awaiting confirmation`,
+			`implemented tasks awaiting confirmation all complete`,
+			`확인 대기(?: 중)?인 모든 (?:작업|태스크|task)(?:을|를)? (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
+			`확인 대기(?: 중)?인 (?:작업|태스크|task)(?:을|를)? 모두 (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
+			`완료 확인 대기 (?:사항들|건) 전부 (?:완료처리|확인해 ?주세요)`,
+			`완료 확인 [1-9][0-9]*건, 직접 처리하세요\. 제가 승인했습니다`,
+		)
 	}
-	target := fmt.Sprintf("#%d", taskID)
-	references := 0
-	for _, field := range strings.Fields(normalized) {
-		candidate := strings.Trim(field, ".,;:!?()[]{}\"'")
-		if strings.HasPrefix(candidate, "#") {
-			references++
-			if candidate != target {
-				return false
-			}
+	if scope != "task" || taskID <= 0 {
+		return false
+	}
+	target := regexp.QuoteMeta(strconv.Itoa(taskID))
+	return matchesDecisionGrammar(normalized,
+		`(?:confirm|complete) (?:task )?#?`+target,
+		`#?`+target+`(?:번)?(?: 작업)?(?:을|를)? (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
+		`작업 #?`+target+`(?:번)?(?:을|를)? (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
+	)
+}
+
+func matchesDecisionGrammar(statement string, patterns ...string) bool {
+	for _, pattern := range patterns {
+		if regexp.MustCompile(`^(?:` + pattern + `)$`).MatchString(statement) {
+			return true
 		}
 	}
-	return references == 1
+	return false
 }
 
 func validUUIDText(value string) bool {

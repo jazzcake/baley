@@ -25,7 +25,7 @@ function Invoke-Case([string]$Name, [scriptblock]$Body) {
   } finally {
     Remove-Item -Path Function:\docker -Force -ErrorAction SilentlyContinue
     Remove-Item -Path Function:\Invoke-WebRequest -Force -ErrorAction SilentlyContinue
-    Remove-Variable TaskJournalDockerCalls,TaskJournalCreateSucceeds -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable TaskJournalDockerCalls,TaskJournalCreateSucceeds,MigrationSchema,MigrationAttempts,MigrationFailFirst -Scope Global -ErrorAction SilentlyContinue
   }
 }
 
@@ -131,6 +131,91 @@ try {
     Assert-True (-not ($global:TaskJournalDockerCalls -match 'createdb')) 'database was created before dump hash validation'
   }
 
+  Invoke-Case 'Migrate resumes non-destructively from schema 26' {
+    $deploySha = (git rev-parse HEAD).Trim()
+    $global:MigrationSchema = 26
+    $global:TaskJournalDockerCalls = [Collections.Generic.List[string]]::new()
+    function global:docker {
+      $arguments = @($args)
+      $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
+      $global:LASTEXITCODE = 0
+      if ($arguments -contains 'psql') {
+        $sql = [string]$arguments[-1]
+        if ($sql -like 'SELECT version_id*') { return [string]$global:MigrationSchema }
+        if ($sql -like '*migration_chain_count*') { return [string]$global:MigrationSchema }
+        if ($sql -like '*resume_journal_schema*') { return '1' }
+        if ($sql -like '*resume_journal_integrity*') { return '0' }
+        if ($sql -like '*migration_28_absent*') { return '1' }
+        if ($sql -like '*migration_28_schema*') { return '1' }
+        throw "unexpected psql query: $sql"
+      }
+      if ($arguments[0] -eq 'compose' -and $arguments -contains 'migrate') { $global:MigrationSchema = 28 }
+    }
+    & $rolloutScript -Action Migrate -DeploySha $deploySha | Out-Null
+    Assert-True ($global:MigrationSchema -eq 28) 'schema 26 resume did not reach schema 28'
+    Assert-True ([bool]($global:TaskJournalDockerCalls -match 'compose run --rm --no-deps')) 'resume did not use the one-shot migrator'
+  }
+
+  Invoke-Case 'Migrate retries after a partial advance leaves schema 27' {
+    $deploySha = (git rev-parse HEAD).Trim()
+    $global:MigrationSchema = 26
+    $global:MigrationAttempts = 0
+    $global:MigrationFailFirst = $true
+    $global:TaskJournalDockerCalls = [Collections.Generic.List[string]]::new()
+    function global:docker {
+      $arguments = @($args)
+      $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
+      $global:LASTEXITCODE = 0
+      if ($arguments -contains 'psql') {
+        $sql = [string]$arguments[-1]
+        if ($sql -like 'SELECT version_id*') { return [string]$global:MigrationSchema }
+        if ($sql -like '*migration_chain_count*') { return [string]$global:MigrationSchema }
+        if ($sql -like '*resume_journal_schema*') { return '1' }
+        if ($sql -like '*resume_journal_integrity*') { return '0' }
+        if ($sql -like '*migration_28_absent*') { return '1' }
+        if ($sql -like '*migration_28_schema*') { return '1' }
+        throw "unexpected psql query: $sql"
+      }
+      if ($arguments[0] -eq 'compose' -and $arguments -contains 'migrate') {
+        $global:MigrationAttempts++
+        if ($global:MigrationFailFirst) {
+          $global:MigrationFailFirst = $false
+          $global:MigrationSchema = 27
+          $global:LASTEXITCODE = 1
+          return
+        }
+        $global:MigrationSchema = 28
+      }
+    }
+    $failed = $false
+    try { & $rolloutScript -Action Migrate -DeploySha $deploySha | Out-Null } catch { $failed = $_.Exception.Message -like '*one-shot migration failed*' }
+    Assert-True $failed 'initial partial migration failure was not reported'
+    Assert-True ($global:MigrationSchema -eq 27) 'partial advance did not leave the simulated schema at 27'
+    & $rolloutScript -Action Migrate -DeploySha $deploySha | Out-Null
+    Assert-True ($global:MigrationSchema -eq 28 -and $global:MigrationAttempts -eq 2) 'schema 27 retry did not safely reach schema 28'
+  }
+
+  Invoke-Case 'Migrate rejects an invalid intermediate chain before running a container' {
+    $deploySha = (git rev-parse HEAD).Trim()
+    $global:MigrationSchema = 27
+    $global:TaskJournalDockerCalls = [Collections.Generic.List[string]]::new()
+    function global:docker {
+      $arguments = @($args)
+      $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
+      $global:LASTEXITCODE = 0
+      if ($arguments -contains 'psql') {
+        $sql = [string]$arguments[-1]
+        if ($sql -like 'SELECT version_id*') { return '27' }
+        if ($sql -like '*migration_chain_count*') { return '26' }
+      }
+      throw 'migration must stop after the invalid chain check'
+    }
+    $failed = $false
+    try { & $rolloutScript -Action Migrate -DeploySha $deploySha | Out-Null } catch { $failed = $_.Exception.Message -like '*contiguous applied migration chain*' }
+    Assert-True $failed 'invalid intermediate migration chain was accepted'
+    Assert-True (-not ($global:TaskJournalDockerCalls -match 'compose run')) 'invalid intermediate state reached the migrator'
+  }
+
   Invoke-Case 'Verify accepts the complete live eligible Event set rather than a fixed row count' {
     $global:TaskJournalDockerCalls = [Collections.Generic.List[string]]::new()
     function global:docker {
@@ -140,6 +225,7 @@ try {
       if ($arguments -contains 'psql') {
         $sql = [string]$arguments[-1]
         if ($sql -like 'SELECT version_id*') { return '28' }
+        if ($sql -like '*migration_28_schema*') { return '1' }
         if ($sql -like '*invalid backfill provenance*') { throw 'unexpected diagnostic text in SQL' }
         if ($sql -like '*LEFT JOIN events*') { return '0' }
         if ($sql -like '*SELECT count(*) FROM eligible') { return '11' }
@@ -161,6 +247,7 @@ try {
       if ($arguments -contains 'psql') {
         $sql = [string]$arguments[-1]
         if ($sql -like 'SELECT version_id*') { return '28' }
+        if ($sql -like '*migration_28_schema*') { return '1' }
         if ($sql -like '*LEFT JOIN events*') { return '0' }
         if ($sql -like '*SELECT count(*) FROM eligible') { return '11' }
         if ($sql -like '*SELECT count(*) FROM journal') { return '10' }
@@ -334,7 +421,7 @@ try {
 } finally {
   Remove-Item -Path Function:\docker -Force -ErrorAction SilentlyContinue
   Remove-Item -Path Function:\Invoke-WebRequest -Force -ErrorAction SilentlyContinue
-  Remove-Variable TaskJournalDockerCalls,TaskJournalCreateSucceeds -Scope Global -ErrorAction SilentlyContinue
+  Remove-Variable TaskJournalDockerCalls,TaskJournalCreateSucceeds,MigrationSchema,MigrationAttempts,MigrationFailFirst -Scope Global -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $testRoot -Recurse -Force
 }
 
