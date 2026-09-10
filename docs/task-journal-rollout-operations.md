@@ -6,7 +6,7 @@ Migration 27 deterministically projects explicitly recorded facts from pre-migra
 
 Run this only after the reviewed deployment commit contains migrations 26 and 27, the API expects schema 27, and API, Viewer, and MCP binaries/images were built from that same commit. Do not alter firewall rules, Tailscale Serve, the shared PostgreSQL network or volume, Credential Manager data, or an operator's untracked files.
 
-Stop before migration if any of these are true: the checkout is not the reviewed commit, schema is not 25, the schema-25 backup cannot be restored into an isolated database, candidate counts changed after write freeze, or the exact #183 fixture does not produce `created`, `run_started`, `implemented`, and `confirmed` rows. Stop after migration without replacing Viewer or MCP if schema is not 27, migration 27 reports malformed provenance, or the four #183 rows/provenance checks fail.
+Stop before migration if any of these are true: the checkout is not the reviewed commit, schema is not 25, the schema-25 backup cannot be restored into an isolated database, candidate counts changed after write freeze, or the sanitized #183 fixture does not produce its exact four `created`, `run_started`, `implemented`, and `confirmed` rows. Stop after migration without replacing Viewer or MCP if schema is not 27, migration 27 reports malformed provenance, or the live #183 migration-eligible Event set and Task Journal set are not bidirectionally equal by Event and command ID.
 
 ## Preflight, freeze, backup, and restore drill
 
@@ -42,7 +42,7 @@ docker compose build api viewer
 docker image inspect baley-api:latest baley-viewer:latest
 
 .\scripts\task-journal-rollout.ps1 -Action Migrate -DeploySha $deploySha
-.\scripts\task-journal-rollout.ps1 -Action Verify
+.\scripts\task-journal-rollout.ps1 -Action Verify -WorkspaceId $workspaceId
 ```
 
 The one-shot migration is separate from service start. Migration 27 is transactional; malformed allow-listed payloads, missing Tasks or actors, invalid entity provenance, duplicate candidate commands, or a conflicting existing projection leave Goose at version 26 and insert no candidate rows.
@@ -63,7 +63,7 @@ Invoke-WebRequest https://jazzcake-home.tail87e929.ts.net/api/readyz -UseBasicPa
 Invoke-WebRequest https://jazzcake-home.tail87e929.ts.net/api/versionz -UseBasicParsing
 ```
 
-Both local and tailnet endpoints must report schema 27 and the pinned deployment commit. Confirm ports 8080, 5174, and 8090 remain loopback-bound and `tailscale serve status` is unchanged. Build the MCP executable under `C:\dev-bin\baley\` only, preserve the existing credential-store metadata, and verify `baley_task_journal` returns the same four #183 rows and paired cursor order as HTTP. In the signed-in Viewer, inspect #183's read-only Journal; the UI intentionally shows only the newest 50 rows, so use HTTP/MCP cursors for a complete history.
+Both local and tailnet endpoints must report schema 27 and the pinned deployment commit. Confirm ports 8080, 5174, and 8090 remain loopback-bound and `tailscale serve status` is unchanged. Build the MCP executable under `C:\dev-bin\baley\` only, preserve the existing credential-store metadata, and verify `baley_task_journal` returns the same complete live #183 history and paired cursor order as HTTP. The sanitized migration fixture remains the exact four-row lifecycle example; a live Task may correctly have additional eligible lifecycle Events such as multiple Runs. In the signed-in Viewer, inspect #183's read-only Journal; the UI intentionally shows only the newest 50 rows, so use HTTP/MCP cursors for a complete history.
 
 ## Lifecycle canary and approval stop point
 

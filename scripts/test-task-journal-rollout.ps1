@@ -131,6 +131,47 @@ try {
     Assert-True (-not ($global:TaskJournalDockerCalls -match 'createdb')) 'database was created before dump hash validation'
   }
 
+  Invoke-Case 'Verify accepts the complete live eligible Event set rather than a fixed row count' {
+    $global:TaskJournalDockerCalls = [Collections.Generic.List[string]]::new()
+    function global:docker {
+      $arguments = @($args)
+      $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
+      $global:LASTEXITCODE = 0
+      if ($arguments -contains 'psql') {
+        $sql = [string]$arguments[-1]
+        if ($sql -like 'SELECT version_id*') { return '27' }
+        if ($sql -like '*invalid backfill provenance*') { throw 'unexpected diagnostic text in SQL' }
+        if ($sql -like '*LEFT JOIN events*') { return '0' }
+        if ($sql -like '*SELECT count(*) FROM eligible') { return '11' }
+        if ($sql -like '*SELECT count(*) FROM journal') { return '11' }
+        if ($sql -like '*differences*') { return '0' }
+        throw "unexpected psql query: $sql"
+      }
+    }
+    $result = & $rolloutScript -Action Verify -WorkspaceId $workspaceId
+    Assert-True ($result.task183EligibleEvents -eq 11) 'eligible live Event count was not reported'
+    Assert-True ($result.task183JournalRows -eq 11) 'live Journal count was not reported'
+    Assert-True ([bool]($global:TaskJournalDockerCalls -match [regex]::Escape($workspaceId))) 'Verify did not scope Task #183 to the explicit Workspace'
+  }
+
+  Invoke-Case 'Verify rejects either-direction Task #183 Event and Journal drift' {
+    function global:docker {
+      $arguments = @($args)
+      $global:LASTEXITCODE = 0
+      if ($arguments -contains 'psql') {
+        $sql = [string]$arguments[-1]
+        if ($sql -like 'SELECT version_id*') { return '27' }
+        if ($sql -like '*LEFT JOIN events*') { return '0' }
+        if ($sql -like '*SELECT count(*) FROM eligible') { return '11' }
+        if ($sql -like '*SELECT count(*) FROM journal') { return '10' }
+        if ($sql -like '*differences*') { return '1' }
+      }
+    }
+    $thrown = $false
+    try { & $rolloutScript -Action Verify -WorkspaceId $workspaceId | Out-Null } catch { $thrown = $_.Exception.Message -like '*Event/Journal projection mismatch*' }
+    Assert-True $thrown 'bidirectional Event/Journal drift was accepted'
+  }
+
   Invoke-Case 'Rollback rejects a pre-schema-27 API before any tag or container write' {
     $apiImage = 'sha256:' + ('a' * 64)
     $viewerImage = 'sha256:' + ('b' * 64)

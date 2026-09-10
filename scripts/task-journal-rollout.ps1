@@ -260,11 +260,38 @@ switch ($Action) {
   }
   'Verify' {
     if ((Get-SchemaVersion $Database) -ne 27) { throw 'verification requires schema 27' }
+    Assert-WorkspaceId
     $invalid = Invoke-PsqlScalar $Database "SELECT count(*) FROM task_journal_entries j LEFT JOIN events e ON e.workspace_id=j.workspace_id AND e.id=j.event_id LEFT JOIN commands c ON c.workspace_id=j.workspace_id AND c.id=j.command_id WHERE e.id IS NULL OR c.id IS NULL OR j.recorded_at<>j.occurred_at"
     if ([int]$invalid -ne 0) { throw "$invalid invalid backfill provenance rows" }
-    $task183 = Invoke-PsqlScalar $Database "SELECT count(*) FROM task_journal_entries j JOIN tasks t ON t.workspace_id=j.workspace_id AND t.id=j.task_id WHERE t.public_id=183 AND j.lifecycle_stage IN ('created','run_started','implemented','confirmed')"
-    if ([int]$task183 -ne 4) { throw "Task #183 expected 4 historical rows, got $task183" }
-    [pscustomobject]@{ action = $Action; schemaVersion = 27; task183Rows = [int]$task183; invalidProvenanceRows = [int]$invalid }
+    $task183Projection = @"
+WITH selected_task AS (
+  SELECT id FROM tasks WHERE workspace_id='$WorkspaceId' AND public_id=183
+), eligible AS (
+  SELECT e.id AS event_id,e.command_id
+  FROM events e CROSS JOIN selected_task t
+  WHERE e.workspace_id='$WorkspaceId'
+    AND e.event_type IN (
+      'task.created','run.started','task.updated','task.rework_started',
+      'task.blocked','task.unblocked','task.implemented_reported',
+      'task.confirmed','task.discarded'
+    )
+    AND NOT (e.payload ? 'taskJournal')
+    AND CASE WHEN e.event_type='task.created' THEN
+      COALESCE(NULLIF(btrim(e.payload #>> '{task,id}'),''),NULLIF(btrim(e.payload #>> '{task,ID}'),''))
+    ELSE NULLIF(btrim(e.payload ->> 'taskId'),'') END=t.id
+), journal AS (
+  SELECT j.event_id,j.command_id
+  FROM task_journal_entries j CROSS JOIN selected_task t
+  WHERE j.workspace_id='$WorkspaceId' AND j.task_id=t.id
+)
+"@
+    $eligibleCount = Invoke-PsqlScalar $Database "$task183Projection SELECT count(*) FROM eligible"
+    $journalCount = Invoke-PsqlScalar $Database "$task183Projection SELECT count(*) FROM journal"
+    $setDifference = Invoke-PsqlScalar $Database "$task183Projection SELECT count(*) FROM ((SELECT event_id,command_id FROM eligible EXCEPT SELECT event_id,command_id FROM journal) UNION ALL (SELECT event_id,command_id FROM journal EXCEPT SELECT event_id,command_id FROM eligible)) differences"
+    if ([int]$setDifference -ne 0 -or [int]$eligibleCount -ne [int]$journalCount) {
+      throw "Task #183 historical Event/Journal projection mismatch: eligible=$eligibleCount journal=$journalCount setDifference=$setDifference"
+    }
+    [pscustomobject]@{ action = $Action; schemaVersion = 27; task183EligibleEvents = [int]$eligibleCount; task183JournalRows = [int]$journalCount; task183SetDifference = [int]$setDifference; invalidProvenanceRows = [int]$invalid }
   }
   'Rollback' {
     if ((Get-SchemaVersion $Database) -ne 27) { throw 'application rollback is allowed only while the database remains at schema 27' }
