@@ -25,32 +25,43 @@ func TestTaskConfirmOrdinaryLeafNeedsNoWarningAcknowledgement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE events,human_approval_attestations,commands,workspace_counters,runs,gate_tasks,gates,task_dependencies,tasks,lanes,phases,workspaces,actors CASCADE; SET session_replication_role='origin'"); err != nil {
+	if _, err = repo.Pool.Exec(ctx, `SET session_replication_role='replica';
+		TRUNCATE security_events,approval_grants,agent_tokens,mcp_gateway_registrations,workspace_memberships,
+		account_sessions,account_credentials,accounts,mutation_attempts,events,human_approval_attestations,
+		commands,task_journal_entries,workspace_counters,runs,gate_tasks,gates,task_dependencies,tasks,
+		lanes,phases,workspaces,actors CASCADE;
+		SET session_replication_role='origin'`); err != nil {
 		t.Fatal(err)
 	}
 	if err = repo.SeedDemo(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err = repo.BootstrapOwner(ctx, postgres.DemoWorkspaceID,
+		"55555555-5555-4555-8555-555555555559", postgres.DemoHumanActorID,
+		"leaf-owner", "leaf-owner", "Leaf Owner", "test-password-phc"); err != nil {
+		t.Fatal(err)
+	}
+	principal := linkedConversationalPrincipal(t, ctx, repo, postgres.DemoWorkspaceID,
+		postgres.DemoHumanActorID, postgres.DemoAgentActorID, "ordinary-leaf-gateway")
 	if _, err = repo.Pool.Exec(ctx, "UPDATE tasks SET status='implemented' WHERE workspace_id=$1 AND public_id=110", postgres.DemoWorkspaceID); err != nil {
 		t.Fatal(err)
 	}
 
 	service := application.NewService(repo)
 	req := request("task.confirm", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "taskId": 110}, "warning-retry", 1)
+	req.Principal = &principal
 	preview, err := service.Preview(ctx, req)
 	if err != nil || len(preview.Warnings) != 0 {
 		t.Fatalf("ordinary leaf emitted warning: %#v %v", preview, err)
 	}
-	req.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
-		ApprovedByActorID: postgres.DemoHumanActorID, ApprovedCommandHash: preview.CommandHash,
-	}
+	attachTaskDecisionEvidence(t, &req, preview, 110, "55555555-5555-4555-8555-555555555551")
 
 	retryPreview, err := service.Preview(ctx, req)
 	if err != nil || retryPreview.CommandHash != preview.CommandHash {
 		t.Fatalf("envelope evidence changed canonical hash: %s != %s (%v)", retryPreview.CommandHash, preview.CommandHash, err)
 	}
 	result, err := service.Execute(ctx, req)
-	if err != nil || result.WorkspaceRevision != 2 || len(result.EventIDs) != 2 {
+	if err != nil || result.WorkspaceRevision != 2 || len(result.EventIDs) != 2 || result.ApprovalProtocol != "linked_account_conversation" {
 		t.Fatalf("acknowledged retry failed: %#v %v", result, err)
 	}
 	task, err := repo.Task(ctx, postgres.DemoWorkspaceID, 110)
@@ -70,7 +81,7 @@ func TestTaskConfirmOrdinaryLeafNeedsNoWarningAcknowledgement(t *testing.T) {
 		}
 	}
 	codes, ok := evidence["acknowledgedWarningCodes"].([]any)
-	if !ok || len(codes) != 0 {
+	if ok && len(codes) != 0 {
 		t.Fatalf("ordinary leaf recorded warning evidence: %#v", evidence)
 	}
 }

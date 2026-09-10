@@ -3,12 +3,14 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/jazzcake/baley/server/internal/application"
 	"github.com/jazzcake/baley/server/internal/authn"
+	"github.com/jazzcake/baley/server/internal/authz"
 	"github.com/jazzcake/baley/server/internal/domain"
 	"github.com/jazzcake/baley/server/internal/persistence/postgres"
 )
@@ -37,33 +39,16 @@ func TestLinkedAccountConversationalTaskConfirmationTrustBoundary(t *testing.T) 
 	if err = repo.SeedDemo(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err = repo.BootstrapOwner(ctx, postgres.DemoWorkspaceID,
+		"11111111-1111-4111-8111-111111111119", postgres.DemoHumanActorID,
+		"conversation-owner", "conversation-owner", "Conversation Owner", "test-password-phc"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = repo.Pool.Exec(ctx, "UPDATE tasks SET status='implemented' WHERE workspace_id=$1 AND public_id IN (101,110)", postgres.DemoWorkspaceID); err != nil {
 		t.Fatal(err)
 	}
-	secret := "linked-gateway-secret"
-	if _, err = repo.Pool.Exec(ctx, `INSERT INTO mcp_gateway_registrations(
-		id,workspace_id,account_actor_id,agent_actor_id,gateway_id,gateway_secret_hash,status,generation,created_at)
-		VALUES('conversation-gateway-registration',$1,$2,$3,'conversation-gateway',$4,'active',1,$5)`,
-		postgres.DemoWorkspaceID, postgres.DemoHumanActorID, postgres.DemoAgentActorID, postgres.DigestSecret(secret), time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	token, err := repo.ResumeMCPGateway(ctx, postgres.DemoWorkspaceID, "conversation-gateway", secret, time.Now().UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
-	authService, err := authn.NewService(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	authenticated, err := authService.AuthenticateBearer(ctx, token.Token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	principal := application.CommandPrincipal{
-		CredentialID: authenticated.CredentialID, WorkspaceID: authenticated.WorkspaceID, Subject: authenticated.Subject,
-		LinkedAccountID: authenticated.LinkedAccountID, LinkedHumanActorID: authenticated.LinkedHumanActorID,
-		GatewayRegistrationID: authenticated.GatewayRegistrationID,
-	}
+	principal := linkedConversationalPrincipal(t, ctx, repo, postgres.DemoWorkspaceID,
+		postgres.DemoHumanActorID, postgres.DemoAgentActorID, "conversation-gateway")
 	service := application.NewService(repo)
 	newRequest := func(taskID int, revision int64, key string) application.CommandRequest {
 		raw, _ := json.Marshal(map[string]any{
@@ -135,10 +120,56 @@ func TestLinkedAccountConversationalTaskConfirmationTrustBoundary(t *testing.T) 
 		t.Fatalf("stale evidence binding error=%v", err)
 	}
 	second.Envelope.DecisionEvidence.WorkspaceRevision = result.WorkspaceRevision
+	if _, err = repo.CreateMember(ctx, postgres.DemoWorkspaceID, postgres.DemoHumanActorID,
+		"conversation-backup-owner", "conversation-backup-owner", "Conversation Backup Owner",
+		"test-password-phc", authz.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = repo.Pool.Exec(ctx, "UPDATE workspace_memberships SET role='viewer' WHERE workspace_id=$1 AND actor_id=$2", postgres.DemoWorkspaceID, postgres.DemoHumanActorID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = service.Execute(ctx, second); commandErrorCode(err) != domain.CodeDecisionEvidenceInvalid {
 		t.Fatalf("unauthorized linked member error=%v", err)
+	}
+}
+
+func linkedConversationalPrincipal(t *testing.T, ctx context.Context, repo *postgres.Repository, workspaceID, humanActorID, agentActorID, gatewayID string) application.CommandPrincipal {
+	t.Helper()
+	secret := "linked-gateway-secret-" + gatewayID
+	var registrationID string
+	if err := repo.Pool.QueryRow(ctx, `INSERT INTO mcp_gateway_registrations(
+		id,workspace_id,account_actor_id,agent_actor_id,gateway_id,gateway_secret_hash,status,generation,created_at)
+		VALUES(gen_random_uuid()::text,$1,$2,$3,$4,$5,'active',1,$6) RETURNING id`,
+		workspaceID, humanActorID, agentActorID, gatewayID, postgres.DigestSecret(secret), time.Now().UTC()).Scan(&registrationID); err != nil {
+		t.Fatal(err)
+	}
+	token, err := repo.ResumeMCPGateway(ctx, workspaceID, gatewayID, secret, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	authService, err := authn.NewService(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated, err := authService.AuthenticateBearer(ctx, token.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authenticated.GatewayRegistrationID != registrationID {
+		t.Fatalf("gateway registration mismatch: authenticated=%s created=%s", authenticated.GatewayRegistrationID, registrationID)
+	}
+	return application.CommandPrincipal{
+		CredentialID: authenticated.CredentialID, WorkspaceID: authenticated.WorkspaceID, Subject: authenticated.Subject,
+		LinkedAccountID: authenticated.LinkedAccountID, LinkedHumanActorID: authenticated.LinkedHumanActorID,
+		GatewayRegistrationID: authenticated.GatewayRegistrationID,
+	}
+}
+
+func attachTaskDecisionEvidence(t *testing.T, request *application.CommandRequest, preview application.PreviewResult, taskID int, decisionID string) {
+	t.Helper()
+	request.Envelope.DecisionEvidence = &application.ConversationalDecisionEvidence{
+		DecisionID: decisionID, Source: "conversation", ConversationRef: "integration-test:" + decisionID,
+		Statement: fmt.Sprintf("confirm #%d", taskID), Scope: "task", Action: "task.confirm", TaskID: taskID,
+		WorkspaceRevision: preview.ExpectedWorkspaceRevision, CommandHash: preview.CommandHash,
 	}
 }

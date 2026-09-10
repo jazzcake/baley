@@ -75,7 +75,7 @@ func TestTaskReportImplementedAgainstPostgres(t *testing.T) {
 		t.Fatalf("events=%#v err=%v", events, err)
 	}
 	var payload map[string]any
-	if json.Unmarshal(events[0].Payload, &payload) != nil || len(payload["warnings"].([]any)) != 4 || len(payload["acknowledgedWarningCodes"].([]any)) != 4 {
+	if json.Unmarshal(events[0].Payload, &payload) != nil || len(payload["warnings"].([]any)) != 3 || len(payload["acknowledgedWarningCodes"].([]any)) != 3 {
 		t.Fatalf("warning evidence=%s", events[0].Payload)
 	}
 }

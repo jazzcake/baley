@@ -69,6 +69,8 @@ func TestEmbeddingEnablementSingleRepositoryScenarioAgainstPostgres(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	conversationalPrincipal := linkedConversationalPrincipal(t, ctx, repo, workspaceID,
+		postgres.DemoHumanActorID, postgres.DemoAgentActorID, "embedding-scenario-gateway")
 
 	gitRoot := t.TempDir()
 	gitRun(t, gitRoot, "init")
@@ -138,14 +140,27 @@ func TestEmbeddingEnablementSingleRepositoryScenarioAgainstPostgres(t *testing.T
 		t.Helper()
 		command := request(name, arguments, key, revision)
 		command.Envelope.ExecutedByActorID = operator.ActorID
+		if name == "task.confirm" {
+			command.Principal = &conversationalPrincipal
+			command.Envelope.ExecutedByActorID = conversationalPrincipal.Subject.ActorID
+		}
 		preview, previewErr := service.Preview(ctx, command)
 		if previewErr != nil {
 			t.Fatalf("%s preview failed: %v", name, previewErr)
 		}
-		command.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
-			ApprovedByActorID:    postgres.DemoHumanActorID,
-			ApprovedCommandHash:  preview.CommandHash,
-			DecisionSnapshotHash: preview.DecisionSnapshotHash,
+		if name == "task.confirm" {
+			taskID, ok := arguments["taskId"].(int)
+			if !ok {
+				t.Fatalf("task.confirm scenario fixture lacks an integer taskId: %#v", arguments)
+			}
+			decisionID := fmt.Sprintf("44444444-4444-4444-8444-%012d", revision*1000+int64(taskID))
+			attachTaskDecisionEvidence(t, &command, preview, taskID, decisionID)
+		} else {
+			command.Envelope.HumanApprovalAttestation = &application.HumanApprovalAttestation{
+				ApprovedByActorID:    postgres.DemoHumanActorID,
+				ApprovedCommandHash:  preview.CommandHash,
+				DecisionSnapshotHash: preview.DecisionSnapshotHash,
+			}
 		}
 		for _, warning := range preview.Warnings {
 			if !scenarioContainsString(command.Envelope.AcknowledgedWarningCodes, warning.Code) {
@@ -536,8 +551,10 @@ func assertHumanOnlyNoWrite(t *testing.T, ctx context.Context, service *applicat
 	if err != nil || !diagnosticCodePresent(preview.Errors, domain.CodeHumanApprovalRequired) {
 		t.Fatalf("%s preview lacks human approval boundary: %#v %v", name, preview.Errors, err)
 	}
-	if _, err = service.Execute(ctx, command); commandErrorCode(err) != domain.CodeHumanApprovalRequired &&
-		commandErrorCode(err) != domain.CodeHumanApprovalMismatch {
+	_, err = service.Execute(ctx, command)
+	code := commandErrorCode(err)
+	if code != domain.CodeHumanApprovalRequired && code != domain.CodeHumanApprovalMismatch &&
+		!(name == "task.confirm" && code == domain.CodeDecisionEvidenceRequired) {
 		t.Fatalf("%s executed without human approval: %v", name, err)
 	}
 	snapshot, loadErr := repo.LoadSnapshot(ctx, workspaceID)
