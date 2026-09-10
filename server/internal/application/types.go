@@ -382,6 +382,8 @@ type MutationPlan struct {
 	Repository              *domain.Repository
 	Record                  *domain.TaskRecord
 	CommitReference         *domain.CommitReference
+	VerifiedRecords         []domain.TaskRecord
+	RemoteVerification      *RemoteVerificationEvidence
 	GitObservation          *domain.RunGitObservation
 	NoWorkspaceRevision     bool
 	IdempotentNoMutation    bool

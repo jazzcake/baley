@@ -37,7 +37,9 @@ func buildEventEvidenceRules() []EventEvidenceRule {
 		"dependency.connected": {"diff"}, "dependency.disconnected": {"diff"}, "dependency.patched": {"diff"},
 		"gate.created": {"gateId", "publicId", "fromPhaseId", "toPhaseId"}, "gate.task_attached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.task_detached": {"gateId", "taskId", "criteriaRevisionAfter"}, "gate.entry_task_attached": {"gateId", "taskId", "selectionSource"}, "gate.entry_task_detached": {"gateId", "taskId", "selectionSource"}, "gate.task_passed": {"gateTaskId", "reason"}, "gate.task_pass_revoked": {"gateTaskId", "reason"}, "gate.passed": {"gateId", "conditions", "entryTasks", "humanApprovalAttestationId", "workspaceRevision", "decisionSnapshotHash"},
 		"run.started": {"runId", "taskId", "clientRunId", "kind"}, "run.succeeded": {"runId", "resultSummary"}, "run.failed": {"runId", "errorSummary"}, "run.cancelled": {"runId", "errorSummary"}, "run.interrupted": {"runId", "errorSummary"}, "run.corrected": {"runId", "previousStatus", "previousResultSummary", "previousErrorSummary", "previousEndedAt", "newStatus", "newResultSummary", "newErrorSummary", "newEndedAt", "reason"},
-		"record.registered": {"recordId", "taskId", "repositoryId", "relativePath"}, "record.commit_attached": {"recordId", "commitSha", "blobSha"}, "commit.attached": {"commitId", "taskId", "repositoryId", "commitSha", "relation"}, "git.observed": {"observationId", "runId", "repositoryId", "observedAt"},
+		"record.registered": {"recordId", "taskId", "repositoryId", "relativePath"}, "record.commit_attached": {"recordId", "commitSha", "blobSha"},
+		"record.remote_verified": {"recordId", "commitId", "repositoryId", "commitSha", "relativePath", "blobSha", "contentHash", "remoteRef", "refTipSha"},
+		"commit.attached":        {"commitId", "taskId", "repositoryId", "commitSha", "relation"}, "commit.remote_verified": {"commitId", "repositoryId", "remoteUrl", "remoteRef", "refTipSha", "commitSha", "verifiedAt", "verifier", "recordIds"}, "git.observed": {"observationId", "runId", "repositoryId", "observedAt"},
 		"human_approval_attestation.recorded": {"action", "entityType", "entityId", "workspaceRevision", "approvedByActorId", "approvedCommandHash"},
 	}
 	rules := make([]EventEvidenceRule, 0, len(keys))
@@ -279,7 +281,7 @@ func eventEntityPayloadKey(eventType string) string {
 		"backlog.created": "backlogPublicId", "backlog.updated": "backlogPublicId", "backlog.moved": "backlogPublicId", "backlog.discarded": "backlogPublicId", "backlog.promoted": "backlogPublicId", "backlog.reordered": "laneId",
 		"gate.created": "gateId", "gate.task_attached": "gateId", "gate.task_detached": "gateId", "gate.entry_task_attached": "gateId", "gate.entry_task_detached": "gateId", "gate.task_passed": "gateTaskId", "gate.task_pass_revoked": "gateTaskId", "gate.passed": "gateId",
 		"run.started": "runId", "run.succeeded": "runId", "run.failed": "runId", "run.cancelled": "runId", "run.interrupted": "runId", "run.corrected": "runId",
-		"record.registered": "recordId", "record.commit_attached": "recordId", "commit.attached": "commitId", "git.observed": "observationId",
+		"record.registered": "recordId", "record.commit_attached": "recordId", "record.remote_verified": "recordId", "commit.attached": "commitId", "commit.remote_verified": "commitId", "git.observed": "observationId",
 	}
 	return keys[eventType]
 }

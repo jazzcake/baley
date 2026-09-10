@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"sort"
 	"strings"
@@ -12,7 +13,28 @@ import (
 	"github.com/jazzcake/baley/server/internal/application"
 	"github.com/jazzcake/baley/server/internal/domain"
 	"github.com/jazzcake/baley/server/internal/persistence/postgres"
+	"github.com/jazzcake/baley/server/internal/transport/httpapi"
 )
+
+type staticRemoteVerifier struct {
+	calls int
+	fail  bool
+}
+
+func (v *staticRemoteVerifier) Verify(_ context.Context, repository application.RepositoryProjection, commit application.CommitReferenceProjection, remoteRef string, records []application.TaskRecordProjection) (application.RemoteVerificationEvidence, error) {
+	v.calls++
+	if v.fail {
+		return application.RemoteVerificationEvidence{}, errors.New("simulated provider failure")
+	}
+	evidence := application.RemoteVerificationEvidence{
+		RepositoryID: repository.ID, RemoteURL: repository.RemoteURL, RemoteRef: remoteRef,
+		RefTipSHA: commit.CommitSHA, CommitSHA: commit.CommitSHA, VerifiedAt: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Verifier: "integration-provider",
+	}
+	for _, record := range records {
+		evidence.Records = append(evidence.Records, application.RemoteRecordEvidence{RecordID: record.ID, RelativePath: record.RelativePath, BlobSHA: record.BlobSHA, ContentHash: record.WorkingTreeHash})
+	}
+	return evidence, nil
+}
 
 func TestRecordAndGitIndexAgainstPostgres(t *testing.T) {
 	url := os.Getenv("BALEY_TEST_DATABASE_URL")
@@ -33,7 +55,8 @@ func TestRecordAndGitIndexAgainstPostgres(t *testing.T) {
 	if err = repo.SeedDemo(ctx); err != nil {
 		t.Fatal(err)
 	}
-	service := application.NewService(repo)
+	verifier := &staticRemoteVerifier{}
+	service := application.NewServiceWithRemoteVerifier(repo, verifier)
 
 	start := request("run.start", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "taskId": 110, "clientRunId": "00000000-0000-4000-8000-000000000031", "kind": "detailed_planning"}, "record-run-start", 1)
 	if _, err = service.Execute(ctx, start); err != nil {
@@ -99,30 +122,54 @@ func TestRecordAndGitIndexAgainstPostgres(t *testing.T) {
 	duplicateCommitArgs["commitId"] = "00000000-0000-4000-8000-000000000039"
 	_, err = service.Execute(ctx, request("commit.attach", duplicateCommitArgs, "commit-reference-duplicate", 5))
 	assertCode(t, err, domain.CodeIdempotencyConflict)
+	verifyRequest := request("commit.verify_remote", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "commitId": commitID, "remoteRef": "refs/heads/main"}, "commit-remote-verify", 5)
+	verifier.fail = true
+	failedVerify := verifyRequest
+	failedVerify.Envelope.IdempotencyKey = "commit-remote-verify-provider-failure"
+	_, err = service.Execute(ctx, failedVerify)
+	assertCode(t, err, domain.CodeCommitRemoteUnverified)
+	snapshot, err = repo.LoadSnapshot(ctx, postgres.DemoWorkspaceID)
+	if err != nil || snapshot.Workspace.Revision != 5 || snapshot.Records[0].State != "committed_unverified" || snapshot.Commits[0].VerificationState != "reported" {
+		t.Fatalf("provider failure mutated state: records=%#v commits=%#v revision=%d err=%v", snapshot.Records, snapshot.Commits, snapshot.Workspace.Revision, err)
+	}
+	verifier.fail = false
+	handler := (&httpapi.API{Service: service, Repo: repo}).Handler()
+	verifyBody := serveCommand(t, handler, "/v1/commands/execute", verifyRequest)
+	var verifyResult application.ExecutionResult
+	if err = json.Unmarshal(verifyBody, &verifyResult); err != nil || verifyResult.WorkspaceRevision != 6 || len(verifyResult.EventIDs) != 2 || verifier.calls != 2 {
+		t.Fatalf("remote verification HTTP result mismatch: body=%s calls=%d err=%v", verifyBody, verifier.calls, err)
+	}
+	verifyRetry := verifyRequest
+	verifyRetry.Envelope.ExpectedWorkspaceRevision = 6
+	verifyRetry.Envelope.IdempotencyKey = "commit-remote-verify-state-retry"
+	verifiedAgain, err := service.Execute(ctx, verifyRetry)
+	if err != nil || !verifiedAgain.Idempotent || verifiedAgain.WorkspaceRevision != 6 || len(verifiedAgain.EventIDs) != 0 || verifier.calls != 2 {
+		t.Fatalf("remote verification replay mismatch: %#v calls=%d err=%v", verifiedAgain, verifier.calls, err)
+	}
 	observationID := "00000000-0000-4000-8000-000000000035"
 	observedAt := time.Date(2026, 7, 19, 1, 0, 0, 987654321, time.FixedZone("KST", 9*60*60))
 	observationArgs := map[string]any{"workspaceId": postgres.DemoWorkspaceID, "observationId": observationID, "runId": runID, "repositoryId": postgres.DemoRepositoryID, "observedAt": observedAt, "headCommitSha": commitSHA, "branchHint": "main", "worktreeLabel": "primary", "dirty": false}
-	observationResult, err := service.Execute(ctx, request("git.observe", observationArgs, "git-observe", 5))
-	if err != nil || observationResult.WorkspaceRevision != 6 {
+	observationResult, err := service.Execute(ctx, request("git.observe", observationArgs, "git-observe", 6))
+	if err != nil || observationResult.WorkspaceRevision != 7 {
 		t.Fatalf("git.observe failed: %#v %v", observationResult, err)
 	}
-	observationRetry, err := service.Execute(ctx, request("git.observe", observationArgs, "git-observe-retry", 6))
-	if err != nil || !observationRetry.Idempotent || observationRetry.WorkspaceRevision != 6 {
+	observationRetry, err := service.Execute(ctx, request("git.observe", observationArgs, "git-observe-retry", 7))
+	if err != nil || !observationRetry.Idempotent || observationRetry.WorkspaceRevision != 7 {
 		t.Fatalf("observation retry mismatch: %#v %v", observationRetry, err)
 	}
 	invalidObservation := cloneMap(observationArgs)
 	invalidObservation["observationId"] = "00000000-0000-4000-8000-000000000036"
 	invalidObservation["worktreeLabel"] = "C:/absolute/worktree"
-	_, err = service.Execute(ctx, request("git.observe", invalidObservation, "git-observe-invalid", 6))
+	_, err = service.Execute(ctx, request("git.observe", invalidObservation, "git-observe-invalid", 7))
 	assertCode(t, err, domain.CodeInvalidRecordPath)
 	repositoryID := "00000000-0000-4000-8000-000000000037"
 	repositoryArgs := map[string]any{"workspaceId": postgres.DemoWorkspaceID, "repositoryId": repositoryID, "name": "Secondary", "remoteUrl": "https://github.com/jazzcake/secondary", "defaultBranch": "main", "isRecordRepository": false}
-	repositoryResult, err := service.Execute(ctx, request("repository.register", repositoryArgs, "repository-register", 6))
-	if err != nil || repositoryResult.WorkspaceRevision != 7 || len(repositoryResult.EventIDs) != 1 {
+	repositoryResult, err := service.Execute(ctx, request("repository.register", repositoryArgs, "repository-register", 7))
+	if err != nil || repositoryResult.WorkspaceRevision != 8 || len(repositoryResult.EventIDs) != 1 {
 		t.Fatalf("repository.register failed: %#v %v", repositoryResult, err)
 	}
-	repositoryRetry, err := service.Execute(ctx, request("repository.register", repositoryArgs, "repository-register-retry", 7))
-	if err != nil || !repositoryRetry.Idempotent || repositoryRetry.WorkspaceRevision != 7 {
+	repositoryRetry, err := service.Execute(ctx, request("repository.register", repositoryArgs, "repository-register-retry", 8))
+	if err != nil || !repositoryRetry.Idempotent || repositoryRetry.WorkspaceRevision != 8 {
 		t.Fatalf("repository retry mismatch: %#v %v", repositoryRetry, err)
 	}
 	if projectionKeys(t, repositoryResult.Projection, "repository") != projectionKeys(t, repositoryRetry.Projection, "repository") {
@@ -130,14 +177,14 @@ func TestRecordAndGitIndexAgainstPostgres(t *testing.T) {
 	}
 
 	snapshot, err = repo.LoadSnapshot(ctx, postgres.DemoWorkspaceID)
-	if err != nil || snapshot.Workspace.Revision != 7 || len(snapshot.Repositories) != 2 || len(snapshot.Records) != 1 || len(snapshot.Commits) != 1 || len(snapshot.GitObservations) != 1 {
+	if err != nil || snapshot.Workspace.Revision != 8 || len(snapshot.Repositories) != 2 || len(snapshot.Records) != 1 || len(snapshot.Commits) != 1 || len(snapshot.GitObservations) != 1 {
 		t.Fatalf("Record/Git snapshot mismatch: %#v %v", snapshot, err)
 	}
-	if snapshot.Records[0].State != "committed_unverified" || snapshot.Records[0].CommitSHA != commitSHA || snapshot.Commits[0].VerificationState != "reported" {
+	if snapshot.Records[0].State != "verified" || snapshot.Records[0].CommitSHA != commitSHA || snapshot.Commits[0].VerificationState != "remote_verified" {
 		t.Fatalf("Record/Git state mismatch: records=%#v commits=%#v", snapshot.Records, snapshot.Commits)
 	}
 	events, err := repo.Events(ctx, postgres.DemoWorkspaceID)
-	if err != nil || len(events) != 7 {
+	if err != nil || len(events) != 9 {
 		t.Fatalf("Record/Git Events mismatch: %d %v", len(events), err)
 	}
 	for _, event := range events {
@@ -149,11 +196,12 @@ func TestRecordAndGitIndexAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	closedCommands := []application.CommandRequest{
-		request("repository.register", repositoryArgs, "closed-repository", 7),
-		request("record.register", recordArgs, "closed-record", 7),
-		request("record.attach_commit", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "recordId": recordID, "commitSha": commitSHA, "blobSha": blobSHA}, "closed-record-commit", 7),
-		request("commit.attach", commitArgs, "closed-commit", 7),
-		request("git.observe", observationArgs, "closed-observation", 7),
+		request("repository.register", repositoryArgs, "closed-repository", 8),
+		request("record.register", recordArgs, "closed-record", 8),
+		request("record.attach_commit", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "recordId": recordID, "commitSha": commitSHA, "blobSha": blobSHA}, "closed-record-commit", 8),
+		request("commit.attach", commitArgs, "closed-commit", 8),
+		request("commit.verify_remote", map[string]any{"workspaceId": postgres.DemoWorkspaceID, "commitId": commitID, "remoteRef": "refs/heads/main"}, "closed-remote-verify", 8),
+		request("git.observe", observationArgs, "closed-observation", 8),
 	}
 	for _, command := range closedCommands {
 		_, err = service.Execute(ctx, command)

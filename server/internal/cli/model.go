@@ -86,6 +86,7 @@ var primaryArgument = map[string]string{
 	"gate.pass_task": "gateTaskId", "gate.revoke_task_pass": "gateTaskId",
 	"run.start": "taskId", "run.heartbeat": "runId", "run.succeed": "runId", "run.fail": "runId", "run.cancel": "runId", "run.interrupt": "runId", "run.correct": "runId",
 	"record.register": "recordId", "record.attach_commit": "recordId",
+	"commit.verify_remote": "commitId",
 }
 
 func Parse(args []string) (Invocation, error) {

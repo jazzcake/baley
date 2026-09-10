@@ -14,7 +14,7 @@
     }
   },
   "mcpCatalog": {
-    "catalogVersion": "1.3.0",
+    "catalogVersion": "1.4.0",
     "defaultProfile": "compact",
     "profiles": {
       "compact": {
@@ -80,7 +80,7 @@
       "previewTool": "baley_command_preview",
       "operatorExecuteTool": "baley_command_execute",
       "humanDecisionExecuteTool": "baley_command_execute_with_approval",
-      "httpCommandCount": 49,
+      "httpCommandCount": 50,
       "unknownCommandHandling": "reject_before_http",
       "commandValidationAuthority": "server"
     }
@@ -258,6 +258,7 @@
     "record.register": { "capability": "record:operate", "humanApproval": "none" },
     "record.attach_commit": { "capability": "record:operate", "humanApproval": "none" },
     "commit.attach": { "capability": "record:operate", "humanApproval": "none" },
+    "commit.verify_remote": { "capability": "record:operate", "humanApproval": "none", "authority": "configured_repository_remote_and_provider_fetched_branch_ref", "effect": "atomically_remote_verifies_commit_and_all_matching_records" },
     "git.observe": { "capability": "record:operate", "humanApproval": "none" }
   }
 }

@@ -261,6 +261,7 @@ func TestCommandCatalogAndProfileDiagnosticsAreExplicit(t *testing.T) {
 		t.Fatalf("command catalog=%#v", result.StructuredContent)
 	}
 	assertCommandClassification(t, commands, "task.update", string(commandClassOperator), "baley_command_execute", "none")
+	assertCommandClassification(t, commands, "commit.verify_remote", string(commandClassOperator), "baley_command_execute", "none")
 	assertCommandClassification(t, commands, "task.confirm", string(commandClassHuman), "baley_command_execute_with_approval", "always")
 	assertCommandClassification(t, commands, "gate.attach_task", string(commandClassConditional), "baley_command_execute_with_approval", "when_from_phase_active")
 }
@@ -430,8 +431,8 @@ func TestCommandDescriptorsAreUniqueAndSorted(t *testing.T) {
 			t.Fatalf("duplicate command descriptor %s", names[index])
 		}
 	}
-	if len(commandDescriptors) != 49 {
-		t.Fatalf("command descriptor count=%d, want 49 HTTP commands", len(commandDescriptors))
+	if len(commandDescriptors) != 50 {
+		t.Fatalf("command descriptor count=%d, want 50 HTTP commands", len(commandDescriptors))
 	}
 	for _, descriptor := range commandDescriptors {
 		if strings.TrimSpace(descriptor.Name) != descriptor.Name {

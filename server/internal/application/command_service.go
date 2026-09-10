@@ -19,11 +19,18 @@ import (
 )
 
 type Service struct {
-	repo Repository
-	now  func() time.Time
+	repo           Repository
+	now            func() time.Time
+	remoteVerifier RemoteGitVerifier
 }
 
-func NewService(repo Repository) *Service { return &Service{repo: repo, now: time.Now} }
+func NewService(repo Repository) *Service {
+	return NewServiceWithRemoteVerifier(repo, newCommandRemoteGitVerifier())
+}
+
+func NewServiceWithRemoteVerifier(repo Repository, verifier RemoteGitVerifier) *Service {
+	return &Service{repo: repo, now: time.Now, remoteVerifier: verifier}
+}
 
 type workspaceMutationArgs struct {
 	WorkspaceID string `json:"workspaceId"`
@@ -270,6 +277,11 @@ type commitAttachArgs struct {
 	RepositoryID string                `json:"repositoryId"`
 	CommitSHA    string                `json:"commitSha"`
 	Relation     domain.CommitRelation `json:"relation"`
+}
+type commitVerifyRemoteArgs struct {
+	WorkspaceID string `json:"workspaceId"`
+	CommitID    string `json:"commitId"`
+	RemoteRef   string `json:"remoteRef"`
 }
 type gitObserveArgs struct {
 	WorkspaceID   string    `json:"workspaceId"`
@@ -1762,6 +1774,94 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		plan.CommitReference = &commit
 		plan.Events = []EventWrite{{Type: "commit.attached", Payload: map[string]any{"commitId": commit.ID, "taskId": commit.TaskID, "repositoryId": commit.RepositoryID, "commitSha": commit.CommitSHA, "relation": commit.Relation}}}
 		result.ProjectedDiff = map[string]any{"commit": commitProjection(commit), "outcome": domain.RunTransitionApplied}
+	case commitVerifyRemoteArgs:
+		result.RequiredCapability = "record:operate"
+		plan.EntityType, plan.EntityID = "commit_reference", args.CommitID
+		if snapshot.Workspace.State == string(domain.WorkspaceClosed) || !isUUID(args.CommitID) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: args.CommitID})
+			break
+		}
+		existingCommit := findCommit(snapshot.Commits, args.CommitID)
+		if existingCommit == nil {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeNotFound, EntityID: args.CommitID})
+			break
+		}
+		repository := findRepository(snapshot.Repositories, existingCommit.RepositoryID)
+		if repository == nil || !validRemoteVerificationRef(args.RemoteRef) {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
+			break
+		}
+		matchingRecords := make([]TaskRecordProjection, 0)
+		allVerified := true
+		for _, record := range snapshot.Records {
+			if record.RepositoryID != existingCommit.RepositoryID || record.CommitSHA != existingCommit.CommitSHA {
+				continue
+			}
+			matchingRecords = append(matchingRecords, record)
+			if record.State != string(domain.RecordVerified) {
+				allVerified = false
+			}
+		}
+		if existingCommit.VerificationState == string(domain.CommitRemoteVerified) {
+			if !allVerified {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
+				break
+			}
+			plan.NoWorkspaceRevision, plan.IdempotentNoMutation = true, true
+			result.ProjectedDiff = map[string]any{"commit": existingCommit, "records": matchingRecords, "outcome": domain.RunTransitionIdempotent}
+			break
+		}
+		for _, record := range matchingRecords {
+			if record.State != string(domain.RecordCommittedUnverified) || record.BlobSHA == "" || record.WorkingTreeHash == "" {
+				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: record.ID})
+			}
+		}
+		if len(result.Errors) > 0 {
+			break
+		}
+		verifiedCommit := domainRecordCommit(*existingCommit, args.WorkspaceID)
+		verifiedRecords := make([]domain.TaskRecord, 0, len(matchingRecords))
+		for _, record := range matchingRecords {
+			verifiedRecords = append(verifiedRecords, domainRecord(record, args.WorkspaceID))
+		}
+		result.ProjectedDiff = map[string]any{"commit": commitProjection(verifiedCommit.MarkRemoteVerified()), "records": projectedVerifiedRecords(verifiedRecords), "outcome": domain.RunTransitionApplied}
+		if !executing {
+			break
+		}
+		if s.remoteVerifier == nil {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
+			break
+		}
+		evidence, verifyErr := s.remoteVerifier.Verify(ctx, *repository, *existingCommit, strings.TrimSpace(args.RemoteRef), matchingRecords)
+		if verifyErr != nil {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
+			break
+		}
+		expectedRef := strings.TrimSpace(args.RemoteRef)
+		if evidence.RepositoryID != repository.ID || evidence.RemoteURL != repository.RemoteURL || evidence.RemoteRef != expectedRef ||
+			evidence.VerifiedAt.IsZero() || strings.TrimSpace(evidence.Verifier) == "" {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
+			break
+		}
+		verifiedCommit, verifiedRecords, verifyErr = domain.ApplyRemoteVerification(verifiedCommit, verifiedRecords, evidence.RepositoryID, evidence.RemoteRef, evidence.RefTipSHA, evidence.CommitSHA, remoteEvidenceRecords(evidence.Records))
+		if verifyErr != nil {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
+			break
+		}
+		plan.CommitReference, plan.VerifiedRecords, plan.RemoteVerification = &verifiedCommit, verifiedRecords, &evidence
+		plan.Events = []EventWrite{{Type: "commit.remote_verified", Payload: map[string]any{
+			"commitId": verifiedCommit.ID, "repositoryId": evidence.RepositoryID, "remoteUrl": evidence.RemoteURL,
+			"remoteRef": evidence.RemoteRef, "refTipSha": evidence.RefTipSHA, "commitSha": evidence.CommitSHA,
+			"verifiedAt": evidence.VerifiedAt, "verifier": evidence.Verifier, "recordIds": remoteEvidenceRecordIDs(evidence.Records),
+		}}}
+		for _, recordEvidence := range evidence.Records {
+			plan.Events = append(plan.Events, EventWrite{Type: "record.remote_verified", EntityType: "task_record", EntityID: recordEvidence.RecordID, Payload: map[string]any{
+				"recordId": recordEvidence.RecordID, "commitId": verifiedCommit.ID, "repositoryId": evidence.RepositoryID,
+				"commitSha": evidence.CommitSHA, "relativePath": recordEvidence.RelativePath, "blobSha": recordEvidence.BlobSHA,
+				"contentHash": recordEvidence.ContentHash, "remoteRef": evidence.RemoteRef, "refTipSha": evidence.RefTipSHA,
+			}})
+		}
+		result.ProjectedDiff = map[string]any{"commit": commitProjection(verifiedCommit), "records": projectedVerifiedRecords(verifiedRecords), "verification": evidence, "outcome": domain.RunTransitionApplied}
 	case gitObserveArgs:
 		result.RequiredCapability = "record:operate"
 		plan.EntityType, plan.EntityID = "run_git_observation", args.ObservationID
@@ -2279,6 +2379,8 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 		target = &recordAttachCommitArgs{}
 	case "commit.attach":
 		target = &commitAttachArgs{}
+	case "commit.verify_remote":
+		target = &commitVerifyRemoteArgs{}
 	case "git.observe":
 		target = &gitObserveArgs{}
 	default:
@@ -2371,6 +2473,8 @@ func decodeArguments(name string, raw json.RawMessage) (string, any, error) {
 	case *recordAttachCommitArgs:
 		return v.WorkspaceID, *v, nil
 	case *commitAttachArgs:
+		return v.WorkspaceID, *v, nil
+	case *commitVerifyRemoteArgs:
 		return v.WorkspaceID, *v, nil
 	case *gitObserveArgs:
 		return v.WorkspaceID, *v, nil
@@ -2524,6 +2628,43 @@ func domainRepository(value RepositoryProjection, workspaceID string) domain.Rep
 
 func domainRecord(value TaskRecordProjection, workspaceID string) domain.TaskRecord {
 	return domain.TaskRecord{ID: value.ID, WorkspaceID: workspaceID, TaskID: value.TaskID, RunID: value.RunID, Type: domain.RecordType(value.Type), RepositoryID: value.RepositoryID, RelativePath: value.RelativePath, WorkingTreeHash: value.WorkingTreeHash, CommitSHA: value.CommitSHA, BlobSHA: value.BlobSHA, State: domain.RecordState(value.State), ShortSummary: value.ShortSummary, SupersedesRecordID: value.SupersedesRecordID}
+}
+
+func domainRecordCommit(value CommitReferenceProjection, workspaceID string) domain.CommitReference {
+	return domain.CommitReference{ID: value.ID, WorkspaceID: workspaceID, TaskID: value.TaskID, RunID: value.RunID, RepositoryID: value.RepositoryID, CommitSHA: value.CommitSHA, Relation: domain.CommitRelation(value.Relation), VerificationState: domain.CommitVerificationState(value.VerificationState)}
+}
+
+func projectedVerifiedRecords(values []domain.TaskRecord) []TaskRecordProjection {
+	result := make([]TaskRecordProjection, 0, len(values))
+	for _, value := range values {
+		value.State = domain.RecordVerified
+		result = append(result, recordProjection(value))
+	}
+	return result
+}
+
+func remoteEvidenceRecords(values []RemoteRecordEvidence) []domain.RemoteRecordVerification {
+	result := make([]domain.RemoteRecordVerification, 0, len(values))
+	for _, value := range values {
+		result = append(result, domain.RemoteRecordVerification{RecordID: value.RecordID, RelativePath: value.RelativePath, BlobSHA: value.BlobSHA, ContentHash: value.ContentHash})
+	}
+	return result
+}
+
+func remoteEvidenceRecordIDs(values []RemoteRecordEvidence) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, value.RecordID)
+	}
+	return result
+}
+
+var remoteVerificationRefPattern = regexp.MustCompile(`^refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+
+func validRemoteVerificationRef(value string) bool {
+	value = strings.TrimSpace(value)
+	return remoteVerificationRefPattern.MatchString(value) && !strings.Contains(value, "..") && !strings.Contains(value, "//") &&
+		!strings.HasSuffix(value, "/") && !strings.HasSuffix(value, ".") && !strings.HasSuffix(value, ".lock")
 }
 
 func repositoryProjection(value domain.Repository) RepositoryProjection {
