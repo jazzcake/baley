@@ -1,12 +1,12 @@
 ---
 baley_record: 1
-record_id: "c048f896-6933-48bc-8853-4cf64ce3b3eb"
+record_id: "d79be8aa-bcd1-4edc-a3d0-4f0d89761e47"
 task_id: 186
 record_type: detailed-plan
 run_id: "8e932014-ae7d-4a1a-ae7c-c02011eceef5"
 created_at: "2026-09-10T14:38:06+09:00"
 created_by: "codex"
-supersedes: null
+supersedes: "c048f896-6933-48bc-8853-4cf64ce3b3eb"
 status: implemented
 ---
 
