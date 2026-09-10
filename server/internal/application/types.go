@@ -202,6 +202,7 @@ type CommitReferenceProjection struct {
 	CommitSHA         string    `json:"commitSha"`
 	Relation          string    `json:"relation"`
 	VerificationState string    `json:"verificationState"`
+	RemoteRef         string    `json:"remoteRef,omitempty"`
 	ObservedAt        time.Time `json:"-"`
 }
 type GitObservationProjection struct {
@@ -384,6 +385,7 @@ type MutationPlan struct {
 	CommitReference         *domain.CommitReference
 	VerifiedRecords         []domain.TaskRecord
 	RemoteVerification      *RemoteVerificationEvidence
+	CommitAlreadyVerified   bool
 	GitObservation          *domain.RunGitObservation
 	NoWorkspaceRevision     bool
 	IdempotentNoMutation    bool

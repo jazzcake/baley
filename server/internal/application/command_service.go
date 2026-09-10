@@ -1792,6 +1792,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			break
 		}
 		matchingRecords := make([]TaskRecordProjection, 0)
+		unverifiedRecords := make([]TaskRecordProjection, 0)
 		allVerified := true
 		for _, record := range snapshot.Records {
 			if record.RepositoryID != existingCommit.RepositoryID || record.CommitSHA != existingCommit.CommitSHA {
@@ -1800,18 +1801,26 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			matchingRecords = append(matchingRecords, record)
 			if record.State != string(domain.RecordVerified) {
 				allVerified = false
+				unverifiedRecords = append(unverifiedRecords, record)
 			}
 		}
+		if len(matchingRecords) == 0 {
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
+			break
+		}
 		if existingCommit.VerificationState == string(domain.CommitRemoteVerified) {
-			if !allVerified {
+			if existingCommit.RemoteRef == "" || existingCommit.RemoteRef != strings.TrimSpace(args.RemoteRef) {
 				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
 				break
 			}
-			plan.NoWorkspaceRevision, plan.IdempotentNoMutation = true, true
-			result.ProjectedDiff = map[string]any{"commit": existingCommit, "records": matchingRecords, "outcome": domain.RunTransitionIdempotent}
-			break
+			if allVerified {
+				plan.NoWorkspaceRevision, plan.IdempotentNoMutation = true, true
+				result.ProjectedDiff = map[string]any{"commit": existingCommit, "records": matchingRecords, "outcome": domain.RunTransitionIdempotent}
+				break
+			}
+			plan.CommitAlreadyVerified = true
 		}
-		for _, record := range matchingRecords {
+		for _, record := range unverifiedRecords {
 			if record.State != string(domain.RecordCommittedUnverified) || record.BlobSHA == "" || record.WorkingTreeHash == "" {
 				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: record.ID})
 			}
@@ -1820,8 +1829,8 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			break
 		}
 		verifiedCommit := domainRecordCommit(*existingCommit, args.WorkspaceID)
-		verifiedRecords := make([]domain.TaskRecord, 0, len(matchingRecords))
-		for _, record := range matchingRecords {
+		verifiedRecords := make([]domain.TaskRecord, 0, len(unverifiedRecords))
+		for _, record := range unverifiedRecords {
 			verifiedRecords = append(verifiedRecords, domainRecord(record, args.WorkspaceID))
 		}
 		result.ProjectedDiff = map[string]any{"commit": commitProjection(verifiedCommit.MarkRemoteVerified()), "records": projectedVerifiedRecords(verifiedRecords), "outcome": domain.RunTransitionApplied}
@@ -1832,7 +1841,7 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
 			break
 		}
-		evidence, verifyErr := s.remoteVerifier.Verify(ctx, *repository, *existingCommit, strings.TrimSpace(args.RemoteRef), matchingRecords)
+		evidence, verifyErr := s.remoteVerifier.Verify(ctx, *repository, *existingCommit, strings.TrimSpace(args.RemoteRef), unverifiedRecords)
 		if verifyErr != nil {
 			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeCommitRemoteUnverified, EntityID: args.CommitID})
 			break

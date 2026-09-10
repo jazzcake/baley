@@ -353,13 +353,15 @@ func loadSnapshot(ctx context.Context, q querier, wid string, locked bool) (appl
 		s.Records = append(s.Records, v)
 	}
 	rows.Close()
-	rows, err = q.Query(ctx, "SELECT id,task_id,COALESCE(run_id,''),repository_id,commit_sha,relation,verification_state,created_at FROM commit_references WHERE workspace_id=$1 ORDER BY created_at,id", wid)
+	rows, err = q.Query(ctx, `SELECT c.id,c.task_id,COALESCE(c.run_id,''),c.repository_id,c.commit_sha,c.relation,c.verification_state,
+		COALESCE((SELECT e.payload->>'remoteRef' FROM events e WHERE e.workspace_id=c.workspace_id AND e.entity_type='commit_reference' AND e.entity_id=c.id::text AND e.event_type='commit.remote_verified' ORDER BY e.workspace_revision DESC,e.command_event_index DESC,e.id DESC LIMIT 1),''),c.created_at
+		FROM commit_references c WHERE c.workspace_id=$1 ORDER BY c.created_at,c.id`, wid)
 	if err != nil {
 		return s, err
 	}
 	for rows.Next() {
 		var v application.CommitReferenceProjection
-		if err = rows.Scan(&v.ID, &v.TaskID, &v.RunID, &v.RepositoryID, &v.CommitSHA, &v.Relation, &v.VerificationState, &v.ObservedAt); err != nil {
+		if err = rows.Scan(&v.ID, &v.TaskID, &v.RunID, &v.RepositoryID, &v.CommitSHA, &v.Relation, &v.VerificationState, &v.RemoteRef, &v.ObservedAt); err != nil {
 			rows.Close()
 			return s, err
 		}
@@ -1385,7 +1387,11 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 			return result, fmt.Errorf("commit.verify_remote plan is missing verified evidence")
 		}
 		var tag pgconn.CommandTag
-		tag, err = tx.Exec(ctx, "UPDATE commit_references SET verification_state=$1 WHERE workspace_id=$2 AND id=$3 AND verification_state='reported'", commit.VerificationState, wid, commit.ID)
+		expectedState := "reported"
+		if plan.CommitAlreadyVerified {
+			expectedState = "remote_verified"
+		}
+		tag, err = tx.Exec(ctx, "UPDATE commit_references SET verification_state=$1 WHERE workspace_id=$2 AND id=$3 AND verification_state=$4", commit.VerificationState, wid, commit.ID, expectedState)
 		if err == nil && tag.RowsAffected() != 1 {
 			err = &application.CommandError{Code: domain.CodeCommitRemoteUnverified, Message: "commit reference state changed during remote verification"}
 		}
