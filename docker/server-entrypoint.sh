@@ -22,5 +22,8 @@ if [ ! -s "$oidc_state_file" ]; then
   head -c 32 /dev/urandom | base64 > "$oidc_state_file"
 fi
 export BALEY_OIDC_STATE_SECRET_FILE="$oidc_state_file"
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
 /app/baley-server migrate up
 exec /app/baley-server serve

@@ -18,8 +18,8 @@ func TestMigration16AddsPilotMeasurementRecordType(t *testing.T) {
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "migration-16-integration-secret")
 	deletePilotMeasurementRecords(t, url)
 	migrations := filepath.Join("..", "migrations")
-	// Step from latest (28) to the schema immediately before migration 16.
-	for range 13 {
+	// Step from latest (29) to the schema immediately before migration 16.
+	for range 14 {
 		if err := postgres.Migrate(url, migrations, "down"); err != nil {
 			t.Fatal(err)
 		}
@@ -81,9 +81,9 @@ func TestMigration16AddsPilotMeasurementRecordType(t *testing.T) {
 	)`); err != nil {
 		t.Fatalf("post-migration schema rejected pilot-measurement: %v", err)
 	}
-	// Remove migrations 28 through 17. The following downgrade is migration 16
+	// Remove migrations 29 through 17. The following downgrade is migration 16
 	// and must reject the live Record.
-	for range 12 {
+	for range 13 {
 		if err = postgres.Migrate(url, migrations, "down"); err != nil {
 			t.Fatalf("remove migration above 16 before downgrade check: %v", err)
 		}

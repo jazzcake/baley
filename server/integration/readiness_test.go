@@ -20,8 +20,8 @@ func TestRepositoryReadinessAgainstPostgres(t *testing.T) {
 	}
 	defer repo.Pool.Close()
 
-	version, err := repo.Readiness(context.Background(), 28)
-	if err != nil || version != 28 {
+	version, err := repo.Readiness(context.Background(), 29)
+	if err != nil || version != 29 {
 		t.Fatalf("Readiness() version=%d err=%v", version, err)
 	}
 	if _, err = repo.Readiness(context.Background(), 26); err == nil {
@@ -29,5 +29,8 @@ func TestRepositoryReadinessAgainstPostgres(t *testing.T) {
 	}
 	if _, err = repo.Readiness(context.Background(), 27); err == nil {
 		t.Fatal("Readiness accepted the pre-conversational-evidence schema")
+	}
+	if _, err = repo.Readiness(context.Background(), 28); err == nil {
+		t.Fatal("Readiness accepted mutable Event history schema")
 	}
 }

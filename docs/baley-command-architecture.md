@@ -258,6 +258,8 @@ atomically changing the commit and record states and writing immutable Events.
 The first successful Event binds that full ref. A different ref cannot reuse
 the verified state, zero-Record verification is rejected, and Records attached
 later are provider-verified by replaying the command on the same bound ref.
+Schema 29 protects that Event-backed binding with database append-only triggers,
+and the shipped API image uses a PID-1 reaper for timed-out Git transports.
 
 ## 8. Hard error와 warning
 

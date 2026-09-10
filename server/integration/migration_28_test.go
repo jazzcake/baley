@@ -25,15 +25,19 @@ func TestMigration28ConversationalDecisionEvidenceUpDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
+	if err = postgres.Migrate(url, migrations, "down"); err != nil {
+		t.Fatal(err)
+	}
 	assertMigration28Schema(t, ctx, repo, true, 28)
 	if err = postgres.Migrate(url, migrations, "down"); err != nil {
 		t.Fatal(err)
 	}
 	assertMigration28Schema(t, ctx, repo, false, 27)
+	migrateUpTo(t, url, migrations, 28)
+	assertMigration28Schema(t, ctx, repo, true, 28)
 	if err = postgres.Migrate(url, migrations, "up"); err != nil {
 		t.Fatal(err)
 	}
-	assertMigration28Schema(t, ctx, repo, true, 28)
 }
 
 func assertMigration28Schema(t *testing.T, ctx context.Context, repo *postgres.Repository, present bool, version int) {
