@@ -30,8 +30,9 @@ func TestMigration14DownUp(t *testing.T) {
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "migration-14-integration-secret")
 	deletePilotMeasurementRecords(t, url)
 	migrations := filepath.Join("..", "migrations")
-	// Exercise migration 14 from the latest schema by stepping back to 13.
-	for range 13 {
+	// Preserve the prior test boundary: step from latest schema 28 back to 14,
+	// then exercise the next migration's account-access compatibility surface.
+	for range 14 {
 		if err := postgres.Migrate(url, migrations, "down"); err != nil {
 			t.Fatal(err)
 		}

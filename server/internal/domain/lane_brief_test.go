@@ -172,11 +172,11 @@ func TestBuildLaneBriefRejectsForeignEvidence(t *testing.T) {
 	}
 }
 
-func TestBuildLaneBriefReportsDanglingAndAllBlockedOpenTasks(t *testing.T) {
+func TestBuildLaneBriefTreatsLeavesAsNormalAndReportsAllBlockedOpenTasks(t *testing.T) {
 	input := laneBriefFixture()
 	brief, evaluation := BuildLaneBrief(input)
-	if evaluation.HasErrors() || !hasDiagnostic(brief.Warnings, CodeDanglingPath) {
-		t.Fatalf("dangling Lane Task warning missing: %+v %+v", brief, evaluation)
+	if evaluation.HasErrors() || len(brief.Warnings) != 0 {
+		t.Fatalf("ordinary Lane leaf emitted warning: %+v %+v", brief, evaluation)
 	}
 	input.Workspace.State, input.Workspace.ActivePhaseID = WorkspaceClosed, ""
 	input.Phases[0].State = PhaseCompleted

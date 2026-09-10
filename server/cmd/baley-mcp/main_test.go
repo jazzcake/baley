@@ -611,7 +611,7 @@ func TestTaskConfirmExecuteForwardsWarningAcknowledgementEnvelope(t *testing.T) 
 		ExpectedWorkspaceRevision: 1,
 		IdempotencyKey:            "retry-key",
 		ExecutedByActorID:         "agent",
-		AcknowledgedWarningCodes:  []string{"dangling_path"},
+		AcknowledgedWarningCodes:  []string{"cycle_detected"},
 		ProceedReason:             "Intentional terminal validation task.",
 		ApprovalGrantID:           "11111111-1111-4111-8111-111111111111",
 	}}
@@ -627,7 +627,7 @@ func TestTaskConfirmExecuteForwardsWarningAcknowledgementEnvelope(t *testing.T) 
 		t.Fatalf("missing envelope: %#v", body)
 	}
 	codes, ok := envelope["acknowledgedWarningCodes"].([]any)
-	if !ok || len(codes) != 1 || codes[0] != "dangling_path" {
+	if !ok || len(codes) != 1 || codes[0] != "cycle_detected" {
 		t.Fatalf("warning acknowledgement not forwarded: %#v", envelope)
 	}
 	if envelope["proceedReason"] != "Intentional terminal validation task." {

@@ -98,7 +98,7 @@ exactly these 15 tools:
 - `baley_backlog_list`
 - `baley_command_catalog`
 - `baley_command_execute`
-- `baley_command_execute_with_approval`
+- `baley_command_execute_with_approval` (compatibility-stable name; conversational `task.confirm` uses `decisionEvidence`)
 - `baley_command_preview`
 - `baley_gate_status`
 - `baley_lane_brief`

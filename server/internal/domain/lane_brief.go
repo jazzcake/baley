@@ -161,14 +161,9 @@ func BuildLaneBrief(input LaneBriefInput) (LaneBrief, Evaluation) {
 			gateTaskIDs = append(gateTaskIDs, condition.TaskID)
 		}
 	}
-	graph, graphEvaluation := NewWorkspaceGraph(input.Tasks, input.Dependencies, gateTaskIDs)
+	_, graphEvaluation := NewWorkspaceGraph(input.Tasks, input.Dependencies, gateTaskIDs)
 	if graphEvaluation.HasErrors() {
 		return LaneBrief{}, graphEvaluation
-	}
-	for _, task := range brief.OpenTasks {
-		if graph.isDangling(task.TaskID) {
-			brief.Warnings = append(brief.Warnings, Diagnostic{Code: CodeDanglingPath, EntityID: task.TaskID})
-		}
 	}
 	sortDiagnostics(brief.Warnings)
 

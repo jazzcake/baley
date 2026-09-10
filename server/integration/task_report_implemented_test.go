@@ -45,7 +45,7 @@ func TestTaskReportImplementedAgainstPostgres(t *testing.T) {
 		ProceedReason: "Fixture intentionally verifies warning acknowledgement.",
 	}}
 	preview, err := service.Preview(ctx, base)
-	if err != nil || len(preview.Errors) != 0 || len(preview.Warnings) != 4 {
+	if err != nil || len(preview.Errors) != 0 || len(preview.Warnings) != 3 {
 		t.Fatalf("unexpected preview: %#v %v", preview, err)
 	}
 	if _, err = service.Execute(ctx, base); commandErrorCode(err) != domain.CodeInvalidStateTransition {
@@ -57,7 +57,6 @@ func TestTaskReportImplementedAgainstPostgres(t *testing.T) {
 		domain.CodeMissingDetailedPlan,
 		domain.CodeMissingIndependentReview,
 		domain.CodeMissingCompletionReport,
-		domain.CodeDanglingPath,
 	}
 	result, err := service.Execute(ctx, base)
 	if err != nil || result.WorkspaceRevision != 2 || len(result.EventIDs) != 1 {

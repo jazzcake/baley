@@ -12,13 +12,13 @@ func TestPlanTaskReportImplementedProjectsWarningsEventAndDecision(t *testing.T)
 		{ID: "other-task-report", WorkspaceID: "workspace", TaskID: "other", Type: RecordCompletionReport},
 	}
 	plan := PlanTaskReportImplemented(task, " verified implementation ", records, true, 42, WarningAcknowledgement{
-		Codes:         []string{CodeMissingIndependentReview, CodeMissingCompletionReport, CodeDanglingPath},
+		Codes:         []string{CodeMissingIndependentReview, CodeMissingCompletionReport},
 		ProceedReason: "review will be attached before confirmation",
 	})
 	if plan.Evaluation.HasErrors() || plan.Task.Status != TaskImplemented || plan.Task.ImplementedAssessment != "verified implementation" {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
-	for _, code := range []string{CodeMissingIndependentReview, CodeMissingCompletionReport, CodeDanglingPath} {
+	for _, code := range []string{CodeMissingIndependentReview, CodeMissingCompletionReport} {
 		if !hasDiagnostic(plan.Evaluation.Warnings, code) {
 			t.Errorf("missing warning %s: %+v", code, plan.Evaluation.Warnings)
 		}

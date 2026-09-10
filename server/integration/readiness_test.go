@@ -20,11 +20,14 @@ func TestRepositoryReadinessAgainstPostgres(t *testing.T) {
 	}
 	defer repo.Pool.Close()
 
-	version, err := repo.Readiness(context.Background(), 27)
-	if err != nil || version != 27 {
+	version, err := repo.Readiness(context.Background(), 28)
+	if err != nil || version != 28 {
 		t.Fatalf("Readiness() version=%d err=%v", version, err)
 	}
 	if _, err = repo.Readiness(context.Background(), 26); err == nil {
 		t.Fatal("Readiness accepted an unexpected migration version")
+	}
+	if _, err = repo.Readiness(context.Background(), 27); err == nil {
+		t.Fatal("Readiness accepted the pre-conversational-evidence schema")
 	}
 }

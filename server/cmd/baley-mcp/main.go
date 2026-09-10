@@ -425,13 +425,25 @@ type previewEnvelope struct {
 	InitiatedByActorID        string `json:"initiatedByActorId,omitempty"`
 }
 type executeEnvelope struct {
-	ExpectedWorkspaceRevision int64    `json:"expectedWorkspaceRevision"`
-	IdempotencyKey            string   `json:"idempotencyKey"`
-	ExecutedByActorID         string   `json:"executedByActorId"`
-	InitiatedByActorID        string   `json:"initiatedByActorId,omitempty"`
-	AcknowledgedWarningCodes  []string `json:"acknowledgedWarningCodes,omitempty"`
-	ProceedReason             string   `json:"proceedReason,omitempty"`
-	ApprovalGrantID           string   `json:"approvalGrantId"`
+	ExpectedWorkspaceRevision int64                  `json:"expectedWorkspaceRevision"`
+	IdempotencyKey            string                 `json:"idempotencyKey"`
+	ExecutedByActorID         string                 `json:"executedByActorId"`
+	InitiatedByActorID        string                 `json:"initiatedByActorId,omitempty"`
+	AcknowledgedWarningCodes  []string               `json:"acknowledgedWarningCodes,omitempty"`
+	ProceedReason             string                 `json:"proceedReason,omitempty"`
+	ApprovalGrantID           string                 `json:"approvalGrantId"`
+	DecisionEvidence          *decisionEvidenceInput `json:"decisionEvidence,omitempty"`
+}
+type decisionEvidenceInput struct {
+	DecisionID        string `json:"decisionId"`
+	Source            string `json:"source"`
+	ConversationRef   string `json:"conversationRef"`
+	Statement         string `json:"statement"`
+	Scope             string `json:"scope"`
+	Action            string `json:"action"`
+	TaskID            int    `json:"taskId"`
+	WorkspaceRevision int64  `json:"workspaceRevision"`
+	CommandHash       string `json:"commandHash"`
 }
 type automaticEnvelope struct {
 	ExpectedWorkspaceRevision int64  `json:"expectedWorkspaceRevision"`
@@ -1025,6 +1037,9 @@ func executeEnv(v executeEnvelope) map[string]any {
 	}
 	if v.ApprovalGrantID != "" {
 		envelope["approvalGrantId"] = v.ApprovalGrantID
+	}
+	if v.DecisionEvidence != nil {
+		envelope["decisionEvidence"] = v.DecisionEvidence
 	}
 	return envelope
 }

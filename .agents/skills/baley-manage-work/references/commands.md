@@ -91,7 +91,7 @@ dependency.patch {
 }
 ```
 
-Validate the final Workspace graph. Reject self-links, duplicates, cross-Workspace links and cycles. Preserve `phase_order_inversion` when an edge goes from a later Phase to an earlier Phase. A path without an outgoing Task dependency or explicit Gate condition needs an intentional terminal reason or retains `dangling_path`.
+Validate the final Workspace graph. Reject self-links, duplicates, cross-Workspace links and cycles. Preserve `phase_order_inversion` when an edge goes from a later Phase to an earlier Phase. A path without an outgoing Task dependency or Gate condition is a normal leaf. `terminalReason` is optional descriptive metadata; `terminal_path_conflict` continues to reject combining it with an outgoing dependency or Gate condition.
 
 ## Gate condition
 
@@ -140,12 +140,17 @@ Generate client IDs once and reuse them for retries. Keep Runs alive with heartb
   acknowledgedWarningCodes?: [],
   proceedReason?,
   approvalGrantId?
+  decisionEvidence?: {
+    decisionId, source: "conversation", conversationRef, statement,
+    scope: "task" | "all_awaiting_confirmation",
+    action: "task.confirm", taskId, workspaceRevision, commandHash
+  }
 }
 ```
 
-Use `/v1/commands/preview` for a write-free evaluation and `/v1/commands/execute` for mutation. A human-only command references a fresh, short-lived, single-use `approvalGrantId` issued by Baley's authenticated browser session for the exact action, target, Workspace revision, canonical command hash, warning acknowledgement, and optional decision snapshot hash. An Agent must not construct legacy approval fields, copy a token, or reuse a grant for another command.
+Use `/v1/commands/preview` for a write-free evaluation and `/v1/commands/execute` for mutation. Ordinary `task.confirm` carries exact typed `decisionEvidence` from the user's explicit conversation statement. Baley derives the human approver from the authenticated MCP gateway's linked account, revalidates current capability, and binds/consumes the evidence for the exact action, target, Workspace revision, canonical command hash, idempotency key and Agent executor. Never supply an approver Actor ID.
 
-Grouped approval is not supported. Each `task.confirm` or other human-only command requires its own current preview, browser decision, and grant, and a successful command's revision change requires a fresh preview for the next command.
+An explicit `all_awaiting_confirmation` statement may cover multiple eligible Tasks, but it is not a batch mutation. Each Task requires a fresh preview, unique target-bound decision ID, and current revision. Other human-only commands retain browser-session grants where their contract requires one.
 
 Human confirmation never bypasses Task lifecycle rules. A related `pending` or `in_progress` Task that the same implementation fully satisfies must first be reported `implemented` with a shared-evidence assessment. A Task made unnecessary rather than implemented must be proposed for `task.discard`, using a reason such as `superseded by #<id>` when applicable. Partial or uncertain pending/in-progress work stays open; an insufficient `implemented` Task returns through `task.rework`; terminal confirmed/discarded work requires a new follow-up Task.
 

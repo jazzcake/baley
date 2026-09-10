@@ -172,7 +172,7 @@ switch ($Action) {
     $status = docker inspect $PostgresContainer --format '{{.State.Status}}'
     if ($LASTEXITCODE -ne 0 -or ($status | Out-String).Trim() -ne 'running') { throw 'PostgreSQL container is not running' }
     $schema = Get-SchemaVersion $Database
-    if ($schema -notin 25, 27) { throw "expected schema 25 before rollout or 27 after rollout, got $schema" }
+    if ($schema -notin 25, 28) { throw "expected schema 25 before rollout or 28 after rollout, got $schema" }
     git diff --quiet --exit-code
     if ($LASTEXITCODE -ne 0) { throw 'tracked worktree changes must be reviewed before rollout' }
     [pscustomobject]@{ action = $Action; database = $Database; schemaVersion = $schema; tableCounts = (Get-AllTableCounts $Database); commit = (git rev-parse HEAD).Trim() }
@@ -256,10 +256,10 @@ switch ($Action) {
     $env:BALEY_BUILD_TIME = [DateTimeOffset]::UtcNow.ToString('O')
     docker compose run --rm --no-deps --entrypoint /app/baley-server api migrate up
     if ($LASTEXITCODE -ne 0) { throw 'one-shot migration failed' }
-    if ((Get-SchemaVersion $Database) -ne 27) { throw 'migration did not reach schema 27' }
+    if ((Get-SchemaVersion $Database) -ne 28) { throw 'migration did not reach schema 28' }
   }
   'Verify' {
-    if ((Get-SchemaVersion $Database) -ne 27) { throw 'verification requires schema 27' }
+    if ((Get-SchemaVersion $Database) -ne 28) { throw 'verification requires schema 28' }
     Assert-WorkspaceId
     $invalid = Invoke-PsqlScalar $Database "SELECT count(*) FROM task_journal_entries j LEFT JOIN events e ON e.workspace_id=j.workspace_id AND e.id=j.event_id LEFT JOIN commands c ON c.workspace_id=j.workspace_id AND c.id=j.command_id WHERE e.id IS NULL OR c.id IS NULL OR j.recorded_at<>j.occurred_at"
     if ([int]$invalid -ne 0) { throw "$invalid invalid backfill provenance rows" }
@@ -291,13 +291,13 @@ WITH selected_task AS (
     if ([int]$setDifference -ne 0 -or [int]$eligibleCount -ne [int]$journalCount) {
       throw "Task #183 historical Event/Journal projection mismatch: eligible=$eligibleCount journal=$journalCount setDifference=$setDifference"
     }
-    [pscustomobject]@{ action = $Action; schemaVersion = 27; task183EligibleEvents = [int]$eligibleCount; task183JournalRows = [int]$journalCount; task183SetDifference = [int]$setDifference; invalidProvenanceRows = [int]$invalid }
+    [pscustomobject]@{ action = $Action; schemaVersion = 28; task183EligibleEvents = [int]$eligibleCount; task183JournalRows = [int]$journalCount; task183SetDifference = [int]$setDifference; invalidProvenanceRows = [int]$invalid }
   }
   'Rollback' {
-    if ((Get-SchemaVersion $Database) -ne 27) { throw 'application rollback is allowed only while the database remains at schema 27' }
+    if ((Get-SchemaVersion $Database) -ne 28) { throw 'application rollback is allowed only while the database remains at schema 28' }
     if ($RollbackApiImage -notmatch '^sha256:[0-9a-f]{64}$' -or $RollbackViewerImage -notmatch '^sha256:[0-9a-f]{64}$') { throw 'rollback images must be exact sha256 image IDs' }
     $apiSchema = Get-ImageLabel $RollbackApiImage 'org.opencontainers.image.baley.schema-version'
-    if ($apiSchema -ne '27') { throw 'pre-rollout API rollback is forbidden: the exact API image must declare schema 27 compatibility' }
+    if ($apiSchema -ne '28') { throw 'pre-rollout API rollback is forbidden: the exact API image must declare schema 28 compatibility' }
     $apiRevision = Get-ImageLabel $RollbackApiImage 'org.opencontainers.image.revision'
     $viewerRevision = Get-ImageLabel $RollbackViewerImage 'org.opencontainers.image.revision'
     if ($apiRevision -notmatch '^[0-9a-f]{40}$' -or $viewerRevision -ne $apiRevision) { throw 'rollback API and Viewer must declare the same exact 40-character revision' }
@@ -319,11 +319,11 @@ WITH selected_task AS (
     Wait-HealthyContainer $viewerContainerId 'Viewer'
     $viewerRoot = Read-SuccessEndpoint $ViewerBaseUrl '/' 'rollback Viewer root'
     $viewerReady = Read-JsonEndpoint $ViewerBaseUrl '/api/readyz' 'rollback Viewer /api/readyz proxy'
-    if ($viewerReady.status -ne 'ready' -or [int]$viewerReady.schemaVersion -ne 27) { throw 'rollback Viewer /api/readyz proxy did not report ready on schema 27' }
+    if ($viewerReady.status -ne 'ready' -or [int]$viewerReady.schemaVersion -ne 28) { throw 'rollback Viewer /api/readyz proxy did not report ready on schema 28' }
     $ready = Read-JsonEndpoint $ApiBaseUrl '/readyz' 'rollback API /readyz'
-    if ($ready.status -ne 'ready' -or [int]$ready.schemaVersion -ne 27) { throw 'rollback /readyz did not report ready on schema 27' }
+    if ($ready.status -ne 'ready' -or [int]$ready.schemaVersion -ne 28) { throw 'rollback /readyz did not report ready on schema 28' }
     $version = Read-JsonEndpoint $ApiBaseUrl '/versionz' 'rollback API /versionz'
-    if ([int]$version.schemaVersion -ne 27 -or $version.commit -ne $apiRevision) { throw 'rollback /versionz does not match schema 27 and the rollback artifact revision' }
-    [pscustomobject]@{ action = $Action; apiImage = $RollbackApiImage; viewerImage = $RollbackViewerImage; revision = $apiRevision; schemaVersion = 27; containerHealth = 'healthy'; apiContainerHealth = 'healthy'; viewerContainerHealth = 'healthy'; viewerRootStatus = [int]$viewerRoot.StatusCode; viewerReady = $viewerReady; ready = $ready; version = $version }
+    if ([int]$version.schemaVersion -ne 28 -or $version.commit -ne $apiRevision) { throw 'rollback /versionz does not match schema 28 and the rollback artifact revision' }
+    [pscustomobject]@{ action = $Action; apiImage = $RollbackApiImage; viewerImage = $RollbackViewerImage; revision = $apiRevision; schemaVersion = 28; containerHealth = 'healthy'; apiContainerHealth = 'healthy'; viewerContainerHealth = 'healthy'; viewerRootStatus = [int]$viewerRoot.StatusCode; viewerReady = $viewerReady; ready = $ready; version = $version }
   }
 }

@@ -104,13 +104,13 @@ func TestRunAutomaticRunAndRecordLifecycleNeedsNoApproval(t *testing.T) {
 }
 
 func TestRunStopsForWarningsAndPreservesStructuredStaleError(t *testing.T) {
-	client := &fakeClient{preview: application.PreviewResult{ExpectedWorkspaceRevision: 7, Warnings: []domain.Diagnostic{{Code: domain.CodeDanglingPath}}}}
+	client := &fakeClient{preview: application.PreviewResult{ExpectedWorkspaceRevision: 7, Warnings: []domain.Diagnostic{{Code: domain.CodeMissingCompletionReport}}}}
 	invocation, _ := Parse([]string{"task", "report-implemented", "104", "--workspace", "workspace", "--actor", "agent", "--idempotency", "implemented", "--execute"})
 	outcome, err := Run(context.Background(), client, invocation, nil)
-	if err != nil || !reflect.DeepEqual(outcome.WarningAcknowledgementRequired, []string{domain.CodeDanglingPath}) || client.executeCalls != 0 {
+	if err != nil || !reflect.DeepEqual(outcome.WarningAcknowledgementRequired, []string{domain.CodeMissingCompletionReport}) || client.executeCalls != 0 {
 		t.Fatalf("warning did not stop execute: %+v %v", outcome, err)
 	}
-	invocation, _ = Parse([]string{"task", "report-implemented", "104", "--workspace", "workspace", "--actor", "agent", "--idempotency", "implemented", "--ack", domain.CodeDanglingPath, "--execute"})
+	invocation, _ = Parse([]string{"task", "report-implemented", "104", "--workspace", "workspace", "--actor", "agent", "--idempotency", "implemented", "--ack", domain.CodeMissingCompletionReport, "--execute"})
 	client.executeErr = &StructuredError{Code: domain.CodeStaleRevision, Message: "workspace changed"}
 	_, err = Run(context.Background(), client, invocation, nil)
 	if !IsCode(err, domain.CodeStaleRevision) {

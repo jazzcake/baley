@@ -1185,7 +1185,7 @@ func (a *API) preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state, ok := authState(r); ok {
-		req.Principal = &application.CommandPrincipal{AccountID: state.Principal.AccountID, CredentialID: firstNonEmpty(state.Principal.CredentialID, state.Principal.SessionID), WorkspaceID: state.Principal.WorkspaceID, SessionID: state.Principal.SessionID, Subject: state.Principal.Subject}
+		req.Principal = commandPrincipal(state.Principal)
 		req.Envelope.ExecutedByActorID = state.Principal.ActorID
 		req.Envelope.InitiatedByActorID = state.Principal.ActorID
 		workspaceID := commandWorkspaceID(req.Arguments)
@@ -1242,7 +1242,7 @@ func (a *API) execute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state, ok := authState(r); ok {
-		req.Principal = &application.CommandPrincipal{AccountID: state.Principal.AccountID, CredentialID: firstNonEmpty(state.Principal.CredentialID, state.Principal.SessionID), WorkspaceID: state.Principal.WorkspaceID, SessionID: state.Principal.SessionID, Subject: state.Principal.Subject}
+		req.Principal = commandPrincipal(state.Principal)
 		req.Envelope.ExecutedByActorID = state.Principal.ActorID
 		req.Envelope.InitiatedByActorID = state.Principal.ActorID
 		workspaceID := commandWorkspaceID(req.Arguments)
@@ -1259,6 +1259,15 @@ func (a *API) execute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, v)
+}
+
+func commandPrincipal(principal authn.Principal) *application.CommandPrincipal {
+	return &application.CommandPrincipal{
+		AccountID: principal.AccountID, CredentialID: firstNonEmpty(principal.CredentialID, principal.SessionID),
+		WorkspaceID: principal.WorkspaceID, SessionID: principal.SessionID, Subject: principal.Subject,
+		LinkedAccountID: principal.LinkedAccountID, LinkedHumanActorID: principal.LinkedHumanActorID,
+		GatewayRegistrationID: principal.GatewayRegistrationID,
+	}
 }
 
 func commandWorkspaceID(arguments json.RawMessage) string {

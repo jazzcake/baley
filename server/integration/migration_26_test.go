@@ -25,7 +25,8 @@ func TestMigration26TaskJournalUpDownAndAppendOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Pool.Close()
-	// Migration 27 is forward-only. Move its version marker down first, then
+	// Migration 28 owns conversational evidence and migration 27 is forward-only.
+	// Move both version markers down first, then
 	// exercise migration 26's actual schema rollback on the empty projection.
 	if _, err = repo.Pool.Exec(ctx, "SET session_replication_role='replica'; TRUNCATE task_journal_entries; SET session_replication_role='origin'"); err != nil {
 		t.Fatal(err)
@@ -36,9 +37,12 @@ func TestMigration26TaskJournalUpDownAndAppendOnly(t *testing.T) {
 	if err := postgres.Migrate(url, migrations, "down"); err != nil {
 		t.Fatal(err)
 	}
+	if err := postgres.Migrate(url, migrations, "down"); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		if err := postgres.Migrate(url, migrations, "up"); err != nil {
-			t.Errorf("restore migrations 26 and 27: %v", err)
+			t.Errorf("restore migrations 26 through 28: %v", err)
 		}
 	})
 	var tableName *string

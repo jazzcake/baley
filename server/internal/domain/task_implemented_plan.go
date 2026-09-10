@@ -25,7 +25,7 @@ type WarningAcknowledgement struct {
 	Enforce       bool
 }
 
-func PlanTaskReportImplemented(task Task, assessment string, records []TaskRecord, dangling bool, resultingWorkspaceRevision int64, acknowledgement WarningAcknowledgement) TaskImplementedPlan {
+func PlanTaskReportImplemented(task Task, assessment string, records []TaskRecord, _ bool, resultingWorkspaceRevision int64, acknowledgement WarningAcknowledgement) TaskImplementedPlan {
 	plan := TaskImplementedPlan{Task: task, Evaluation: Evaluation{}}
 	if resultingWorkspaceRevision <= 0 {
 		plan.Evaluation.Errors = append(plan.Evaluation.Errors, Diagnostic{Code: CodeInvalidStateTransition, EntityID: task.WorkspaceID})
@@ -54,9 +54,6 @@ func PlanTaskReportImplemented(task Task, assessment string, records []TaskRecor
 		if !present[required.typeValue] {
 			plan.Evaluation.Warnings = append(plan.Evaluation.Warnings, Diagnostic{Code: required.code, EntityID: task.ID})
 		}
-	}
-	if dangling {
-		plan.Evaluation.Warnings = append(plan.Evaluation.Warnings, Diagnostic{Code: CodeDanglingPath, EntityID: task.ID})
 	}
 	plan.Evaluation.sort()
 	warningCodes := make([]string, 0, len(plan.Evaluation.Warnings))

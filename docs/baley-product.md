@@ -138,7 +138,7 @@ V1 상태:
 
 `blocked`는 상태가 아니라 blocker metadata다. 구현완료의 의미 품질은 Baley가 판정하지 않으며 구현 주체의 assessment, 완료보고와 잔여 우려를 기록한다.
 
-한 Task는 여러 선행·후행 Task를 가질 수 있다. Workspace의 dependency graph는 Lane과 Phase 경계를 넘을 수 있고, 하나로 연결될 필요 없이 여러 disconnected DAG component를 허용한다. 뒤 Phase에서 앞 Phase로 향하는 관계도 허용하되 진행 순서가 뒤집힐 수 있음을 경고한다. Task 경로는 후행 Task, outgoing Gate 조건 또는 사유가 있는 intentional leaf로 끝난다. 셋 중 어느 것도 없는 완료 단계의 Task는 `dangling_path` warning을 가진다.
+한 Task는 여러 선행·후행 Task를 가질 수 있다. Workspace의 dependency graph는 Lane과 Phase 경계를 넘을 수 있고, 하나로 연결될 필요 없이 여러 disconnected DAG component를 허용한다. 뒤 Phase에서 앞 Phase로 향하는 관계도 허용하되 진행 순서가 뒤집힐 수 있음을 경고한다. 후행 Task나 outgoing Gate 조건이 없는 DAG leaf는 정상이다. `terminalReason`은 선택적 설명 metadata이며, reason이 있는 Task에 후행 dependency나 Gate 조건을 동시에 두는 `terminal_path_conflict`는 유지한다.
 
 ### 5.5 Gate
 
@@ -209,7 +209,7 @@ Baley는 독립 Agent 리뷰의 자격과 구현 품질을 인증하지 않고 R
 - 뒤 Phase에서 앞 Phase로 향하는 dependency는 허용하되 `phase_order_inversion` warning을 표시한다.
 - dependency 방향 변경은 remove/add를 포함하는 atomic patch로 처리하고 서버가 최종 graph의 cycle 여부를 검증한다.
 - 여러 branch는 merge Task 또는 outgoing Gate에서 본류로 합류할 수 있다.
-- 후행 Task·Gate 연결·intentional leaf 사유가 모두 없으면 `dangling_path` warning이다.
+- 후행 Task나 Gate 연결이 없는 Task는 정상 leaf이며 terminal reason을 요구하지 않는다.
 - dependency는 상세계획·리뷰·보고가 아니라 후행 Task의 implementation/review-response Run 시작을 차단한다.
 - Gate는 task dependency와 구별되는 타입이 있는 node다.
 - Gate 조건에 연결되지 않은 task는 정상적인 독립 경로이며, 공통 Phase에는 속한다.

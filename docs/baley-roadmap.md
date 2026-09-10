@@ -123,7 +123,7 @@ repo-scoped Baley Skill과 command contract를 만든다. UI는 read-only로 유
 - Task/dependency/Gate command schema
 - 복수 predecessor/successor와 disconnected DAG component
 - atomic dependency patch와 cycle rollback
-- Gate·후행 Task·intentional leaf가 없는 `dangling_path` warning
+- 후행 Task나 Gate가 없는 정상 DAG leaf
 - Task의 pending/in_progress/implemented/confirmed/discarded 상태
 - 자동 Run 상태 갱신과 repository Task Record 규약
 - 외부 서버와 로컬 LLM의 책임 경계
@@ -147,7 +147,7 @@ repo-scoped Baley Skill과 command contract를 만든다. UI는 read-only로 유
 - [x] dependency가 Lane과 Phase 경계를 넘을 수 있고 cycle만 절대 금지된다.
 - [x] 뒤 Phase에서 앞 Phase로 향하는 dependency는 허용하되 warning을 반환한다.
 - [x] cross-Phase dependency는 명시적 Gate–Task 연결 없이는 Gate readiness에 영향을 주지 않는다.
-- [x] dangling path가 후행 Task, Gate 합류 또는 intentional leaf로 정리된다.
+- [x] DAG leaf는 정상이며 terminal reason은 선택적 설명 metadata다.
 - [x] Gate에 연결된 모든 Task의 `confirmed` 또는 Gate 한정 `pass`가 구별된다.
 - [x] `fromPhase` 밖의 Task를 Gate 조건으로 연결하는 것과 잘못된 Gate 전이 방향이 preview 단계에서 거부된다.
 - [x] 모든 조건이 해소되기 전에는 Gate 전이가 거부된다.

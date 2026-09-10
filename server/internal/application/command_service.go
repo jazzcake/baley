@@ -351,6 +351,9 @@ func (s *Service) Execute(ctx context.Context, request CommandRequest) (result E
 		}
 		request.Envelope.ExecutedByActorID = authenticatedActor
 		request.Envelope.InitiatedByActorID = authenticatedActor
+		if request.Envelope.DecisionEvidence != nil && request.Principal.LinkedHumanActorID != "" {
+			request.Envelope.InitiatedByActorID = request.Principal.LinkedHumanActorID
+		}
 		if request.Envelope.HumanApprovalAttestation != nil {
 			return ExecutionResult{}, &CommandError{Code: domain.CodeHumanApprovalMismatch, Message: "legacy human approval fields are not authority in enforced mode"}
 		}
@@ -369,6 +372,7 @@ func (s *Service) Execute(ctx context.Context, request CommandRequest) (result E
 			strings.TrimSpace(request.Envelope.ApprovalGrantID),
 			strings.Join(request.Envelope.AcknowledgedWarningCodes, "\x1f"),
 			strings.TrimSpace(request.Envelope.ProceedReason),
+			decisionEvidenceFingerprint(request.Envelope.DecisionEvidence),
 		}, "\x00")))
 		fingerprint += ":" + hex.EncodeToString(securityDigest[:])
 	}
@@ -1200,9 +1204,6 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 			plan.TaskStatus = "confirmed"
 			result.ProjectedDiff = map[string]any{"taskId": args.TaskID, "status": map[string]string{"before": task.Status, "after": "confirmed"}}
 			payload := map[string]any{"taskId": task.ID}
-			if isTaskDangling(snapshot, task.ID) {
-				result.Warnings = append(result.Warnings, Diagnostic{Code: domain.CodeDanglingPath, EntityID: task.ID})
-			}
 			if executing && !sameDiagnosticCodes(result.Warnings, request.Envelope.AcknowledgedWarningCodes) {
 				result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeInvalidStateTransition, EntityID: "warnings"})
 			}
@@ -1815,13 +1816,24 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 	result.EntityType, result.EntityID = plan.EntityType, plan.EntityID
 	result.CommandHash = hashCommand(request.Name, typed, request.Envelope.ExpectedWorkspaceRevision, decisionHash)
 	requiresHumanApproval := requiresHumanApproval(request.Name) || plan.ForceHumanApproval
-	if executing && !requiresHumanApproval && (request.Envelope.HumanApprovalAttestation != nil || request.Envelope.ApprovalGrantID != "") {
+	if executing && !requiresHumanApproval && (request.Envelope.HumanApprovalAttestation != nil || request.Envelope.ApprovalGrantID != "" || request.Envelope.DecisionEvidence != nil) {
 		result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeHumanApprovalMismatch, EntityID: plan.EntityID})
 	}
-	if requiresHumanApproval && (!executing || request.Envelope.HumanApprovalAttestation == nil && request.Envelope.ApprovalGrantID == "") {
+	if requiresHumanApproval && !executing {
 		result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeHumanApprovalRequired, EntityID: plan.EntityID})
+	} else if executing && requiresHumanApproval && request.Envelope.HumanApprovalAttestation == nil && request.Envelope.ApprovalGrantID == "" && request.Envelope.DecisionEvidence == nil {
+		code := domain.CodeHumanApprovalRequired
+		if request.Name == "task.confirm" {
+			code = domain.CodeDecisionEvidenceRequired
+		}
+		result.Errors = append(result.Errors, Diagnostic{Code: code, EntityID: plan.EntityID})
 	}
-	if executing && requiresHumanApproval && request.Envelope.ApprovalGrantID == "" {
+	if executing && requiresHumanApproval && request.Envelope.DecisionEvidence != nil {
+		if request.Name != "task.confirm" || !validConversationalDecision(*request.Envelope.DecisionEvidence, typed, result) {
+			result.Errors = removeDiagnostic(result.Errors, domain.CodeHumanApprovalRequired)
+			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeDecisionEvidenceMismatch, EntityID: plan.EntityID})
+		}
+	} else if executing && requiresHumanApproval && request.Envelope.ApprovalGrantID == "" {
 		att := request.Envelope.HumanApprovalAttestation
 		valid := att != nil && att.ApprovedCommandHash == result.CommandHash && (decisionHash == "" || att.DecisionSnapshotHash == decisionHash)
 		if valid {
@@ -1837,6 +1849,84 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		return result, plan, &CommandError{Code: result.Errors[0].Code, Message: "command evaluation failed: " + result.Errors[0].Code}
 	}
 	return result, plan, nil
+}
+
+func decisionEvidenceFingerprint(evidence *ConversationalDecisionEvidence) string {
+	if evidence == nil {
+		return ""
+	}
+	raw, _ := json.Marshal(evidence)
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+func validConversationalDecision(evidence ConversationalDecisionEvidence, typed any, result PreviewResult) bool {
+	args, ok := typed.(taskConfirmArgs)
+	if !ok || !validUUIDText(evidence.DecisionID) || strings.TrimSpace(evidence.Source) != "conversation" ||
+		strings.TrimSpace(evidence.ConversationRef) == "" || strings.TrimSpace(evidence.Statement) == "" ||
+		(evidence.Scope != "task" && evidence.Scope != "all_awaiting_confirmation") || evidence.Action != "task.confirm" ||
+		evidence.TaskID != args.TaskID || evidence.WorkspaceRevision != result.ExpectedWorkspaceRevision || evidence.CommandHash != result.CommandHash ||
+		!statementSupportsConversationalDecision(evidence.Statement, evidence.Scope, evidence.TaskID) {
+		return false
+	}
+	return true
+}
+
+func statementSupportsConversationalDecision(statement, scope string, taskID int) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(statement), " "))
+	for _, negation := range []string{
+		"do not confirm", "do not complete", "do not approve",
+		"don't confirm", "don't complete", "don't approve",
+		"don’t confirm", "don’t complete", "don’t approve",
+		"dont confirm", "dont complete", "dont approve",
+		"not confirm", "not complete", "not approve",
+		"never confirm", "never complete", "never approve",
+		"확인하지", "완료하지", "승인하지",
+		"확인 안", "완료 안", "승인 안", "하지 마", "하지마", "취소",
+	} {
+		if strings.Contains(normalized, negation) {
+			return false
+		}
+	}
+	decisionVerb := strings.Contains(normalized, "confirm") || strings.Contains(normalized, "complete") ||
+		strings.Contains(normalized, "approve") || strings.Contains(normalized, "확인") || strings.Contains(normalized, "완료")
+	if !decisionVerb {
+		return false
+	}
+	if scope == "all_awaiting_confirmation" {
+		universal := strings.Contains(normalized, "all") || strings.Contains(normalized, "모든") || strings.Contains(normalized, "전부")
+		confirmationSet := strings.Contains(normalized, "awaiting") || strings.Contains(normalized, "implemented") ||
+			strings.Contains(normalized, "confirmation") || strings.Contains(normalized, "대기") || strings.Contains(normalized, "구현")
+		return universal && confirmationSet
+	}
+	target := fmt.Sprintf("#%d", taskID)
+	references := 0
+	for _, field := range strings.Fields(normalized) {
+		candidate := strings.Trim(field, ".,;:!?()[]{}\"'")
+		if strings.HasPrefix(candidate, "#") {
+			references++
+			if candidate != target {
+				return false
+			}
+		}
+	}
+	return references == 1
+}
+
+func validUUIDText(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	for i, r := range value {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			continue
+		}
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return false
+		}
+	}
+	return true
 }
 
 func taskJournalFromCommand(name string, typed any, plan MutationPlan) (*TaskJournalWrite, error) {
@@ -2757,27 +2847,6 @@ func workspaceGraph(snapshot Snapshot) (*domain.WorkspaceGraph, domain.Evaluatio
 		}
 	}
 	return domain.NewWorkspaceGraph(tasks, edges, gateTaskIDs)
-}
-
-func isTaskDangling(snapshot Snapshot, taskID string) bool {
-	for _, task := range snapshot.Tasks {
-		if task.ID == taskID && task.TerminalReason != "" {
-			return false
-		}
-	}
-	for _, edge := range snapshot.Dependencies {
-		if edge.FromTaskID == taskID {
-			return false
-		}
-	}
-	for _, gate := range snapshot.Gates {
-		for _, condition := range gate.Conditions {
-			if condition.TaskID == taskID {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func dependencyPatchFromArgs(tasks []TaskProjection, args dependencyMutationArgs, command string) (domain.DependencyPatch, error) {

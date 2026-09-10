@@ -139,7 +139,7 @@ try {
       $global:LASTEXITCODE = 0
       if ($arguments -contains 'psql') {
         $sql = [string]$arguments[-1]
-        if ($sql -like 'SELECT version_id*') { return '27' }
+        if ($sql -like 'SELECT version_id*') { return '28' }
         if ($sql -like '*invalid backfill provenance*') { throw 'unexpected diagnostic text in SQL' }
         if ($sql -like '*LEFT JOIN events*') { return '0' }
         if ($sql -like '*SELECT count(*) FROM eligible') { return '11' }
@@ -160,7 +160,7 @@ try {
       $global:LASTEXITCODE = 0
       if ($arguments -contains 'psql') {
         $sql = [string]$arguments[-1]
-        if ($sql -like 'SELECT version_id*') { return '27' }
+        if ($sql -like 'SELECT version_id*') { return '28' }
         if ($sql -like '*LEFT JOIN events*') { return '0' }
         if ($sql -like '*SELECT count(*) FROM eligible') { return '11' }
         if ($sql -like '*SELECT count(*) FROM journal') { return '10' }
@@ -172,7 +172,7 @@ try {
     Assert-True $thrown 'bidirectional Event/Journal drift was accepted'
   }
 
-  Invoke-Case 'Rollback rejects a pre-schema-27 API before any tag or container write' {
+  Invoke-Case 'Rollback rejects a pre-schema-28 API before any tag or container write' {
     $apiImage = 'sha256:' + ('a' * 64)
     $viewerImage = 'sha256:' + ('b' * 64)
     $global:TaskJournalDockerCalls = [Collections.Generic.List[string]]::new()
@@ -180,13 +180,13 @@ try {
       $arguments = @($args)
       $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
       $global:LASTEXITCODE = 0
-      if ($arguments -contains 'psql') { return '27' }
+      if ($arguments -contains 'psql') { return '28' }
       if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return '{"org.opencontainers.image.baley.schema-version":"26","org.opencontainers.image.revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' }
       return ''
     }
     $thrown = $false
     try { & $rolloutScript -Action Rollback -RollbackApiImage $apiImage -RollbackViewerImage $viewerImage | Out-Null } catch { $thrown = $true }
-    Assert-True $thrown 'pre-schema-27 API was accepted'
+    Assert-True $thrown 'pre-schema-28 API was accepted'
     Assert-True (-not ($global:TaskJournalDockerCalls -match '^image tag')) 'rollback mutated image tags before compatibility validation'
   }
 
@@ -199,9 +199,9 @@ try {
       $arguments = @($args)
       $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
       $global:LASTEXITCODE = 0
-      if ($arguments -contains 'psql') { return '27' }
+      if ($arguments -contains 'psql') { return '28' }
       if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') {
-        return ('{"org.opencontainers.image.baley.schema-version":"27","org.opencontainers.image.revision":"' + $revision + '"}')
+        return ('{"org.opencontainers.image.baley.schema-version":"28","org.opencontainers.image.revision":"' + $revision + '"}')
       }
       if ($arguments[0] -eq 'compose' -and $arguments[1] -eq 'ps') { if ($arguments[-1] -eq 'api') { return 'api-container' } else { return 'viewer-container' } }
       if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'api-container') {
@@ -217,8 +217,8 @@ try {
     function global:Invoke-WebRequest {
       param([switch]$UseBasicParsing, [string]$Uri, [int]$TimeoutSec)
       if ($Uri -eq 'http://127.0.0.1:5174/') { return [pscustomobject]@{ StatusCode = 200; Content = '<!doctype html>' } }
-      if ($Uri -like '*/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":27}' } }
-      if ($Uri -like '*/versionz') { return [pscustomobject]@{ StatusCode = 200; Content = ('{"commit":"' + $revision + '","schemaVersion":27}') } }
+      if ($Uri -like '*/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":28}' } }
+      if ($Uri -like '*/versionz') { return [pscustomobject]@{ StatusCode = 200; Content = ('{"commit":"' + $revision + '","schemaVersion":28}') } }
       throw "unexpected URI $Uri"
     }
     & $rolloutScript -Action Rollback -RollbackApiImage $apiImage -RollbackViewerImage $viewerImage | Out-Null
@@ -236,8 +236,8 @@ try {
       $arguments = @($args)
       $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
       $global:LASTEXITCODE = 0
-      if ($arguments -contains 'psql') { return '27' }
-      if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return ('{"org.opencontainers.image.baley.schema-version":"27","org.opencontainers.image.revision":"' + $revision + '"}') }
+      if ($arguments -contains 'psql') { return '28' }
+      if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return ('{"org.opencontainers.image.baley.schema-version":"28","org.opencontainers.image.revision":"' + $revision + '"}') }
       if ($arguments[0] -eq 'compose' -and $arguments[1] -eq 'ps') { if ($arguments[-1] -eq 'api') { return 'api-container' } else { return 'viewer-container' } }
       if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'api-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $apiImage }
       if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') { if ($arguments[-1] -like '*Health*') { return 'exited' }; return $viewerImage }
@@ -259,8 +259,8 @@ try {
       $arguments = @($args)
       $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
       $global:LASTEXITCODE = 0
-      if ($arguments -contains 'psql') { return '27' }
-      if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return ('{"org.opencontainers.image.baley.schema-version":"27","org.opencontainers.image.revision":"' + $revision + '"}') }
+      if ($arguments -contains 'psql') { return '28' }
+      if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return ('{"org.opencontainers.image.baley.schema-version":"28","org.opencontainers.image.revision":"' + $revision + '"}') }
       if ($arguments[0] -eq 'compose' -and $arguments[1] -eq 'ps') { if ($arguments[-1] -eq 'api') { return 'api-container' } else { return 'viewer-container' } }
       if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'api-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $apiImage }
       if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $viewerImage }
@@ -281,8 +281,8 @@ try {
       $arguments = @($args)
       $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
       $global:LASTEXITCODE = 0
-      if ($arguments -contains 'psql') { return '27' }
-      if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return ('{"org.opencontainers.image.baley.schema-version":"27","org.opencontainers.image.revision":"' + $revision + '"}') }
+      if ($arguments -contains 'psql') { return '28' }
+      if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') { return ('{"org.opencontainers.image.baley.schema-version":"28","org.opencontainers.image.revision":"' + $revision + '"}') }
       if ($arguments[0] -eq 'compose' -and $arguments[1] -eq 'ps') { if ($arguments[-1] -eq 'api') { return 'api-container' } else { return 'viewer-container' } }
       if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'api-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $apiImage }
       if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'viewer-container') { if ($arguments[-1] -like '*Health*') { return 'healthy' }; return $viewerImage }
@@ -308,9 +308,9 @@ try {
       $arguments = @($args)
       $global:TaskJournalDockerCalls.Add(($arguments -join ' '))
       $global:LASTEXITCODE = 0
-      if ($arguments -contains 'psql') { return '27' }
+      if ($arguments -contains 'psql') { return '28' }
       if ($arguments[0] -eq 'image' -and $arguments[1] -eq 'inspect') {
-        return ('{"org.opencontainers.image.baley.schema-version":"27","org.opencontainers.image.revision":"' + $revision + '"}')
+        return ('{"org.opencontainers.image.baley.schema-version":"28","org.opencontainers.image.revision":"' + $revision + '"}')
       }
       if ($arguments[0] -eq 'compose' -and $arguments[1] -eq 'ps') { if ($arguments[-1] -eq 'api') { return 'api-container' } else { return 'viewer-container' } }
       if ($arguments[0] -eq 'inspect' -and $arguments[1] -eq 'api-container') {
@@ -323,7 +323,7 @@ try {
     function global:Invoke-WebRequest {
       param([switch]$UseBasicParsing, [string]$Uri, [int]$TimeoutSec)
       if ($Uri -eq 'http://127.0.0.1:5174/') { return [pscustomobject]@{ StatusCode = 200; Content = '<!doctype html>' } }
-      if ($Uri -eq 'http://127.0.0.1:5174/api/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":27}' } }
+      if ($Uri -eq 'http://127.0.0.1:5174/api/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":28}' } }
       if ($Uri -eq 'http://127.0.0.1:8080/readyz') { return [pscustomobject]@{ StatusCode = 200; Content = '{"status":"ready","schemaVersion":26}' } }
       throw "versionz must not be reached after an incompatible readyz response"
     }

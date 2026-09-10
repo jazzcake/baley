@@ -194,13 +194,12 @@ func TestWorkspaceCloseRequiresLastPhaseAndProjectsResidualWarnings(t *testing.T
 	}
 }
 
-func TestImplementedRegistryDerivesDanglingWarningAndResultingRevision(t *testing.T) {
+func TestImplementedRegistryTreatsLeafAsNormalAndDerivesResultingRevision(t *testing.T) {
 	context := validMutationContext(t, "task.report_implemented")
 	delete(context.Graph.GateConditionTaskIDs, context.Task.ID)
-	context.Acknowledgement = WarningAcknowledgement{Codes: []string{CodeDanglingPath}, Enforce: true}
 	plan := PlanMutation("task.report_implemented", context)
-	if plan.Evaluation.HasErrors() || !hasDiagnostic(plan.Evaluation.Warnings, CodeDanglingPath) {
-		t.Fatalf("dangling implementation projection failed: %+v", plan)
+	if plan.Evaluation.HasErrors() || len(plan.Evaluation.Warnings) != 0 {
+		t.Fatalf("ordinary implementation leaf emitted warning: %+v", plan)
 	}
 	diff, ok := plan.ProjectedDiff.(map[string]any)
 	decision, decisionOK := diff["decision"].(TaskDecision)

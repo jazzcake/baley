@@ -262,7 +262,7 @@ describe("authenticated Workspace routing", () => {
     expect(screen.getByRole("status").textContent).toBe("UUID copied");
   });
 
-  it("offers the explicit confirmation flow only for an implemented Task", async () => {
+  it("keeps an implemented Task Inspector read-only without TaskConfirmation mutation UI", async () => {
     const implementedGraph = graph("w1", "Workspace One");
     implementedGraph.tasks = implementedGraph.tasks.map((item) => item.id === "pilot-ui" ? {
       ...item,
@@ -284,12 +284,10 @@ describe("authenticated Workspace routing", () => {
 
     expect(await screen.findByText("The user-visible outcome passed review.")).toBeTruthy();
     expect(screen.getByText("reviewed delivery")).toBeTruthy();
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm task" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm task once" }));
-
-    await waitFor(() => expect(executeCommand).toHaveBeenCalled());
-    expect(await screen.findByText("confirmed")).toBeTruthy();
+    expect(screen.getAllByText("implemented").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Confirm task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Confirm task once" })).toBeNull();
+    expect(executeCommand).not.toHaveBeenCalled();
   });
 
   it("offers Workspace creation from the account Workspace list", async () => {

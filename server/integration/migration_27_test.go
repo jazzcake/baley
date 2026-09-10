@@ -71,9 +71,7 @@ func TestMigration27HistoricalTaskJournalFixture(t *testing.T) {
 	prepareMigration27Schema25(t, ctx, pool, url, migrations)
 	seedHistoricalFixture(t, ctx, pool, fixture)
 	migrateUpTo(t, url, migrations, 26)
-	if err := postgres.Migrate(url, migrations, "up"); err != nil {
-		t.Fatalf("migrate 25 to 27: %v", err)
-	}
+	migrateUpTo(t, url, migrations, 27)
 
 	var version, count int
 	if err := pool.QueryRow(ctx, "SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1").Scan(&version); err != nil || version != 27 {
@@ -152,9 +150,7 @@ func TestMigration27HistoricalTaskJournalFixture(t *testing.T) {
 	if err = postgres.Migrate(url, migrations, "down"); err != nil {
 		t.Fatal(err)
 	}
-	if err = postgres.Migrate(url, migrations, "up"); err != nil {
-		t.Fatal(err)
-	}
+	migrateUpTo(t, url, migrations, 27)
 	if err = pool.QueryRow(ctx, "SELECT count(*) FROM task_journal_entries WHERE workspace_id=$1", task183Workspace).Scan(&count); err != nil || count != 4 {
 		t.Fatalf("idempotent replay count=%d err=%v", count, err)
 	}

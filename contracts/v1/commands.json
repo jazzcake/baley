@@ -14,14 +14,14 @@
     }
   },
   "mcpCatalog": {
-    "catalogVersion": "1.2.0",
+    "catalogVersion": "1.3.0",
     "defaultProfile": "compact",
     "profiles": {
       "compact": {
         "path": "/mcp",
         "maximumToolCount": 15,
         "toolCount": 15,
-        "serializedInputSchemaBytes": 4700,
+        "serializedInputSchemaBytes": 5306,
         "tools": [
           "baley_backlog_get",
           "baley_backlog_list",
@@ -43,7 +43,7 @@
       "full": {
         "path": "/mcp/full",
         "toolCount": 89,
-        "serializedInputSchemaBytes": 46559,
+        "serializedInputSchemaBytes": 50602,
         "legacyToolCount": 78,
         "legacyToolParity": true,
         "typedTaskLifecycleTools": [
@@ -71,7 +71,7 @@
     },
     "baseline": {
       "toolCount": 78,
-      "serializedInputSchemaBytes": 39852,
+      "serializedInputSchemaBytes": 43289,
       "minimumReductionPercent": 75,
       "measurement": "sum of JSON-serialized inputSchema bytes"
     },
@@ -79,7 +79,7 @@
       "catalogTool": "baley_command_catalog",
       "previewTool": "baley_command_preview",
       "operatorExecuteTool": "baley_command_execute",
-      "approvalExecuteTool": "baley_command_execute_with_approval",
+      "humanDecisionExecuteTool": "baley_command_execute_with_approval",
       "httpCommandCount": 49,
       "unknownCommandHandling": "reject_before_http",
       "commandValidationAuthority": "server"
@@ -92,7 +92,8 @@
       "initiatedByActorId",
       "acknowledgedWarningCodes",
       "proceedReason",
-      "approvalGrantId"
+      "approvalGrantId",
+      "decisionEvidence"
     ]
   },
   "humanApprovalGrant": {
@@ -111,10 +112,29 @@
     ],
     "reusableAcrossCommands": false,
     "eachCommandRequiresFreshPreviewAndGrant": true,
-    "groupedTaskConfirm": {
-      "supported": false,
-      "reason": "each command requires a separate browser-session grant"
-    }
+    "ordinaryTaskConfirm": "linked_account_conversation_evidence",
+    "browserGrantApplicability": "other_human_only_boundaries_and_compatibility"
+  },
+  "conversationalDecisionEvidence": {
+    "command": "task.confirm",
+    "executeReferenceField": "decisionEvidence",
+    "requiredFields": [
+      "decisionId", "source", "conversationRef", "statement", "scope", "action",
+      "taskId", "workspaceRevision", "commandHash"
+    ],
+    "source": "conversation",
+    "scopes": ["task", "all_awaiting_confirmation"],
+    "actorDerivation": "active_human_member_linked_to_authenticated_mcp_gateway",
+    "boundFields": [
+      "decisionId", "workspaceId", "action", "taskId", "workspaceRevision", "commandHash",
+      "idempotencyKeyHash", "conversationRef", "statementHash", "scope",
+      "linkedAccountId", "linkedHumanActorId", "executingAgentActorId", "gatewayRegistrationId"
+    ],
+    "singleUse": true,
+    "crossTargetReuse": false,
+    "callerSuppliedActorId": false,
+    "serverRevalidatesLinkedMemberCapability": true,
+    "trustBoundary": "The Agent declares the typed meaning of an explicit user statement; Baley binds and audits that declaration but does not independently authenticate chat transcript semantics."
   },
   "previewResult": [
     "commandHash",

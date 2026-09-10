@@ -63,12 +63,17 @@ bundles. Agents can only hold an active `operator` membership.
 - Agent tokens are Workspace-scoped opaque secrets; only their hashes are stored.
 - Agent scopes are a subset of the Operator bundle and can never include approval or
   administration capabilities.
-- An Agent bearer never establishes or derives a human approver. Its creator and
-  connection approver are credential provenance only.
-- A signed-in human uses the Viewer approval surface to preview the exact command and
-  issue a five-minute, single-use approval grant. Issuance requires the browser
-  session, CSRF token, active Account and Workspace membership, and current command
-  capability; Workspace close additionally requires Owner.
+- An Agent bearer never nominates or impersonates a human approver. For ordinary
+  `task.confirm`, the server derives the initiating human from the authenticated
+  MCP gateway's linked Account, revalidates current membership and `task:approve`,
+  and records the Agent separately as executor.
+- Explicit current-conversation Task decisions use typed, single-use evidence bound
+  to action, target, revision, command hash, idempotency, gateway and both actors.
+  Missing, vague, negated, replayed, stale, or cross-target evidence fails closed.
+- Other human-only boundaries use the Viewer approval surface to issue a five-minute,
+  single-use approval grant where their command contract requires it. Issuance
+  requires the browser session, CSRF token, active Account and Workspace membership,
+  and current command capability; Workspace close additionally requires Owner.
 - The grant is an opaque UUID reference, not a secret. It is bound to Account, Actor,
   browser session, Workspace, action, entity, Workspace revision, command hash,
   decision snapshot, warning acknowledgement, proceed-reason digest, and expiry.

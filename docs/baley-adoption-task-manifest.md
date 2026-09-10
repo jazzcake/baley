@@ -36,7 +36,7 @@ Rationale:
 - Task #116 is in `validate`, which matches the Gate's `fromPhaseId`.
 - It implements and verifies the typed structural MCP tools required to build and operate the Adoption structure.
 - Task #116 already depends on the runtime-contract work in Task #111, so attaching both #111 and #116 would duplicate the effective prerequisite.
-- It is not an intentional terminal Task. Once attached to the Gate, its current `dangling_path` warning should disappear on a fresh confirmation preview.
+- It is an ordinary DAG leaf until later work is attached. A missing successor or Gate emits no warning and requires no terminal reason.
 
 Required ordering:
 

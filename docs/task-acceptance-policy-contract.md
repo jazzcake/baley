@@ -96,7 +96,7 @@ enum, non-empty passed verification reference와 blocking count를
   assignment와 가장 최근 유효 evidence version을 재평가한다.
 - evidence 충족 여부와 무관하게 Task는 `implemented`에 남고 typed reason을 query에
   제공한다. 이후 evidence report로 다시 평가할 수 있지만 확인 상태로 전이하지 않는다.
-- `task.confirm`은 browser-session approval grant를 요구하는 human-only command다.
+- `task.confirm`은 human-only command다. ordinary conversational path는 authenticated MCP gateway에 링크된 현재 human member의 명시적 결정을 typed single-use evidence로 전달하며, 서버가 `task:approve`를 재검증한다. 다른 human-only boundary와 명시된 compatibility path만 browser-session approval grant를 사용한다.
 
 ## 바뀌지 않는 경계
 
