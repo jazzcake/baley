@@ -47,6 +47,23 @@ function Get-SchemaVersion([string]$TargetDatabase) {
   return [int](Invoke-PsqlScalar $TargetDatabase "SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1")
 }
 
+function Assert-MigrationResumeState([string]$TargetDatabase, [int]$SchemaVersion) {
+  if ($SchemaVersion -notin 26, 27) { throw "unsupported intermediate schema $SchemaVersion" }
+  $chainCount = [int](Invoke-PsqlScalar $TargetDatabase "SELECT count(*) /* migration_chain_count */ FROM (SELECT DISTINCT ON (version_id) version_id,is_applied FROM goose_db_version WHERE version_id BETWEEN 1 AND $SchemaVersion ORDER BY version_id,id DESC) latest WHERE is_applied")
+  if ($chainCount -ne $SchemaVersion) { throw "schema $SchemaVersion does not have a contiguous applied migration chain" }
+  $journalSchema = [int](Invoke-PsqlScalar $TargetDatabase "SELECT CASE WHEN to_regclass('public.task_journal_entries') IS NOT NULL AND to_regclass('public.task_journal_entries_workspace_time_idx') IS NOT NULL THEN 1 ELSE 0 END /* resume_journal_schema */")
+  if ($journalSchema -ne 1) { throw "schema $SchemaVersion is missing the migration 26 Task Journal structure" }
+  $journalInvalid = [int](Invoke-PsqlScalar $TargetDatabase "SELECT count(*) /* resume_journal_integrity */ FROM task_journal_entries j LEFT JOIN events e ON e.workspace_id=j.workspace_id AND e.id=j.event_id LEFT JOIN commands c ON c.workspace_id=j.workspace_id AND c.id=j.command_id WHERE e.id IS NULL OR c.id IS NULL")
+  if ($journalInvalid -ne 0) { throw "schema $SchemaVersion has $journalInvalid invalid Task Journal provenance rows" }
+  $migration28Absent = [int](Invoke-PsqlScalar $TargetDatabase "SELECT CASE WHEN to_regclass('public.conversational_decision_evidence') IS NULL AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='human_approval_attestations' AND column_name='decision_evidence_id') THEN 1 ELSE 0 END /* migration_28_absent */")
+  if ($migration28Absent -ne 1) { throw "schema $SchemaVersion contains a partial migration 28 structure" }
+}
+
+function Assert-Migration28State([string]$TargetDatabase) {
+  $migration28Schema = [int](Invoke-PsqlScalar $TargetDatabase "SELECT CASE WHEN to_regclass('public.conversational_decision_evidence') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='human_approval_attestations' AND column_name='decision_evidence_id') THEN 1 ELSE 0 END /* migration_28_schema */")
+  if ($migration28Schema -ne 1) { throw 'schema 28 is missing conversational decision evidence structures' }
+}
+
 function Get-AllTableCounts([string]$TargetDatabase) {
   $tableOutput = Invoke-PsqlScalar $TargetDatabase "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname='public' ORDER BY tablename"
   $tableNames = @($tableOutput -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -172,7 +189,9 @@ switch ($Action) {
     $status = docker inspect $PostgresContainer --format '{{.State.Status}}'
     if ($LASTEXITCODE -ne 0 -or ($status | Out-String).Trim() -ne 'running') { throw 'PostgreSQL container is not running' }
     $schema = Get-SchemaVersion $Database
-    if ($schema -notin 25, 28) { throw "expected schema 25 before rollout or 28 after rollout, got $schema" }
+    if ($schema -notin 25, 26, 27, 28) { throw "expected schema 25, supported resume schema 26/27, or schema 28, got $schema" }
+    if ($schema -in 26, 27) { Assert-MigrationResumeState $Database $schema }
+    if ($schema -eq 28) { Assert-Migration28State $Database }
     git diff --quiet --exit-code
     if ($LASTEXITCODE -ne 0) { throw 'tracked worktree changes must be reviewed before rollout' }
     [pscustomobject]@{ action = $Action; database = $Database; schemaVersion = $schema; tableCounts = (Get-AllTableCounts $Database); commit = (git rev-parse HEAD).Trim() }
@@ -250,16 +269,20 @@ switch ($Action) {
     }
   }
   'Migrate' {
-    if ((Get-SchemaVersion $Database) -ne 25) { throw 'migration requires schema 25' }
+    $startingSchema = Get-SchemaVersion $Database
+    if ($startingSchema -notin 25, 26, 27) { throw "migration requires schema 25 or supported non-destructive resume schema 26/27, got $startingSchema" }
+    if ($startingSchema -in 26, 27) { Assert-MigrationResumeState $Database $startingSchema }
     if ($DeploySha -notmatch '^[0-9a-f]{40}$' -or $DeploySha -ne (git rev-parse HEAD).Trim()) { throw 'DeploySha must equal the checked-out commit' }
     $env:BALEY_BUILD_COMMIT = $DeploySha
     $env:BALEY_BUILD_TIME = [DateTimeOffset]::UtcNow.ToString('O')
     docker compose run --rm --no-deps --entrypoint /app/baley-server api migrate up
     if ($LASTEXITCODE -ne 0) { throw 'one-shot migration failed' }
     if ((Get-SchemaVersion $Database) -ne 28) { throw 'migration did not reach schema 28' }
+    Assert-Migration28State $Database
   }
   'Verify' {
     if ((Get-SchemaVersion $Database) -ne 28) { throw 'verification requires schema 28' }
+    Assert-Migration28State $Database
     Assert-WorkspaceId
     $invalid = Invoke-PsqlScalar $Database "SELECT count(*) FROM task_journal_entries j LEFT JOIN events e ON e.workspace_id=j.workspace_id AND e.id=j.event_id LEFT JOIN commands c ON c.workspace_id=j.workspace_id AND c.id=j.command_id WHERE e.id IS NULL OR c.id IS NULL OR j.recorded_at<>j.occurred_at"
     if ([int]$invalid -ne 0) { throw "$invalid invalid backfill provenance rows" }

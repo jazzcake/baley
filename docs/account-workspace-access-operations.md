@@ -130,8 +130,10 @@ not require a new thread or schema reload.
 
 The Agent scope is the intersection of the member's Workspace role and the
 Agent-safe capability catalog. Owner/Operator receive normal operation scopes;
-Viewer/Approver receive read-only scope. Human-only Task confirmation, Gate
-passage, and policy changes remain unavailable to it. Raw
+Viewer/Approver receive read-only scope. Human-only capabilities are never added
+to the Agent token: ordinary Task confirmation instead derives and revalidates the
+linked human's explicit conversational decision, while Gate passage and policy
+changes retain their applicable human boundary. Raw
 tokens never enter chat, `config.toml`, command JSON, Task Records, browser
 storage, Git, or logs. Use the loopback Gateway installer and redacted
 `baley_mcp_diagnostics` output for Codex access and troubleshooting.

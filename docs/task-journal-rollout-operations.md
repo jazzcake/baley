@@ -6,7 +6,7 @@ Migration 27 deterministically projects explicitly recorded facts from pre-migra
 
 Run this only after the reviewed deployment commit contains migrations 26 through 28, the API expects schema 28, and API, Viewer, and MCP binaries/images were built from that same commit. Do not alter firewall rules, Tailscale Serve, the shared PostgreSQL network or volume, Credential Manager data, or an operator's untracked files.
 
-Stop before migration if any of these are true: the checkout is not the reviewed commit, schema is not 25, the schema-25 backup cannot be restored into an isolated database, candidate counts changed after write freeze, or the sanitized #183 fixture does not produce its exact four `created`, `run_started`, `implemented`, and `confirmed` rows. Stop after migration without replacing Viewer or MCP if schema is not 28, migration 27 reports malformed provenance, migration 28 lacks its evidence table/attestation link, or the live #183 migration-eligible Event set and Task Journal set are not bidirectionally equal by Event and command ID.
+For an initial migration, stop if the checkout is not the reviewed commit, schema is not 25, the schema-25 backup cannot be restored into an isolated database, candidate counts changed after write freeze, or the sanitized #183 fixture does not produce its exact four `created`, `run_started`, `implemented`, and `confirmed` rows. After a failed one-shot migration, schema 26 or 27 is a supported resume point only through the same reviewed script and commit. The script requires a contiguous Goose chain, the migration-26 Journal structures, zero orphan Journal/Event/command provenance, and no partial migration-28 table or attestation column before retrying. Any other intermediate shape is a stop condition. Never migrate down or restore merely to retry. Stop without replacing Viewer or MCP if the resumed migration does not reach schema 28, migration 27 reports malformed provenance, migration 28 lacks its evidence table/attestation link, or the live #183 migration-eligible Event set and Task Journal set are not bidirectionally equal by Event and command ID.
 
 ## Preflight, freeze, backup, and restore drill
 
@@ -46,6 +46,8 @@ docker image inspect baley-api:latest baley-viewer:latest
 ```
 
 The one-shot migration is separate from service start. Migration 27 is transactional; malformed allow-listed payloads, missing Tasks or actors, invalid entity provenance, duplicate candidate commands, or a conflicting existing projection leave Goose at version 26 and insert no candidate rows.
+
+Goose commits migrations individually. A later failure can therefore leave a valid schema 26 or 27 even though the overall `Migrate` action returned non-zero. Keep API/Viewer/MCP writes stopped, inspect the reported schema, and rerun the same command with the same reviewed `DeploySha`. The script validates the intermediate chain and audit invariants before invoking `migrate up`; it performs no destructive rollback. A schema-27 retry applies migration 28 only, while a schema-26 retry safely continues through 27 and 28.
 
 ## Service replacement and smoke checks
 
@@ -90,7 +92,7 @@ For `task.confirm`, additionally match the `task.confirmed` Event, its command, 
 
 ## Rollback
 
-If migration 27 or 28 fails, it is transactional: fix or explicitly review the data before retrying. Do not bypass fail-closed checks. After schema 28 succeeds, a pre-rollout API is forbidden even if its image ID is known. Roll forward, or use only an exact API image that declares schema 28 compatibility and a Viewer image carrying the identical OCI revision:
+Each migration is transactional, but the multi-migration Goose invocation may stop at schema 26 or 27. For those two validated states, rerun `Migrate` non-destructively with the same reviewed commit. If the chain, Journal provenance, or absence of partial migration-28 structures fails validation, stop and diagnose; do not bypass checks or migrate down. After schema 28 succeeds, a pre-rollout API is forbidden even if its image ID is known. Roll forward, or use only an exact API image that declares schema 28 compatibility and a Viewer image carrying the identical OCI revision:
 
 ```powershell
 .\scripts\task-journal-rollout.ps1 -Action Rollback -RollbackApiImage 'sha256:<64 hex>' -RollbackViewerImage 'sha256:<64 hex>'
@@ -101,6 +103,7 @@ The helper inspects the immutable images before changing tags. It rejects an API
 | Database | API artifact | Viewer/MCP artifact | Allowed outcome |
 | --- | --- | --- | --- |
 | schema 25 | reviewed pre-rollout schema-25 API | matching pre-rollout artifacts | Allowed only before migration 27 or after separately authorized destructive recovery |
+| schema 26 or 27 | no application writes; reviewed one-shot migrator only | no service replacement | Supported temporary recovery state after a failed migration; validate and resume forward |
 | schema 28 | API image labeled schema 28, `/versionz` revision equals the immutable image revision | Same-commit Viewer and MCP required for conversational confirmation | Allowed application rollback/roll-forward target |
 | schema 28 | schema-25/pre-rollout API, missing compatibility label, or unknown revision | any | Forbidden; `/readyz` would fail and mutation availability is not recoverable |
 | schema 25 | schema-28-only API | any | Forbidden; `/readyz` must fail closed |
