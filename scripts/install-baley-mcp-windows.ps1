@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$ServerURL = "https://jazzcake-home.tail87e929.ts.net/api",
-  [string[]]$AdditionalCodexHomes = @()
+  [string[]]$AdditionalCodexHomes = @(),
+  [string]$PrebuiltBinary
 )
 
 Set-StrictMode -Version Latest
@@ -17,7 +18,18 @@ if ($LASTEXITCODE -ne 0) { throw "Unable to inspect the Baley MCP source worktre
 if ($worktreeChanges) { throw "Commit or stash Baley MCP source changes before creating a release install" }
 $releaseID = (git -C $repoRoot rev-parse --short=12 HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releaseID)) { throw "Unable to determine the Baley MCP release ID" }
-$binary = Join-Path (Join-Path (Join-Path $buildRoot "releases") $releaseID) "baley-mcp.exe"
+$binary = if ([string]::IsNullOrWhiteSpace($PrebuiltBinary)) {
+  Join-Path (Join-Path (Join-Path $buildRoot "releases") $releaseID) "baley-mcp.exe"
+} else {
+  $resolvedBinary = [IO.Path]::GetFullPath($PrebuiltBinary)
+  $allowedBuildRoot = [IO.Path]::GetFullPath($buildRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+  if (-not $resolvedBinary.StartsWith($allowedBuildRoot, [StringComparison]::OrdinalIgnoreCase) -or
+      [IO.Path]::GetFileName($resolvedBinary) -ine 'baley-mcp.exe' -or
+      -not (Test-Path -LiteralPath $resolvedBinary -PathType Leaf)) {
+    throw "PrebuiltBinary must be an existing baley-mcp.exe under $buildRoot"
+  }
+  $resolvedBinary
+}
 $credentialStore = Join-Path $installRoot "credentials.json"
 $loopbackAddress = "127.0.0.1:8090"
 $loopbackURL = "http://$loopbackAddress/mcp"

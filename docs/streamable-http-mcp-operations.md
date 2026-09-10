@@ -65,6 +65,15 @@ macOS installer provides the same single-Gateway model through a per-user
 LaunchAgent and macOS Keychain. No firewall rule is required or created on
 either platform.
 
+For a reviewed rollout that builds an immutable executable in a separately
+pinned path under `C:\dev-bin\baley`, pass that existing artifact explicitly;
+the installer validates the path and reuses the same scheduled-task, credential
+store, and Codex registration flow without rebuilding it:
+
+```powershell
+.\scripts\install-baley-mcp-windows.ps1 -PrebuiltBinary 'C:\dev-bin\baley\task-184-rollout\<deploy-sha>\baley-mcp.exe'
+```
+
 The equivalent CLI registration is:
 
 ```bash
