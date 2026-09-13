@@ -1,10 +1,14 @@
-# Independent review and normative amendments: Dim0 Codex runtime plan
+# Independent review and reconciliation record: Dim0 Codex runtime plan
 
-Review verdict: **approved after the amendments below**  
-Reviewed plan: [`codex-runtime-implementation-plan.md`](./codex-runtime-implementation-plan.md)  
+Review verdict: **approved; all blocking and important amendments incorporated**
+
+Reviewed plan: [`codex-runtime-implementation-plan.md`](./codex-runtime-implementation-plan.md)
+
 Normative spec: [`codex-runtime-and-persistence-spec.md`](./codex-runtime-and-persistence-spec.md)
 
-An independent agent reviewed the plan against the repository's backend, frontend, provider catalog, app lifecycle, persistence configuration, and Compose files. It initially returned **changes required** with four blocking and eight important findings. This document resolves them and is normative wherever earlier draft wording is less specific.
+Reconciliation status: this file preserves the review findings and rationale. The reviewed implementation plan now contains every required amendment and is the executable plan; this record no longer overrides it. Task #189's pre-change Docker baseline is defined separately in [`task-189-baseline-execution.md`](./task-189-baseline-execution.md).
+
+An independent agent reviewed the plan against the repository's backend, frontend, provider catalog, app lifecycle, persistence configuration, and Compose files. It initially returned **changes required** with four blocking and eight important findings. This document records how those findings were resolved; the reconciled implementation plan carries the executable requirements.
 
 ## 1. Backend startup must not instantiate provider agents in Codex mode
 
@@ -31,7 +35,7 @@ Required implementation:
 - Never place raw user IDs or run IDs in child logs without structured redaction.
 - Test two users with the same run ID and prove distinct thread IDs, locks, transcript state, and eviction.
 
-This overrides WP3's run-ID-only wording.
+This finding is incorporated in WP3 and WP4; the former run-ID-only wording has been removed.
 
 ## 3. Persistent-thread transcript reconciliation and retry
 
@@ -186,8 +190,23 @@ Only live calls to the external services are optional. Missing live credentials 
 | §8 acceptance 1–12 | WP0–WP7 | consolidated evidence checklist before completion |
 | §11 upstream merge constraint | WP7; amendments §8–§10 | fork-only file inventory and subtree replay check |
 
-## 13. Independent reviewer conclusion
+## 13. Reconciliation audit
 
-The reviewer found the architectural direction sound: LLM/embedding separation, Qdrant and Redis retention, provider fallback prohibition, non-LLM preservation, and honest buffered-stream semantics. With the amendments above, the plan is approved without requiring a storage, canvas, or agent-domain redesign.
+| Review finding | Incorporated location | Closure evidence expected during implementation |
+|---|---|---|
+| Provider-agent construction during startup | WP1–WP2 | Codex-mode lifespan and zero-call counters |
+| Session identity and transcript replay | WP3–WP4 | Two-user isolation, suffix, retry, conflict, and eviction tests |
+| Connection generation and restart safety | WP3 | Multi-session child-exit and single-restart test |
+| Cancellation, bounds, readiness, and metering | WP3–WP4 | Timeout/cancel cleanup, circuit, readiness, and quota tests |
+| Structured output | WP3–WP4 | Schema, exclusive-mode, call-ID, size, and buffered-stream tests |
+| Embedding separation | WP0–WP1, WP6 | 512-dimension resolution and mutation/failure observations |
+| External PostgreSQL structure | WP5–WP6 | Compose service list, `up`/`ps`, identity, and idempotent schema evidence |
+| Credential/filesystem boundary | WP3, WP5 | Child env capture, redaction, sandbox, and repository scans |
+| Web UI runtime selection | WP2, WP4 | Signed-in/out BYOK matrix and no-client-construction assertions |
+| Mandatory non-LLM regressions | WP0, WP2, WP6 | Credential-free fake-client suite |
+
+## 14. Independent reviewer conclusion
+
+The reviewer found the architectural direction sound: LLM/embedding separation, Qdrant and Redis retention, provider fallback prohibition, non-LLM preservation, and honest buffered-stream semantics. The reconciled implementation plan incorporates the amendments above without requiring a storage, canvas, or agent-domain redesign.
 
 Implementation remains incomplete until every blocking exit criterion and normative acceptance criterion has corresponding passing evidence.

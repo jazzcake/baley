@@ -1,16 +1,22 @@
 # Detailed implementation plan: Dim0 Codex runtime fork
 
-Status: **reviewed and ready for implementation**  
-Review amendments: [`codex-runtime-plan-review.md`](./codex-runtime-plan-review.md) (normative; overrides conflicting draft wording)  
-Normative spec: [`codex-runtime-and-persistence-spec.md`](./codex-runtime-and-persistence-spec.md)  
-Upstream baseline: `vcmf/dim0@c75cb32901aac30b1dd79f07d4a560d93b21750b`  
+Status: **reviewed, reconciled, and ready for implementation**
+
+Review record: [`codex-runtime-plan-review.md`](./codex-runtime-plan-review.md) (all blocking and important amendments are incorporated here)
+
+Normative spec: [`codex-runtime-and-persistence-spec.md`](./codex-runtime-and-persistence-spec.md)
+
+Baseline execution contract: [`task-189-baseline-execution.md`](./task-189-baseline-execution.md)
+
+Upstream baseline: `vcmf/dim0@c75cb32901aac30b1dd79f07d4a560d93b21750b`
+
 Fork location: `dim0/` squash subtree in the Baley repository
 
 ## 1. Outcome
 
-Deliver an independently runnable Dim0 web service whose browser agent uses a persistent local `codex app-server` process for generation, while retaining upstream PostgreSQL, Qdrant, Redis, canvas, document, embedding, search/fetch/OCR, and Daytona behavior.
+Deliver an independently runnable Dim0 web service whose browser agent uses one persistent local `codex app-server` process per backend worker for generation, while retaining upstream PostgreSQL, Qdrant, Redis, canvas, document, embedding, search/fetch/OCR, and Daytona behavior.
 
-In the explicit Codex profile, provider API keys may serve embeddings and non-LLM tools but can never select a direct LLM completion route. Codex failure is visible and never falls back to LiteLLM, OpenAI Agents, BYOK LLM, or `codex exec`.
+In the explicit Codex profile, provider keys may serve embeddings and non-LLM tools but can never select a direct LLM completion route. Codex failure is visible and never falls back to LiteLLM, OpenAI Agents, browser BYOK LLM, or `codex exec`.
 
 ## 2. Constraints and non-goals
 
@@ -18,251 +24,215 @@ In the explicit Codex profile, provider API keys may serve embeddings and non-LL
 - No Qdrant removal, persistence rewrite, semantic/RAG redesign, or embedding replacement.
 - No broad agent/canvas restructuring.
 - No committed credential, `CODEX_HOME`, database data, or Qdrant data.
-- Preserve the upstream provider runtime outside the explicit Codex build profile.
-- Keep fork-specific changes localized and easy to reapply after subtree pulls.
+- Preserve the upstream provider runtime outside the explicit Codex profile.
+- Keep fork-specific changes localized and easy to replay after subtree pulls.
+- Live provider calls are opt-in only. All mandatory contract tests use fakes and prove which boundaries were not called.
 
-## 3. Current prototype disposition
+## 3. Prototype disposition
 
-Commit `7c0136e` is a prototype, not the implementation baseline. Retain useful seams but revise before runtime validation:
+Commit `7c0136e` is a prototype, not the implementation baseline.
 
 | Prototype area | Keep | Required correction |
 |---|---|---|
-| `/ai/llm[/stream]` branch | Existing HTTP contract and injected runtime direction | Move environment checks into a policy/runtime selector; test fail-closed behavior |
-| Persistent app-server subprocess | stdio transport and initialize/thread/turn primitives | Handle stderr, EOF, malformed frames, pending-future failure, timeout, cancellation, restart, shutdown, and bounded concurrency |
-| `X-Run-Id -> threadId` | Existing browser run identity | Define retention/eviction; prevent unbounded memory; explicitly decide restart behavior |
-| Structured tool choice | Browser remains tool executor | Validate schema and allowed tool names/arguments; preserve final-message contract |
-| Streaming | Existing NDJSON event names | Do not claim token streaming when structured output is buffered; make behavior and UI expectation explicit |
-| Docker overlay | Additive profile and external `CODEX_HOME` | Separate bundled/external PostgreSQL overlays, pin protocol-compatible CLI, add health/startup checks |
+| `/ai/llm[/stream]` branch | Existing HTTP contract and injected runtime direction | Centralize policy selection and test fail-closed behavior |
+| Persistent app-server subprocess | Stdio transport and initialize/thread/turn primitives | Add generations, bounds, correlation, cancellation, restart backoff, and shutdown |
+| `X-Run-Id -> threadId` | Browser run identity | Key by authenticated user plus canonical run UUID; reconcile growing histories and retries |
+| Structured tool choice | Browser remains the tool executor | Validate exclusive output mode, tool name, JSON Schema, call IDs, and size |
+| Streaming | Existing NDJSON event names | Describe Codex output as buffered and emit no token delta before validation |
+| Docker overlay | Local image build and external `CODEX_HOME` | Split common, bundled-PG, and external-PG files and enforce external state paths |
 
 ## 4. Work packages
 
 ### WP0 — Baseline and evidence harness
 
-Purpose: distinguish upstream defects from fork regressions without sending real prompts to a provider.
+Purpose: distinguish upstream defects from fork regressions without contacting any provider.
 
-Changes:
+Changes and execution:
 
-- Add a fork smoke-test checklist under `docs/plans/` with exact commands and expected service health.
-- Add test doubles at the existing LLM and embedding boundaries; do not add a second application abstraction solely for tests.
-- Validate Compose expansion, FastAPI import/startup wiring, Web UI production build, PostgreSQL schema application, Qdrant collection creation, Redis health, and basic board CRUD.
-- For baseline board CRUD, use a deterministic fake embedding client of the configured 512 dimensions. A separate opt-in test validates the real retained embedding provider.
-
-Evidence:
-
-- Compose config output for all profiles.
-- Backend unit/integration test reports.
-- Web UI `check-all` and production build.
-- Storage smoke: create board, add note/link, retrieve, restart services, retrieve again.
+- Use [`task-189-baseline-execution.md`](./task-189-baseline-execution.md) as the command sequence, evidence manifest, failure ledger, and acceptance contract.
+- Add test doubles at the existing LLM, embedding, search, fetch, OCR, and Daytona boundaries; do not create a second application abstraction solely for tests.
+- Validate Compose expansion, image builds, FastAPI import/lifespan, Web UI checks/build, PostgreSQL schema application, Qdrant collection creation, Redis health, and basic board/note/link CRUD.
+- Use a deterministic 512-dimensional fake embedder for mandatory storage checks. Keep real embedding validation separate and opt-in.
 
 Exit criteria:
 
-- Baseline failures are recorded before fork runtime changes.
-- No real LLM completion was called.
+- Every baseline command has a recorded exit code and bounded output artifact before runtime changes begin.
+- Failures are classified as upstream, environment, or harness failures and are not silently normalized.
+- Provider-boundary counters prove zero real LLM, embedding, search, fetch, OCR, and Daytona calls.
+- Board, note, and link data survive the specified service restart through PostgreSQL and Qdrant.
 
-### WP1 — Runtime policy and LLM/embedding separation
+### WP1 — Runtime policy, startup, and LLM/embedding separation
 
-Purpose: make the direct-generation prohibition explicit and centrally testable without disabling embeddings.
+Purpose: make direct-generation prohibition explicit without disabling embeddings or persistence startup.
 
 Files:
 
 - New `backend/topix/ai_runtime/policy.py`.
-- `backend/topix/config/catalog.py`.
-- `backend/topix/config/services.py` only if response shaping requires it.
-- Focused unit tests under `backend/test/unit/ai_runtime/` and `backend/test/unit/config/`.
+- `backend/topix/config/catalog.py` and, only if response shaping requires it, `backend/topix/config/services.py`.
+- Application construction paths for subscriptions, newsfeed, transcripts, and provider agents.
+- Focused tests under `backend/test/unit/ai_runtime/`, `backend/test/unit/config/`, and lifespan tests.
 
 Design:
 
-- Parse `DIM0_AI_RUNTIME` into a closed runtime enum (`provider` or `codex`); reject unknown values at startup.
+- Parse `DIM0_AI_RUNTIME` as a closed enum (`provider` or `codex`) and reject unknown values at startup.
 - Expose `is_codex_runtime()` and `require_direct_llm_allowed(operation)`.
-- Separate catalog resolution internally into `available_llm_providers()` and existing general/embedding provider availability.
-- In Codex mode, `available_llms()` returns no executable provider LLM routes while `available_embedding()` continues resolving OpenAI/OpenRouter.
-- Keep `public_llm_catalog()` as display metadata only or provide an explicit Codex model entry; it must not become executable provider evidence.
-- `openai_compatible_client()` remains available for the retained embedding route. Its docstring and callers must no longer imply it is globally prohibited in Codex mode.
+- Separate executable LLM availability from embedding availability. In Codex mode, every LLM resolver is empty or fails closed while OpenAI/OpenRouter embedding resolution remains unchanged.
+- Keep public catalog display metadata from becoming evidence of an executable provider route.
+- Make provider-agent pipelines lazy or inject explicit disabled components in Codex mode. Persistence stores and transcript operations must initialize without constructing an executable provider model.
 
-Tests:
+Required evidence:
 
-- Matrix: provider mode/Codex mode × no keys/OpenAI key/OpenRouter key/all LLM keys.
-- In Codex mode, every LLM resolver is empty/fails while embedding resolves identically to provider mode.
-- Unknown runtime value fails startup rather than reverting to provider mode.
+- Provider/Codex × no-key/OpenAI/OpenRouter/all-key matrix.
+- Full FastAPI lifespan in Codex mode with PostgreSQL, Qdrant, Redis, subscriptions, and transcripts initialized and provider-agent invocation count zero.
+- Existing 512-dimensional embedding client remains constructible and reported separately from LLM availability.
 
-Exit criteria:
+### WP2 — Guard every direct LLM boundary and preserve non-LLM tools
 
-- Presence of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY` cannot produce an executable LLM call code in Codex mode.
-- Embedding route and dimension remain unchanged.
+Purpose: make catalog bypasses and future accidental provider calls fail before network I/O.
 
-### WP2 — Guard all direct LLM invocation boundaries
+Inventory and guard:
 
-Purpose: ensure catalog bypasses and future accidental calls fail before network I/O.
+- `backend/topix/api/router/ai.py` LiteLLM sync/stream branches.
+- `backend/topix/agents/base.py` `LitellmModel` construction and every OpenAI Agents SDK runner.
+- Classifier, legacy chat generation, newsfeed agents, board/chat auto-labeling, image description, and `/tools/*` generation routes.
+- Frontend resolution/construction in `resolve.ts`, `context.ts`, `local-llm.ts`, and `byok-client.ts`.
+- Web runtime config through `webui/config.template.js`, `webui/docker-entrypoint.sh`, and `webui/src/config/api.ts` or one narrow replacement module.
 
-Files and boundaries:
+Behavior:
 
-- `backend/topix/api/router/ai.py`: LiteLLM sync/stream branches.
-- `backend/topix/agents/base.py`: `LitellmModel` construction.
-- `backend/topix/agents/assistant/auto_model.py`: classifier completion.
-- `backend/topix/api/router/chats.py`: legacy server-agent entry point.
-- Frontend BYOK selection/construction in `webui/src/features/agent/engine/services/resolve.ts`, `context.ts`, `local-llm.ts`, and `webui/src/features/agent/engine/byok-client.ts` as confirmed by tests.
+- Guard immediately before provider construction or invocation.
+- Codex + signed-in + stored LLM BYOK resolves managed Codex. Codex + signed-out resolves LLM off and constructs no browser/Tauri provider client.
+- Hide or disable only LLM controls; never delete stored keys.
+- Search, fetch, OCR, and Daytona resolution and confirmation behavior remain structurally equivalent in both modes.
 
-Design:
+Required evidence:
 
-- Call `require_direct_llm_allowed()` immediately before each backend construction/invocation boundary.
-- In Codex mode, legacy chat generation returns a stable “runtime unavailable for this path” response; transcript CRUD remains intact.
-- Inject a build/runtime flag into the Web UI config. In Codex profile, LLM resolution always chooses managed when signed in and never constructs a BYOK LLM client. Non-LLM BYOK resolution is unchanged.
-- Hide or disable only LLM provider controls in the Codex UI profile. Do not remove stored values automatically.
-
-Tests:
-
-- Patch all direct provider functions with counters that fail if invoked.
-- Exercise `/ai/llm`, `/ai/llm/stream`, legacy chat generation, classifier, and frontend resolver matrices.
-- Confirm search/fetch/OCR/Daytona resolution snapshots are unchanged.
-
-Exit criteria:
-
-- Zero direct LLM provider invocations in Codex mode, including when all keys and BYOK values are present.
+- Provider counters remain zero for `/ai/llm`, `/ai/llm/stream`, legacy chat, classifier, and all inventoried agent entry points in Codex mode.
+- Credential-free fake-client tests cover search/fetch/OCR/Daytona resolution, `X-Provider-Key` relay, metering bypass, and UI confirmation gates.
 - Provider mode retains upstream behavior.
 
-### WP3 — Codex app-server protocol adapter
+### WP3 — Bounded Codex app-server protocol adapter
 
-Purpose: turn the prototype into a bounded, observable application component.
+Purpose: turn the prototype into an observable application component with isolated sessions.
 
-Files:
+Process and generation lifecycle:
 
-- `backend/topix/ai_runtime/codex.py`, split into protocol/process/session modules only if tests demonstrate that one file is no longer maintainable.
-- `backend/topix/api/app.py` lifecycle wiring.
-- Runtime unit tests with a fake newline-delimited app-server process.
-
-Process lifecycle:
-
-1. Lazy-start or startup-start according to health semantics decided in WP5.
-2. Spawn the pinned `codex app-server` executable with minimal inherited environment.
+1. Start lazily so board and persistence features remain available while Codex is unauthenticated or degraded.
+2. Spawn the pinned executable with an allowlisted environment containing only `CODEX_HOME`, `PATH`, required home/temp/certificate variables, and explicitly configured proxy variables.
 3. Consume stdout and stderr concurrently; redact and bound retained diagnostics.
-4. Send exactly one `initialize`, wait for success with timeout, then send `initialized`.
-5. On EOF/process exit, fail all pending requests, mark unhealthy, and allow one controlled restart for a subsequent request—not provider fallback.
-6. On application shutdown, interrupt active turns where possible, close stdin, terminate with grace timeout, then kill only the owned child if required.
+4. Send exactly one `initialize`, await it with a dedicated timeout, then send `initialized`.
+5. Give every child connection a monotonically increasing generation. Associate pending requests, notification routes, sessions, and locks with that generation.
+6. On EOF, fatal parse error, or child exit, atomically mark the generation dead, fail its pending work with one sanitized error, interrupt readers, and clear all generation-owned state.
+7. Permit one replacement child under a start lock for a later request, controlled by bounded exponential backoff and a circuit-open interval. Never fall back to a provider.
+8. On shutdown, interrupt active turns, close stdin, wait a grace period, then kill only the owned child if required.
 
-Protocol correlation:
+Protocol bounds and correlation:
 
-- Allocate monotonically increasing request IDs.
-- Route responses by request ID and notifications by thread/turn ID, not through one shared undifferentiated queue.
-- Treat unknown/malformed messages as structured diagnostics; protocol-fatal messages fail the affected connection.
-- Bound every request and turn with configurable timeouts.
+- Allocate monotonic request IDs and route responses by request ID and notifications by thread/turn ID.
+- Configure separate timeouts for initialization, thread creation, turn start, turn completion, and concurrency-queue waits.
+- Bound stdout/stderr line size and retention, structured output bytes, pending requests, notification routes, sessions, canonical transcript bytes, response-cache bytes, and concurrent turns.
+- Classify executable-not-found, initialization/protocol, unauthenticated, timeout, interrupted, child-exit, schema-invalid, and circuit-open failures into stable internal codes.
 
-Session policy:
+Session contract:
 
-- One thread per non-empty `X-Run-Id`.
-- Requests without a run ID receive an ephemeral thread removed after completion.
-- Store mappings in memory for the initial release; Codex persists its own thread data in external `CODEX_HOME`, but mappings are intentionally not resumed after backend restart.
-- Evict completed run mappings after `DIM0_CODEX_SESSION_TTL_SECONDS`; cap total mappings with LRU behavior.
-- Serialize turns per thread, not globally. Allow different runs concurrently up to `DIM0_CODEX_MAX_CONCURRENT_TURNS`.
+- Key reusable sessions by `(authenticated_user_id, canonical_run_uuid)`. Bound textual length before UUID parsing and never log either value raw.
+- Requests without a run ID receive an ephemeral session removed after completion.
+- On the first request, canonicalize and hash the full OpenAI-shaped message/tool-result sequence. Later requests must contain that retained sequence as an exact prefix; send only the new suffix to the existing Codex thread.
+- Cache a completed Dim0 response by inbound request hash. An exact retry returns it without starting a second turn. A prefix mismatch returns a stable conflict and does not mutate the session.
+- Evict the complete session atomically by TTL/LRU. After eviction, backend restart, or child-generation change, the next request creates a new thread from its full history.
+- Serialize turns per session, while allowing distinct sessions concurrently up to `DIM0_CODEX_MAX_CONCURRENT_TURNS`.
 
-Turn contract:
+Turn and output contract:
 
-- Use restricted read-only access to the empty `DIM0_CODEX_WORKSPACE`, `approvalPolicy=never`, and an output schema.
-- Translate the full existing message/tool contract without granting Codex filesystem or command responsibilities.
-- Validate that returned tool names exist in the request and arguments are JSON objects.
-- Return exactly one of: content, one or more valid tool calls, or a stable runtime error.
-- Structured output is buffered until valid JSON is complete. The endpoint may emit a final content delta for compatibility but documentation must not label this as genuine token streaming.
+- Use an empty dedicated `DIM0_CODEX_WORKSPACE`, restricted read-only access, `approvalPolicy=never`, and an output schema. Codex never executes canvas tools.
+- Require exactly one non-empty output mode: `content` or `tool_calls`.
+- Validate tool names against the request, arguments against each supplied JSON Schema using an explicit maintained validator, call IDs for uniqueness, and output against size limits.
+- Reject unknown tools, invalid/missing values, duplicate call IDs, mixed modes, and empty results.
+- Buffer structured output through complete validation. The stream route may then emit one compatibility content delta and `final`, but never claims token streaming.
+- On HTTP disconnect, asyncio cancellation, or timeout, send `turn/interrupt` best-effort and release all locks, semaphores, and waiters in `finally`.
+
+Required fake-server evidence:
+
+- Handshake, text, schema-valid tool calls, invalid/oversized output, stderr redaction, and shutdown.
+- Two-user isolation for the same run UUID, transcript suffixing, exact retry, prefix conflict, TTL reset, same-session serialization, and concurrent sessions.
+- Several active sessions failing on child exit, followed by concurrent later requests producing one controlled restart and new isolated threads.
+
+### WP4 — HTTP adapter, readiness, and error contract
+
+- Resolve the runtime once through the application component; remove scattered raw environment comparisons.
+- Pass authenticated `user_id` and validated run UUID from both LLM routes into `CodexRuntime`.
+- Expose Codex readiness separately from ordinary service liveness. Degraded readiness disables agent submission without disabling the board.
+- Return stable sanitized public errors for the internal classes defined in WP3.
+- Emit the error event shape the current stream client handles and no token delta before Codex output validates.
+- Preserve current metering deliberately: a managed request reaching the handler consumes its run unit even when Codex startup or authentication fails.
+- Decouple Codex model-picker behavior from provider catalog reachability.
 
 Exit criteria:
 
-- Fake-server tests cover handshake, text, tool call, concurrent runs, same-run serialization, timeout, cancellation, malformed JSON, stderr, child exit, restart, and shutdown.
+- Existing managed-client contract tests pass with Codex success/error additions.
+- Canvas accepts translated tool calls without changes to node/edge execution semantics.
+- No child-process secret, raw user/run identity, or sensitive path reaches logs or HTTP output.
 
-### WP4 — HTTP adapter and error contract
-
-Purpose: preserve Dim0 browser behavior while exposing runtime failures predictably.
-
-Files:
-
-- `backend/topix/api/router/ai.py`.
-- Existing managed-client and stream assembly tests in `webui/src/features/agent/engine/`.
-
-Design:
-
-- Resolve runtime once through the application component; remove scattered raw environment comparisons.
-- Non-stream failures return an appropriate 5xx response with a stable public error code and no child-process secrets.
-- Streaming failures emit the event shape the existing client actually handles; if it lacks an error event contract, update both ends together and test it.
-- Metering semantics remain one `X-Run-Id` unit; failed pre-turn startup/auth requests must be evaluated against the existing quota contract and documented.
-- Model picker behavior in Codex mode is decoupled from provider catalog reachability; use a stable Codex label/model selection policy.
-
-Exit criteria:
-
-- Existing managed-client contract tests pass plus Codex success/error cases.
-- Canvas agent loop accepts translated tool calls without changes to node/edge execution semantics.
-
-### WP5 — Persistence and configuration
-
-Purpose: preserve upstream stores while supporting bundled or existing PostgreSQL safely.
+### WP5 — Persistence, Compose, credentials, and filesystem boundaries
 
 Backend configuration:
 
-- Extend `PostgresConfig.model_post_init()` to support `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` in addition to host/port.
-- Never log password values.
-- Keep `apply_schema()` idempotent startup behavior.
-- Validate Qdrant collection dimension against the configured 512-dimensional embedder; never recreate a non-empty collection automatically.
+- Extend `PostgresConfig.model_post_init()` for `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD`; never log the password.
+- Keep `apply_schema()` idempotent.
+- Validate Qdrant collection dimension against the 512-dimensional embedder and never recreate a non-empty collection automatically.
 
-Docker assets:
+Docker structure:
 
-- Base additive Codex overlay: locally built backend/Web UI, dedicated external `CODEX_HOME`, bundled Qdrant and Redis, persistent volumes.
-- Bundled PostgreSQL profile: dedicated named volume and healthcheck.
-- External PostgreSQL overlay: remove dependency on the bundled service and require host, port, database, user, and password inputs.
-- Prefer `host.docker.internal` for a PostgreSQL instance on the Windows Desktop host; document LAN/container-network alternatives.
-- Use unique `dim0-*` container and volume names to avoid collisions with Baley or unrelated local services.
-- Pin Qdrant/PostgreSQL/Redis/Codex image or package versions; do not use `latest` in the fork profile.
+- Create a fork-specific common Compose file containing locally built backend/Web UI, Qdrant, Redis, persistent volumes, and a dedicated external `CODEX_HOME`. Do not derive it from `docker-compose.images.yml`.
+- Add a bundled-PostgreSQL variant with its own service, named volume, healthcheck, and backend dependency.
+- Add an external-PostgreSQL variant with no PostgreSQL service or PostgreSQL `depends_on`; do not rely on Compose `!reset`.
+- Require host, port, database, user, and password for external PostgreSQL. Grant the dedicated Dim0 role ownership or sufficient schema DDL rights.
+- Pin Qdrant, PostgreSQL, Redis, and Codex versions and use unique `dim0-*` resource names.
+- Prefer a Codex-specific backend build target so the provider image does not unconditionally contain the Codex CLI.
 
 Secrets and state:
 
-- Examples contain paths and variable names only.
-- Actual `.env`, database password, embedding key, and Codex auth remain outside Git under the common data/security policy.
-- `C:\ProgramData\Dim0\codex` is the proposed Windows `CODEX_HOME`; creation/login is a human-run bootstrap step.
+- Require absolute external env-file and `CODEX_HOME` paths and reject paths resolved inside the worktree. Never mount the upstream repository `.env` into the Codex profile.
+- `C:\ProgramData\Dim0\codex` is the proposed Windows `CODEX_HOME`; creation and login are human bootstrap steps.
+- Never pass provider keys, database/Redis credentials, signing secrets, or unrelated backend variables to the Codex child.
 
-Exit criteria:
+Required evidence:
 
-- Both Compose variants pass `docker compose config`.
-- Backend connects to each PostgreSQL variant and preserves Qdrant content across restart.
-- Repository scan finds no runtime credentials or persistent data.
+- Both variants pass `docker compose config`; external `config --services` and actual `up`/`ps` show no PostgreSQL container.
+- `SELECT current_database(), current_user` proves the external database/role, and applying schema twice proves idempotency.
+- Fake-child environment capture excludes forbidden variables. Sentinel secrets in stderr/protocol errors never appear in logs or HTTP responses.
+- An actual sandbox smoke cannot read `/app`, cannot write its workspace, and sees an empty dedicated workspace.
+- Repository scans find no credentials, `CODEX_HOME`, or persistent data.
 
 ### WP6 — End-to-end validation
 
-Purpose: prove the service is usable rather than merely assembled.
+1. Build all images and record the exact Codex CLI version.
+2. Start bundled persistence and verify PostgreSQL, Qdrant, Redis, backend liveness, separate Codex readiness, and Web UI.
+3. Bootstrap the local user through the existing flow.
+4. Create a board, notes, and links; restart; verify persistence.
+5. Observe one embedding request for text creation/update and none for spatial/style-only updates. Verify a fake embedding failure prevents Qdrant upsert/vector update and introduces no zero-vector fallback.
+6. Run Codex text-only and valid note-create/note-edit/edge-create tool turns.
+7. Verify browser event, intended tool call, application store, canvas controller, rendered DOM, Qdrant payload, and reload state.
+8. Stop app-server during active turns and verify sanitized visible failure, generation cleanup, bounded restart, and zero provider fallback.
+9. Exercise distinct users/runs concurrently, same-session ordering, full-history suffixing, retry, and conflict handling.
+10. Repeat persistence with external PostgreSQL and prove no bundled PostgreSQL starts.
+11. Run mandatory fake-client non-LLM regressions; list optional live external-service checks separately.
 
-Test sequence:
-
-1. Build all images with a recorded Codex CLI version.
-2. Start bundled persistence and verify health endpoints/log readiness.
-3. Sign in/bootstrap the single local user using the existing Dim0 flow.
-4. Create a board, notes, and links manually; restart; verify persistence.
-5. Make a text edit and observe one embedding request; make a position/style edit and observe none.
-6. Run a Codex text-only prompt.
-7. Run prompts producing note creation, note edit, and edge creation tool calls; verify rendered DOM, application store, persisted Qdrant payload, and reload behavior.
-8. Stop app-server during a turn; verify visible error and zero provider fallback.
-9. Run two distinct run IDs concurrently and one same-run sequence.
-10. Repeat persistence startup with external PostgreSQL.
-11. Regression-test search, fetch, OCR, and Daytona when their credentials are configured.
-
-UI debugging rule:
-
-If a canvas result diverges, add development-only structured traces at the user event, intended tool call, browser agent state, canvas store state, controller state, and rendered DOM boundary. Fix the first divergent layer and retain useful traces until verified.
+If canvas state diverges, add development-only structured traces at the user event, calculated target, React/application store, library/controller, and rendered DOM boundaries. Fix the first layer where expected and actual state diverge and retain useful traces until verification.
 
 Exit criteria:
 
-- All normative acceptance criteria pass with evidence.
-- Any opt-in external-service test not run is listed as an explicit unverified item, not silently treated as passing.
+- Every normative acceptance criterion has passing evidence.
+- Missing credentials affect only explicitly optional live-service checks and are listed as unverified, never passed.
 
 ### WP7 — Documentation, upstream merge, and handoff
 
-- Update ADR-CODEX-001 to cite the normative spec and final runtime/error decisions.
-- Add operator instructions for bootstrap, startup, health checks, backup locations, upgrade, and rollback.
-- Record the exact upstream commit and fork-only file list.
-- Document subtree update procedure and a post-merge verification checklist.
-- Keep the original provider profile available as rollback, but never as an automatic runtime fallback.
-
-Exit criteria:
-
-- A new operator can start the service from external secrets/state without writing into the worktree.
-- Rollback is an explicit Compose/profile choice.
+- Update ADR-CODEX-001 with final runtime, session, readiness, metering, and error decisions.
+- Document bootstrap, startup, health, backup locations, upgrade, explicit rollback, and both PostgreSQL modes.
+- Record the upstream commit, fork-only file list, subtree update procedure, and post-merge verification checklist.
+- Keep provider mode available as an explicit profile choice, never an automatic fallback.
 
 ## 5. Commit sequence
-
-Each commit is independently testable and uses the Dim0 conventional scope rule:
 
 1. `test(dim0): add runtime baseline harness`
 2. `refactor(runtime): separate llm and embedding policy`
@@ -273,44 +243,48 @@ Each commit is independently testable and uses the Dim0 conventional scope rule:
 7. `test(dim0): verify codex canvas and persistence flows`
 8. `docs(dim0): document codex desktop operations`
 
-The exact grouping may shrink when two steps cannot be meaningfully tested apart, but provider policy, runtime lifecycle, Docker configuration, and documentation must not be collapsed into one opaque commit.
+Provider policy, process/session lifecycle, Docker configuration, and operator documentation must remain independently reviewable even if adjacent commits are combined for testability.
 
 ## 6. Verification matrix
 
 | Area | Provider profile | Codex + bundled PG | Codex + external PG |
 |---|---:|---:|---:|
-| Compose expansion | Required | Required | Required |
-| Backend unit tests | Required | Required | Required |
+| Baseline command/evidence ledger | Required | Reused as comparison | Reused as comparison |
+| Compose expansion and service list | Required | Required | Required; no PG service |
+| Backend unit/lifespan tests | Required | Required | Required |
 | Frontend check/build | Required | Required | Required |
-| Direct LLM calls | Upstream behavior | Must be zero | Must be zero |
-| Embedding | Existing route | Existing route | Existing route |
-| Qdrant CRUD/restart | Required | Required | Required |
-| Canvas Codex tool E2E | N/A | Required | One representative smoke |
-| Search/fetch/OCR/Daytona regression | Existing behavior | Unchanged | Unchanged |
+| Direct LLM calls | Upstream behavior | Must be zero outside Codex | Must be zero outside Codex |
+| Embedding | Existing route | Existing route, separately evidenced | Existing route, separately evidenced |
+| PostgreSQL/Qdrant CRUD and restart | Required | Required | Required |
+| Canvas Codex tool E2E | N/A | Required | Representative smoke |
+| Search/fetch/OCR/Daytona fake contracts | Required | Structurally unchanged | Structurally unchanged |
 
-## 7. Stop conditions and decisions requiring the operator
+## 7. Stop conditions
 
 Pause implementation only if:
 
-- the actual Codex app-server protocol cannot represent the browser tool-turn contract without executing tools itself;
-- Qdrant collection compatibility would require recreation or data loss;
-- existing PostgreSQL cannot provide a dedicated database/role;
-- Codex authentication or an external embedding credential is unavailable for opt-in E2E;
+- the actual app-server protocol cannot represent the browser tool-turn contract without executing tools itself;
+- Qdrant compatibility would require recreation or data loss;
+- external PostgreSQL cannot provide a dedicated database/role with schema DDL rights;
+- Codex authentication or an embedding credential is unavailable for an explicitly opt-in live check; or
 - a required fix would materially restructure upstream canvas, agent, or storage domains.
 
-Do not treat a slow Docker build, ordinary test failure, or missing optional non-LLM credential as a design blocker.
+A slow build, ordinary test failure, or missing optional non-LLM credential is evidence to classify, not a design blocker.
 
-## 8. Independent review contract
+## 8. Review reconciliation
 
-After this plan is drafted, an independent agent must review it without editing implementation code. The reviewer must check:
+The independent review is complete. Its blocking and important findings are integrated as follows:
 
-- every normative spec statement maps to at least one work item and acceptance check;
-- direct LLM prohibition does not accidentally block retained embeddings;
-- non-LLM tools remain unchanged;
-- process/session concurrency and failure modes are testable;
-- Docker external-PostgreSQL claims match actual Compose and config behavior;
-- upstream merge surface is genuinely narrow;
-- security boundaries cover credentials, filesystem access, error redaction, and fallback behavior;
-- the plan does not silently claim genuine token streaming from buffered structured output.
+| Review area | Integrated work package |
+|---|---|
+| Startup provider construction | WP1–WP2 |
+| User-scoped session identity and history reconciliation | WP3–WP4 |
+| Connection generations, cancellation, bounds, and restart | WP3 |
+| Structured-output validity and buffered streaming | WP3–WP4 |
+| Embedding separation and failure behavior | WP0–WP1, WP6 |
+| External PostgreSQL Compose structure | WP5–WP6 |
+| Credentials, child environment, and filesystem isolation | WP3, WP5 |
+| Web UI runtime configuration | WP2, WP4 |
+| Mandatory non-LLM regressions | WP0, WP2, WP6 |
 
-Review findings are classified as blocking, important, or optional. Blocking and important findings are incorporated before the plan is considered ready.
+The review document remains a durable rationale and traceability record. It no longer overrides this plan; any future conflict is a new review finding that must be resolved in this implementation plan before work proceeds.
