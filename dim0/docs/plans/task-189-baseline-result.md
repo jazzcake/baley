@@ -262,6 +262,66 @@ Three earlier setup attempts from this dispatch remain preserved at `run-2026091
 | 10 | Browser evidence has no provider request and agent/external-tool flows remain unused | **Blocked** | Browser/UI observation was not reached. |
 | 11 | Final worktree report has no generated baseline credential, log, screenshot, database, Qdrant, Redis, or environment artifact | **Pass** | `22-git-status-after-failure.txt` is empty; all evidence remained external and `debug.log` was untouched. |
 
-### Retry blocker and next action
+## Fresh run 2026-09-14 05:33 KST — stopped at Stage D storage contract
+
+Outcome: **not accepted; FastAPI lifespan schema application failed at the live canonical storage boundary**
+
+External evidence: `C:\ProgramData\Dim0\validation\task-189\run-20260914-053311-422-bc2bc812`
+
+Evidence run ID: `run-20260914-053311-422-bc2bc812`
+
+Pinned Baley HEAD: `86b638b039820cd298ad21e7fc41300356f3bd12`
+
+Manifest SHA-256: **not generated**. Stage D failed before the backend exported the two provider counter files, so tripwire validation, credential screening, and `Finalize` could not truthfully run. The completed `commands.jsonl` has diagnostic SHA-256 `bcccb1eeb16a6f1685271be3faa459061a71f349b59cdd9b08e9e1f548360752`; it is not a manifest hash.
+
+### Fresh-run result
+
+The run used the existing locked backend and Web UI environments with `PYTHONUTF8=1`; provider credentials were explicitly blank. The authoritative image build reused cached locked Docker layers. The provider-seam test also passed inside `docker run --network none`, so no external provider endpoint was reachable or called.
+
+Stage A passed: Ruff, 708 backend tests, Web UI type-check/lint, 1,356 Web UI tests in 142 files, the production build, and both focused harness self-tests. This includes the real `HarnessCanvas` non-agent viewport interaction. A session-local Windows wrapper preserved native exit codes while merging expected jsdom/Vite stderr into captured text, avoiding PowerShell's false terminating-error conversion without changing repository files.
+
+Stage B passed with exactly `postgres-test`, `qdrant-test`, `redis-test`, `backend-test`, and `webui-test`; empty provider variables; the read-only external environment mount; no provider/Codex service; and successful cached image builds. Stage C's normative checks also passed: PostgreSQL accepted connections, Qdrant returned `all shards are ready`, Redis returned `PONG`, and persistence status was healthy/running. An auxiliary aggregate readiness probe recorded a false timeout during retained Qdrant collection recovery, but the immediately following required health commands all exited `0`; the auxiliary result remains visible.
+
+The first required application-path failure was `40-storage-contract`. Both cases entered the FastAPI lifespan, reached `topix.store.postgres.schema.apply_schema`, and failed in `asyncpg.protocol.protocol.BaseProtocol._dispatch_result` with `AttributeError: 'NoneType' object has no attribute 'decode'`. PostgreSQL remained healthy and its bounded logs showed no server-side error. Schema application did not complete, so canonical CRUD, vector behavior, Redis sequence semantics, restart persistence, HTTP/browser evidence, and zero exported counters are not claimed.
+
+Only Task #189 containers and `dim0-task189_default` were removed. Volumes `dim0-task189_pg_data_test`, `dim0-task189_qdrant_data_test`, and `dim0-task189_redis_data_test` were retained for diagnosis; no unrelated Docker resource changed. The final `dim0` worktree report was empty, and the pre-existing root `debug.log` was neither read nor modified.
+
+Four earlier non-authoritative directories were preserved: `run-20260914-045740-828-74ddb95e`, `run-20260914-045847-309-9ebdd10e`, `run-20260914-050248-387-66182eee`, and `run-20260914-052642-545-6fdf0188`. They record environment/harness command corrections and are not presented as accepted evidence.
+
+### Fresh-run evidence index
+
+| Artifact | Result |
+| --- | --- |
+| `01`–`05` provenance/preflight | Pinned SHA, clean `dim0`, Docker/Compose, and ownership/ports recorded; exits `0` |
+| `10`–`16` Stage A | Ruff, 708 backend tests, Web UI checks, 1,356 tests, production build, and harness self-tests passed |
+| `20`–`23` Stage B/isolation | Exact five-service expansion, cached builds, and network-disabled positive tripwire passed |
+| `30-persistence-ready-wait.txt` | Auxiliary false timeout during retained Qdrant recovery; exit `1` |
+| `31`–`34` Stage C | All normative persistence status/health checks passed; exits `0` |
+| `40-storage-contract.txt` | First required blocker; two schema cases failed in asyncpg decoding; exit `1` |
+| `41`–`43` failure capture | Service state/logs captured; both required counter files recorded absent |
+| `44`–`47` cleanup/state | Containers/network removed, three volumes retained, final `dim0` status empty |
+| `commands.jsonl` | Exact ledger; diagnostic SHA-256 `bcccb1eeb16a6f1685271be3faa459061a71f349b59cdd9b08e9e1f548360752` |
+
+### Fresh-run acceptance criteria
+
+| # | Criterion | Result | Evidence / blocker |
+| --- | --- | --- | --- |
+| 1 | Complete external provenance and finalized manifest | **Fail** | Provenance exists; no valid manifest after fail-fast. |
+| 2 | Backend lint/unit and Web UI check/test/build | **Pass** | 708 backend and 1,356 Web UI tests plus lint/build passed. |
+| 3 | Exact five-service Compose expansion and local images | **Pass** | `20`–`22` passed. |
+| 4 | Persistence health and idempotent schema | **Fail** | Health passed; schema application failed. |
+| 5 | FastAPI lifespan, ping, and Web UI HTTP 2xx | **Fail** | Lifespan failed; Stage E was not run. |
+| 6 | Canonical board/note/link CRUD with fake embedder | **Blocked** | Stage D failed before CRUD assertions. |
+| 7 | PostgreSQL/Qdrant/Redis restart persistence | **Blocked** | Seed contract failed; restart not run. |
+| 8 | Text/spatial/failure vector semantics | **Blocked** | Storage failed before mutation assertions. |
+| 9 | Bounded construction and zero invocation counters | **Blocked** | Positive seams passed under `--network none`; application counters were not exported. |
+| 10 | Sanitized browser evidence and no agent flow | **Blocked** | Real canvas Vitest passed; browser console/HAR not reached. |
+| 11 | No generated evidence in worktree | **Pass** | Final `dim0` status empty; external evidence only; `debug.log` untouched. |
+
+### Fresh-run blocker and next action
+
+Diagnose the Python 3.13/asyncpg schema-execution failure in a separate harness/environment task, then rerun Stage A–F in a new external directory. Acceptance still requires canonical CRUD/restart persistence, HTTP/browser evidence, exported zero counters, secret screening, and a finalized manifest.
+
+### Historical retry blocker and next action
 
 Correct the unmatched quote in the committed `setup-mini-app-compiler` recipe in a separate product/harness change, then rerun the complete Stage A–F sequence from a new unique evidence directory. Acceptance still requires the network-disabled positive tripwire self-test, all five isolated services, live canonical CRUD/restart semantics, real non-agent UI/canvas interaction, zero provider invocation counters, secret screening, and a finalized manifest.
