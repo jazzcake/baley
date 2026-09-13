@@ -202,10 +202,10 @@ lint-backend: ## Backend ruff check (runs before backend tests in CI)
 setup-mini-app-compiler: ## Install mini-app compiler node deps (sucrase) for the compile-bridge tests
 	@if [ ! -d backend/scripts/mini-app-compiler/node_modules ]; then \
 		if command -v npm >/dev/null 2>&1; then \
-			echo "Installing mini-app compiler deps (sucrase)…"; \
+			printf '%s\n' 'Installing mini-app compiler deps (sucrase)'; \
 			cd backend/scripts/mini-app-compiler && npm ci --omit=dev; \
 		else \
-			echo "npm not found — skipping mini-app compiler deps; compile-bridge tests will skip"; \
+			printf '%s\n' 'npm not found - skipping mini-app compiler deps; compile-bridge tests will skip'; \
 		fi; \
 	fi
 
