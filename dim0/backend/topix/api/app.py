@@ -12,7 +12,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from topix.ai_runtime import CodexAppServerRuntime
-
 from topix.api.router import (
     ai,
     billing,

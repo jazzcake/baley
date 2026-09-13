@@ -15,7 +15,7 @@ import json
 import os
 import tempfile
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Annotated, Any, Literal
 
 import litellm
@@ -24,8 +24,6 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Re
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
-
-from topix.ai_runtime.codex import CodexAppServerError
 
 from topix.agents.assistant.auto_model import classify_auto_model_complexity
 from topix.agents.assistant.code import execute_code
@@ -36,6 +34,7 @@ from topix.agents.websearch.tools import (
     search_perplexity,
     search_tavily,
 )
+from topix.ai_runtime.codex import CodexAppServerError
 from topix.api.utils.decorators import with_standard_response
 from topix.api.utils.rate_limit.entitlements import resolve_entitlement_context
 from topix.api.utils.rate_limit.policy import resolve_allowed_model_tiers
@@ -316,6 +315,19 @@ def _delta_lines(delta: Any, slots: dict[int, dict[str, Any]], announced: set[in
             yield json.dumps({"type": "tool_start", "id": slot["id"], "name": slot["name"]}) + "\n"
 
 
+async def _codex_stream_lines(
+    request: Request,
+    body: AiLlmRequest,
+    x_run_id: str | None,
+) -> AsyncIterator[str]:
+    """Translate Codex events to the existing NDJSON wire format."""
+    try:
+        async for event in request.app.codex_runtime.stream(body.messages, body.tools, x_run_id, body.reasoning_effort):
+            yield json.dumps(event) + "\n"
+    except CodexAppServerError as exc:
+        yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
+
+
 @router.post("/llm/stream/", include_in_schema=False)
 @router.post("/llm/stream")
 async def ai_llm_stream(
@@ -333,15 +345,10 @@ async def ai_llm_stream(
     resolution (and any 403/503) runs before streaming, so errors are plain HTTP.
     """
     if os.getenv("DIM0_AI_RUNTIME", "provider") == "codex":
-        async def generate_codex():
-            """Translate Codex events to the existing NDJSON wire format."""
-            try:
-                async for event in request.app.codex_runtime.stream(body.messages, body.tools, x_run_id, body.reasoning_effort):
-                    yield json.dumps(event) + "\n"
-            except CodexAppServerError as exc:
-                yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
-
-        return StreamingResponse(generate_codex(), media_type="application/x-ndjson")
+        return StreamingResponse(
+            _codex_stream_lines(request, body, x_run_id),
+            media_type="application/x-ndjson",
+        )
 
     entitlement = await resolve_entitlement_context(request, user_id)
     allowed_tiers = resolve_allowed_model_tiers(entitlement.plan)

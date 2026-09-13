@@ -35,6 +35,7 @@ class CodexAppServerRuntime:
     """Own one long-lived app-server process and one thread per Dim0 run."""
 
     def __init__(self, command: str | None = None, model: str | None = None) -> None:
+        """Configure the app-server command, model, and persistent run state."""
         self.command = command or os.getenv("DIM0_CODEX_COMMAND", "codex")
         self.model = model or os.getenv("DIM0_CODEX_MODEL") or None
         self.cwd = os.getenv("DIM0_CODEX_WORKSPACE", "/var/empty/dim0-codex")
@@ -68,14 +69,18 @@ class CodexAppServerRuntime:
             await self._reader_task
         self._process = None
 
-    async def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], run_id: str | None, effort: str | None = None) -> dict[str, Any]:
+    async def complete(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], run_id: str | None, effort: str | None = None
+    ) -> dict[str, Any]:
         """Return one OpenAI-shaped assistant message without executing canvas tools."""
         async for event in self.stream(messages, tools, run_id, effort):
             if event["type"] == "final":
                 return event["message"]
         raise CodexAppServerError("Codex turn completed without an assistant message")
 
-    async def stream(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], run_id: str | None, effort: str | None = None) -> AsyncIterator[dict[str, Any]]:
+    async def stream(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], run_id: str | None, effort: str | None = None
+    ) -> AsyncIterator[dict[str, Any]]:
         """Stream Dim0 events while serializing turns on the stdio connection."""
         async with self._turn_lock:
             await self.start()
@@ -85,7 +90,10 @@ class CodexAppServerRuntime:
                 "input": [{"type": "text", "text": self._prompt(messages, tools)}],
                 "cwd": self.cwd,
                 "approvalPolicy": "never",
-                "sandboxPolicy": {"type": "readOnly", "access": {"type": "restricted", "includePlatformDefaults": False, "readableRoots": [self.cwd]}},
+                "sandboxPolicy": {
+                    "type": "readOnly",
+                    "access": {"type": "restricted", "includePlatformDefaults": False, "readableRoots": [self.cwd]},
+                },
                 "outputSchema": RESPONSE_SCHEMA,
             }
             if effort:
@@ -120,7 +128,15 @@ class CodexAppServerRuntime:
     @staticmethod
     def _prompt(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> str:
         """Encode the existing model-turn contract as a constrained Codex request."""
-        return "Act only as Dim0's model-turn planner. Do not inspect files, run commands, or execute tools. Choose either content or the next supplied canvas tool call. Return only the requested JSON.\nMESSAGES:\n" + json.dumps(messages, ensure_ascii=False) + "\nTOOLS:\n" + json.dumps(tools, ensure_ascii=False)
+        return (
+            "Act only as Dim0's model-turn planner. "
+            "Do not inspect files, run commands, or execute tools. "
+            "Choose either content or the next supplied canvas tool call. "
+            "Return only the requested JSON.\nMESSAGES:\n"
+            + json.dumps(messages, ensure_ascii=False)
+            + "\nTOOLS:\n"
+            + json.dumps(tools, ensure_ascii=False)
+        )
 
     @staticmethod
     def _decode_message(raw: str) -> dict[str, Any]:
@@ -129,7 +145,10 @@ class CodexAppServerRuntime:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise CodexAppServerError("Codex returned invalid structured output") from exc
-        calls = [{"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": json.dumps(c["arguments"], ensure_ascii=False)}} for c in payload.get("tool_calls", [])]
+        calls = [
+            {"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": json.dumps(c["arguments"], ensure_ascii=False)}}
+            for c in payload.get("tool_calls", [])
+        ]
         message: dict[str, Any] = {"role": "assistant", "content": payload.get("content")}
         if calls:
             message["tool_calls"] = calls
