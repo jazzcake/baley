@@ -92,12 +92,42 @@ async def test_provider_free_board_content_crud_and_persistence(monkeypatch: pyt
 
             calls_before_spatial = len(embedder.calls)
             before_spatial = (await content_store.get([NOTE_A_ID], with_vector=True))[0]
+            vector_operations: list[str] = []
+            original_update_vectors = content_store.client.update_vectors
+            original_upsert = content_store.client.upsert
+            original_batch_update = content_store.client.batch_update_points
+
+            async def tracked_update_vectors(*args, **kwargs):
+                """Record a direct Qdrant vector update before delegating."""
+                vector_operations.append("update_vectors")
+                return await original_update_vectors(*args, **kwargs)
+
+            async def tracked_upsert(*args, **kwargs):
+                """Record a Qdrant upsert before delegating."""
+                vector_operations.append("upsert")
+                return await original_upsert(*args, **kwargs)
+
+            async def tracked_batch_update(*args, **kwargs):
+                """Record vector-bearing Qdrant batch operations before delegating."""
+                operations = kwargs.get("update_operations")
+                if operations is None and len(args) > 1:
+                    operations = args[1]
+                for operation in operations or ():
+                    operation_name = type(operation).__name__.lower()
+                    if "vector" in operation_name or "upsert" in operation_name:
+                        vector_operations.append(type(operation).__name__)
+                return await original_batch_update(*args, **kwargs)
+
+            monkeypatch.setattr(content_store.client, "update_vectors", tracked_update_vectors)
+            monkeypatch.setattr(content_store.client, "upsert", tracked_upsert)
+            monkeypatch.setattr(content_store.client, "batch_update_points", tracked_batch_update)
             await app.graph_store.patch_note(
                 NOTE_A_ID,
                 {"properties": {"node_position": {"type": "position", "position": {"x": 189, "y": 512}}}},
             )
             after_spatial = (await content_store.get([NOTE_A_ID], with_vector=True))[0]
             assert len(embedder.calls) == calls_before_spatial
+            assert vector_operations == []
             assert after_spatial.vector == before_spatial.vector
 
             before_failure = (await content_store.get([NOTE_A_ID], with_vector=True))[0]

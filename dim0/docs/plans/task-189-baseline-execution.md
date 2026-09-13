@@ -50,64 +50,37 @@ The harness may construct an embedding client only inside the isolated construct
 
 ## 3. Evidence layout
 
-Use an external directory and one manifest. Commands below are PowerShell and start from the Baley repository root.
+Use a unique external run directory and one manifest. Commands below are PowerShell and start from the Baley repository root. The helper creates the run exclusively (timestamp plus random suffix), records provenance, and refuses further writes after finalization.
 
 ```powershell
-$EvidenceRoot = 'C:\ProgramData\Dim0\validation\task-189'
-$BaselineEnv = Join-Path $EvidenceRoot 'baseline.env'
+$Harness = Resolve-Path 'dim0/build/capture-task-189-evidence.ps1'
+$Init = & $Harness -Action Initialize | ConvertFrom-Json
+$EvidenceRoot = $Init.runDirectory
+$BaselineEnv = $Init.baselineEnv
 $Manifest = Join-Path $EvidenceRoot 'manifest.sha256'
-New-Item -ItemType Directory -Force -Path $EvidenceRoot | Out-Null
-git -C dim0 rev-parse HEAD | Tee-Object (Join-Path $EvidenceRoot '01-git-head.txt')
-git status --short -- dim0 | Tee-Object (Join-Path $EvidenceRoot '02-git-status-before.txt')
-docker version | Tee-Object (Join-Path $EvidenceRoot '03-docker-version.txt')
-docker compose version | Tee-Object (Join-Path $EvidenceRoot '04-compose-version.txt')
+& $Harness -Action Preflight -RunDirectory $EvidenceRoot
 ```
 
-Create `baseline.env` with non-secret settings only:
+`Initialize` creates `baseline.env` with non-secret settings only. It includes absolute forward-slash `BASELINE_ENV_FILE` and `BASELINE_RUN_DIR` values, allowing the `D:` repository to bind the `C:` evidence/environment roots through Compose long syntax.
 
 ```powershell
-@'
-DOPPLER_TOKEN=
-API_PORT=8082
-APP_PORT=5175
-MINI_APP_PORT=5182
-API_ORIGIN=http://localhost:8082
-VITE_API_URL=http://localhost:8082
-VITE_HOST_ORIGIN=http://localhost:5175
-VITE_MINI_APP_ORIGIN=http://localhost:5182
-EMAIL_VERIFICATION_ENABLED=false
-PASSWORD_RESET_ENABLED=false
-GOOGLE_CONNECT_ENABLED=false
-OPENAI_AGENTS_DISABLE_TRACING=1
-OPENAI_AGENTS_DONT_LOG_MODEL_DATA=1
-OPENAI_AGENTS_DONT_LOG_TOOL_DATA=1
-DIM0_BASELINE_PROVIDER_TRIPWIRE=1
-DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION=512
-'@ | Set-Content -Encoding utf8 $BaselineEnv
-$ComposeEnvPath = [IO.Path]::GetRelativePath((Resolve-Path 'dim0'), $BaselineEnv).Replace('\', '/')
+Get-Content $BaselineEnv
 ```
 
-The source Compose file resolves `ENVFILE` beneath `dim0/`; the relative path above allows its existing `../${ENVFILE}` mount to reach the external file without writing secrets or state into the worktree.
+The overlay replaces the base `/.env` mount by container target and binds the evidence directory at `/baseline-evidence`, where the backend exports both counter files directly.
 
-For every command, retain stdout/stderr and the exit code. The examples below show the canonical output file; the executor records `$LASTEXITCODE` in the adjacent `*.exit.txt` file before proceeding.
+For every command, use the helper's `Run` action with a unique `NN-lowercase-kebab-case` name. It records exact command text, working directory, timestamps, duration, exit code, and the bounded final 1,000 log lines in `commands.jsonl`, `NAME.txt`, and `NAME.exit.txt`; duplicate names are rejected rather than overwritten.
 
 ## 4. Stage A — static and build baseline
 
 Run repository checks before starting services:
 
 ```powershell
-Push-Location dim0
-make lint-backend 2>&1 | Tee-Object (Join-Path $EvidenceRoot '10-lint-backend.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '10-lint-backend.exit.txt')
-make test-backend 2>&1 | Tee-Object (Join-Path $EvidenceRoot '11-test-backend.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '11-test-backend.exit.txt')
-make lint-ui 2>&1 | Tee-Object (Join-Path $EvidenceRoot '12-lint-ui.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '12-lint-ui.exit.txt')
-make test-ui 2>&1 | Tee-Object (Join-Path $EvidenceRoot '13-test-ui.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '13-test-ui.exit.txt')
-npm --prefix webui run build 2>&1 | Tee-Object (Join-Path $EvidenceRoot '14-webui-build.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '14-webui-build.exit.txt')
-Pop-Location
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '10-lint-backend' -CommandText 'make lint-backend' -WorkingDirectory dim0
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '11-test-backend' -CommandText 'make test-backend' -WorkingDirectory dim0
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '12-lint-ui' -CommandText 'make lint-ui' -WorkingDirectory dim0
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '13-test-ui' -CommandText 'make test-ui' -WorkingDirectory dim0
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '14-webui-build' -CommandText 'npm --prefix webui run build' -WorkingDirectory dim0
 ```
 
 Expected result: each exit file contains `0`; backend unit tests, frontend type/lint/tests, and the production Web UI build complete without a provider invocation. A dependency-install network fetch is environment setup, not a provider call, but it must be recorded separately from the acceptance run.
@@ -115,13 +88,10 @@ Expected result: each exit file contains `0`; backend unit tests, frontend type/
 ## 5. Stage B — Compose expansion and images
 
 ```powershell
-$env:ENVFILE = $ComposeEnvPath
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test config 2>&1 | Tee-Object (Join-Path $EvidenceRoot '20-compose-config.yml')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '20-compose-config.exit.txt')
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test config --services 2>&1 | Tee-Object (Join-Path $EvidenceRoot '21-compose-services.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '21-compose-services.exit.txt')
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test build backend-test webui-test 2>&1 | Tee-Object (Join-Path $EvidenceRoot '22-image-build.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '22-image-build.exit.txt')
+$Compose = "docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file `"$BaselineEnv`" --profile test"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '20-compose-config' -CommandText "$Compose config"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '21-compose-services' -CommandText "$Compose config --services"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '22-image-build' -CommandText "$Compose build backend-test webui-test"
 ```
 
 Expected services are exactly `postgres-test`, `qdrant-test`, `redis-test`, `backend-test`, and `webui-test`. Expansion must show persistent PostgreSQL, Qdrant, and Redis volumes, no Codex profile, no real provider endpoint, and the external read-only `baseline.env` mount. Image build success is recorded independently from service startup.
@@ -129,12 +99,11 @@ Expected services are exactly `postgres-test`, `qdrant-test`, `redis-test`, `bac
 ## 6. Stage C — persistence services
 
 ```powershell
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test up -d postgres-test qdrant-test redis-test 2>&1 | Tee-Object (Join-Path $EvidenceRoot '30-persistence-up.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '30-persistence-up.exit.txt')
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test ps 2>&1 | Tee-Object (Join-Path $EvidenceRoot '31-persistence-ps.txt')
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv exec -T postgres-test pg_isready -U topix -d topix 2>&1 | Tee-Object (Join-Path $EvidenceRoot '32-postgres-health.txt')
-Invoke-RestMethod http://localhost:6335/readyz | ConvertTo-Json -Compress | Set-Content (Join-Path $EvidenceRoot '33-qdrant-health.json')
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv exec -T redis-test redis-cli ping 2>&1 | Tee-Object (Join-Path $EvidenceRoot '34-redis-health.txt')
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '30-persistence-up' -CommandText "$Compose up -d postgres-test qdrant-test redis-test"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '31-persistence-ps' -CommandText "$Compose ps"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '32-postgres-health' -CommandText "$Compose exec -T postgres-test pg_isready -U topix -d topix"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '33-qdrant-health' -CommandText 'Invoke-RestMethod http://localhost:16335/readyz | ConvertTo-Json -Compress'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '34-redis-health' -CommandText "$Compose exec -T redis-test redis-cli ping"
 ```
 
 Expected results: PostgreSQL reports accepting connections for database/user `topix`; Qdrant `/readyz` succeeds; Redis prints `PONG`; all three containers are running and PostgreSQL/Redis are healthy. Capture `docker compose ... logs --no-color --tail 200` if any check fails.
@@ -144,18 +113,15 @@ Expected results: PostgreSQL reports accepting connections for database/user `to
 Run the live-storage test against the named Compose services. It must apply the PostgreSQL schema twice, create a Qdrant collection through the existing `GraphStore -> ContentStore` path, and use the deterministic fake embedder.
 
 ```powershell
-Push-Location dim0/backend
 $env:POSTGRES_HOST = 'localhost'
-$env:POSTGRES_PORT = '5434'
+$env:POSTGRES_PORT = '15434'
 $env:QDRANT_HOST = 'localhost'
-$env:QDRANT_PORT = '6335'
+$env:QDRANT_PORT = '16335'
 $env:REDIS_HOST = 'localhost'
-$env:REDIS_PORT = '6381'
+$env:REDIS_PORT = '16381'
 $env:DIM0_BASELINE_PROVIDER_TRIPWIRE = '1'
 $env:DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION = '512'
-uv run pytest -q test/integration/baseline/test_provider_free_baseline.py 2>&1 | Tee-Object (Join-Path $EvidenceRoot '40-storage-contract.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '40-storage-contract.exit.txt')
-Pop-Location
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '40-storage-contract' -CommandText 'uv run pytest -q test/integration/baseline/test_provider_free_baseline.py' -WorkingDirectory dim0/backend
 ```
 
 The test records:
@@ -172,16 +138,12 @@ The test records:
 ## 8. Stage E — backend/Web UI smoke and restart persistence
 
 ```powershell
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test up -d backend-test webui-test 2>&1 | Tee-Object (Join-Path $EvidenceRoot '50-app-up.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '50-app-up.exit.txt')
-Invoke-WebRequest http://localhost:8082/utils/ping -UseBasicParsing | Select-Object StatusCode | Out-File (Join-Path $EvidenceRoot '51-backend-ping.txt')
-Invoke-WebRequest http://localhost:5175 -UseBasicParsing | Select-Object StatusCode | Out-File (Join-Path $EvidenceRoot '52-webui-http.txt')
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test ps 2>&1 | Tee-Object (Join-Path $EvidenceRoot '53-app-ps-before-restart.txt')
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv restart postgres-test qdrant-test redis-test backend-test 2>&1 | Tee-Object (Join-Path $EvidenceRoot '54-restart.txt')
-Push-Location dim0/backend
-uv run pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart 2>&1 | Tee-Object (Join-Path $EvidenceRoot '55-persistence-after-restart.txt')
-$LASTEXITCODE | Set-Content (Join-Path $EvidenceRoot '55-persistence-after-restart.exit.txt')
-Pop-Location
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '50-app-up' -CommandText "$Compose up -d backend-test webui-test"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '51-backend-ping' -CommandText 'Invoke-WebRequest http://localhost:18082/utils/ping -UseBasicParsing | Select-Object StatusCode'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '52-webui-http' -CommandText 'Invoke-WebRequest http://localhost:15175 -UseBasicParsing | Select-Object StatusCode'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '53-app-ps-before-restart' -CommandText "$Compose ps"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '54-restart' -CommandText "$Compose restart postgres-test qdrant-test redis-test backend-test"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '55-persistence-after-restart' -CommandText 'uv run pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart' -WorkingDirectory dim0/backend
 ```
 
 Expected results: backend and Web UI return HTTP 2xx; after container restart, the seeded board, note, link, Qdrant payload/vector, and Redis-backed sequence contract remain readable. The persistence assertion must identify the records created before restart rather than creating replacements.
@@ -193,13 +155,16 @@ For the UI observation, load the existing board without opening the agent or ext
 Before cleanup, record bounded logs, container/volume names, tripwire counters, and worktree state:
 
 ```powershell
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test logs --no-color --tail 300 2>&1 | Tee-Object (Join-Path $EvidenceRoot '60-compose-logs.txt')
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test ps --all 2>&1 | Tee-Object (Join-Path $EvidenceRoot '61-compose-ps-final.txt')
-git status --short -- dim0 | Tee-Object (Join-Path $EvidenceRoot '62-git-status-after.txt')
-Get-ChildItem $EvidenceRoot -File | Where-Object Name -ne 'manifest.sha256' | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path)" } | Set-Content $Manifest
-docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file $BaselineEnv --profile test down --remove-orphans 2>&1 | Tee-Object (Join-Path $EvidenceRoot '63-compose-down.txt')
-Remove-Item Env:ENVFILE,Env:POSTGRES_HOST,Env:POSTGRES_PORT,Env:QDRANT_HOST,Env:QDRANT_PORT,Env:REDIS_HOST,Env:REDIS_PORT,Env:DIM0_BASELINE_PROVIDER_TRIPWIRE,Env:DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION -ErrorAction SilentlyContinue
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '60-compose-logs' -CommandText "$Compose logs --no-color --tail 300"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '61-compose-ps-final' -CommandText "$Compose ps --all"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '62-git-status-after' -CommandText 'git status --short -- dim0'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '63-compose-down' -CommandText "$Compose down --remove-orphans"
+& $Harness -Action ValidateTripwires -RunDirectory $EvidenceRoot
+& $Harness -Action Finalize -RunDirectory $EvidenceRoot
+Remove-Item Env:POSTGRES_HOST,Env:POSTGRES_PORT,Env:QDRANT_HOST,Env:QDRANT_PORT,Env:REDIS_HOST,Env:REDIS_PORT,Env:DIM0_BASELINE_PROVIDER_TRIPWIRE,Env:DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION -ErrorAction SilentlyContinue
 ```
+
+`Finalize` secret-screens and redacts recognized credential patterns before hashing, writes `secret-screening.json`, and only then writes the relative-path SHA-256 manifest and finalization marker.
 
 `down` intentionally preserves named volumes for rerun and investigation. Volume deletion is a separate explicit cleanup decision scoped to project `dim0-task189`.
 

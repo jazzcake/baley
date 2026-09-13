@@ -1,12 +1,40 @@
 # Provider-free WP0 overlay. Use only with the upstream `test` profile and an
-# external non-secret ENVFILE as documented in task-189-baseline-execution.md.
+# external non-secret environment/evidence roots documented in task-189-baseline-execution.md.
 services:
+  qdrant-test:
+    container_name: dim0-task189-qdrant
+    ports: !override
+      - "127.0.0.1:${BASELINE_QDRANT_PORT:-16335}:6333"
+
+  postgres-test:
+    container_name: dim0-task189-postgres
+    ports: !override
+      - "127.0.0.1:${BASELINE_POSTGRES_PORT:-15434}:5432"
+
+  redis-test:
+    container_name: dim0-task189-redis
+    ports: !override
+      - "127.0.0.1:${BASELINE_REDIS_PORT:-16381}:6379"
+
   backend-test:
+    container_name: dim0-task189-backend
+    volumes:
+      # Long syntax accepts an absolute Windows path on another drive. Because
+      # Compose merges service volumes by container target, this replaces the
+      # base file's ../${ENVFILE} entry for /.env.
+      - type: bind
+        source: ${BASELINE_ENV_FILE:?set BASELINE_ENV_FILE to the absolute non-secret env file}
+        target: /.env
+        read_only: true
+      - type: bind
+        source: ${BASELINE_RUN_DIR:?set BASELINE_RUN_DIR to the unique evidence directory}
+        target: /baseline-evidence
+      - backend_data_test:/app/data
     environment:
       DIM0_BASELINE_PROVIDER_TRIPWIRE: "1"
       DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION: "512"
-      DIM0_BASELINE_TRIPWIRE_OUTPUT: /app/data/task-189-provider-invocations.json
-      DIM0_BASELINE_CONSTRUCTION_OUTPUT: /app/data/task-189-provider-constructions.json
+      DIM0_BASELINE_TRIPWIRE_OUTPUT: /baseline-evidence/provider-invocations.json
+      DIM0_BASELINE_CONSTRUCTION_OUTPUT: /baseline-evidence/provider-constructions.json
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
       OPENAI_AGENTS_DISABLE_TRACING: "1"
       OPENAI_AGENTS_DONT_LOG_MODEL_DATA: "1"
@@ -21,7 +49,13 @@ services:
       EXA_API_KEY: ""
       DAYTONA_API_KEY: ""
     command: ["python", "-m", "test.integration.baseline.provider_tripwire"]
+    ports: !override
+      - "127.0.0.1:${BASELINE_API_PORT:-18082}:${API_PORT:-8082}"
 
   webui-test:
+    container_name: dim0-task189-webui
     environment:
       DIM0_BASELINE_PROVIDER_TRIPWIRE: "1"
+    ports: !override
+      - "127.0.0.1:${BASELINE_APP_PORT:-15175}:80"
+      - "127.0.0.1:${BASELINE_MINI_APP_PORT:-15182}:5001"

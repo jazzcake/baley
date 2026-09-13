@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import importlib
 import json
 import os
 
@@ -113,18 +114,21 @@ def install_provider_tripwire(  # noqa: C901
     # boundary can be replaced. Force its bundled map before importing it.
     os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
+    import agents
     import litellm
     import openai
 
     from topix.agents import base as agent_base
     from topix.agents import run as agent_run
-    from topix.agents import websearch
+    from topix.agents import tool_handler, websearch
+    from topix.agents.assistant import auto_model
     from topix.agents.assistant import code as daytona_code
     from topix.agents.image import gen as image_gen
     from topix.agents.newsfeed import config as newsfeed_config
     from topix.agents.websearch import fetch as web_fetch
+    from topix.agents.websearch import handler as websearch_handler
     from topix.agents.websearch import tools as web_tools
-    from topix.config import catalog
+    from topix.api.router import ai as ai_router
     from topix.nlp import embed as embed_module
     from topix.nlp import parser as parser_module
     from topix.nlp.pipeline import parsing
@@ -133,7 +137,13 @@ def install_provider_tripwire(  # noqa: C901
 
     qdrant_client_type = qdrant_store.AsyncQdrantClient
 
-    async def forbidden_llm(*args: Any, **kwargs: Any) -> Any:
+    async def forbidden_llm_async(*args: Any, **kwargs: Any) -> Any:
+        """Count and reject an asynchronous LLM invocation."""
+        del args, kwargs
+        tripwire.invocation("llm")
+
+    def forbidden_llm_sync(*args: Any, **kwargs: Any) -> Any:
+        """Count and reject a synchronous LLM invocation."""
         del args, kwargs
         tripwire.invocation("llm")
 
@@ -161,26 +171,61 @@ def install_provider_tripwire(  # noqa: C901
         del args, kwargs
         tripwire.invocation("daytona")
 
-    def forbidden_openai(*args: Any, **kwargs: Any) -> Any:
+    def forbidden_embedding_construction(*args: Any, **kwargs: Any) -> Any:
+        """Count and reject an embedding-client construction."""
         del args, kwargs
         tripwire.construction("embedding")
+
+    def forbidden_llm_client_construction(*args: Any, **kwargs: Any) -> Any:
+        """Count and reject an SDK LLM-client construction."""
+        del args, kwargs
+        tripwire.construction("llm")
 
     def baseline_qdrant_client(*args: Any, **kwargs: Any) -> Any:
         """Give live baseline index creation enough time on cold storage."""
         kwargs.setdefault("timeout", 60)
         return qdrant_client_type(*args, **kwargs)
 
-    set_attribute(openai, "AsyncOpenAI", forbidden_openai)
+    set_attribute(openai, "AsyncOpenAI", forbidden_embedding_construction)
     set_attribute(qdrant_store, "AsyncQdrantClient", baseline_qdrant_client)
-    set_attribute(embed_module, "AsyncOpenAI", forbidden_openai)
-    set_attribute(catalog, "openai_compatible_client", forbidden_openai)
+    set_attribute(embed_module, "AsyncOpenAI", forbidden_embedding_construction)
     set_attribute(embed_module.OpenAIEmbedder, "from_config", classmethod(lambda cls: embedder))
     set_attribute(embed_module.OpenAIEmbedder, "_embed_batch", forbidden_embedding)
     set_attribute(qdrant_store.OpenAIEmbedder, "from_config", classmethod(lambda cls: embedder))
-    set_attribute(litellm, "acompletion", forbidden_llm)
+
+    # Cover both LiteLLM entry points and every application module that keeps a
+    # module alias. The explicit aliases make refactors visible to the positive
+    # self-test instead of relying on shared-module identity by accident.
+    set_attribute(litellm, "acompletion", forbidden_llm_async)
+    set_attribute(litellm, "completion", forbidden_llm_sync)
+    set_attribute(ai_router.litellm, "acompletion", forbidden_llm_async)
+    set_attribute(auto_model.litellm, "acompletion", forbidden_llm_async)
     set_attribute(agent_base.LitellmModel, "__init__", forbidden_llm_construction)
-    set_attribute(agent_run.AgentRunner, "run", classmethod(forbidden_llm))
-    set_attribute(agent_run.AgentRunner, "run_streamed", classmethod(forbidden_llm))
+    set_attribute(agent_run.AgentRunner, "run", classmethod(forbidden_llm_async))
+    set_attribute(agent_run.AgentRunner, "run_streamed", classmethod(forbidden_llm_sync))
+
+    # The SDK Runner is used directly as well as through aliases imported into
+    # tool_handler and websearch.handler. run_streamed is synchronous at the
+    # call boundary, so it must raise immediately even when a caller forgets to
+    # await it.
+    for runner in (agents.Runner, tool_handler.Runner, websearch_handler.Runner):
+        set_attribute(runner, "run", classmethod(forbidden_llm_async))
+        set_attribute(runner, "run_streamed", classmethod(forbidden_llm_sync))
+
+    # Native OpenAI models are built lazily inside the Agents SDK and therefore
+    # bypass LitellmModel.__init__. Patch the SDK's retained AsyncOpenAI aliases
+    # as well as the public module so neither construction route can escape.
+    for module_name in (
+        "agents.models.openai_provider",
+        "agents.models.openai_responses",
+        "agents.models.openai_chatcompletions",
+    ):
+        try:
+            sdk_module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        if hasattr(sdk_module, "AsyncOpenAI"):
+            set_attribute(sdk_module, "AsyncOpenAI", forbidden_llm_client_construction)
 
     set_attribute(parser_module.MistralParser, "from_config", classmethod(lambda cls: _ProviderFreeParser()))
     set_attribute(parsing, "DocumentMindmapAgent", lambda: object())
