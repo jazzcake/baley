@@ -6,6 +6,70 @@ Outcome: **not accepted; provider-protected application validation blocked, safe
 
 Execution source: [`task-189-baseline-execution.md`](./task-189-baseline-execution.md)
 
+---
+
+## Fresh run 2026-09-14 04:17 KST — stopped at Stage A backend lint
+
+Outcome: **not accepted; reproducible upstream-baseline lint failure at the first mandatory command**
+
+External evidence: `C:\ProgramData\Dim0\validation\task-189\run-20260914-041714-582-ef25d481`
+
+Evidence run ID: `run-20260914-041714-582-ef25d481`
+
+Pinned Baley HEAD: `a96d785cb470253d659f14821fa80c52f2788223`
+
+Manifest SHA-256: **not generated**. The committed helper's `Finalize` action was not invoked because the execution plan requires stopping on the first failed command, before the backend could export the required provider counter files or the browser evidence could be captured. Creating zero-valued counter files without exercising the guarded paths would incorrectly treat absence of an observed call as proof.
+
+### Fresh-run result
+
+The fresh run initialized outside Git, captured Git/Docker provenance, and passed the Compose ownership and host-port preflight. All external provider credential variables were explicitly blanked in the acceptance process. Dependency/toolchain downloads used to prepare GNU Make, Python 3.13, `uv`, and the locked backend environment occurred before and outside this acceptance run; no OpenAI, Anthropic, OpenRouter, external embedding, search, fetch, OCR, image, or Daytona endpoint was intentionally called.
+
+The first mandatory Stage A command, `make lint-backend`, exited `1`. A direct diagnostic rerun of its underlying command, recorded as `17-failure-ruff-details`, found exactly nine Ruff violations:
+
+- `topix/ai_runtime/codex.py`: one `D107` and five `E501` violations.
+- `topix/api/app.py`: one `I001` violation.
+- `topix/api/router/ai.py`: one `I001` violation and one `C901` violation (`ai_llm_stream`, complexity 12 over limit 10).
+
+Per section 10 of the execution plan, the acceptance sequence stopped immediately. Stages B–F, the positive provider-tripwire self-test, five-service startup, storage CRUD/restart persistence, UI/board/canvas interaction, counter export/validation, secret screening, manifest generation, and finalization were not run and are not claimed as passing.
+
+Failure-state capture shows no Task #189 containers and no Task #189 network were created. The named volumes `dim0-task189_pg_data_test`, `dim0-task189_qdrant_data_test`, and `dim0-task189_redis_data_test` were present and were retained for investigation, matching the plan's default `down` behavior; this run did not write to them. No Docker resource belonging to Baley or another stack was changed, and `debug.log` was neither read nor modified.
+
+### Fresh-run evidence index
+
+| Artifact | Result |
+| --- | --- |
+| `01-git-head.txt` / `.exit.txt` | Required HEAD recorded; exit `0` |
+| `02-git-status-before.txt` / `.exit.txt` | `dim0` clean before execution; exit `0` |
+| `03-docker-version.txt`, `04-compose-version.txt` | Docker and Compose provenance recorded; exits `0` |
+| `05-compose-ownership-preflight.json` | Project/name/port ownership preflight passed |
+| `10-lint-backend.txt` / `.exit.txt` | First mandatory command failed; exit `1` |
+| `17-failure-ruff-details.txt` / `.exit.txt` | Full nine-error Ruff diagnosis; exit `1` |
+| `18-failure-compose-ps.txt` | No Task #189 containers; exit `0` |
+| `19-failure-compose-logs.txt` | No service logs because no services started; exit `0` |
+| `20-failure-volume-state.txt` | Three retained Task #189 named volumes recorded; exit `0` |
+| `21-git-status-after-failure.txt` | `dim0` remained clean after the stopped run; exit `0` |
+| `commands.jsonl` | Exact commands, timestamps, durations, bounded output, and exit codes; diagnostic SHA-256 `a2145caa211009be31ca1782d3b91efc19d39218dbcec8be8287663de7cfb755` (not a finalized manifest hash) |
+
+### Fresh-run acceptance criteria
+
+| # | Exact criterion | Result | Evidence / blocker |
+| --- | --- | --- | --- |
+| 1 | Pinned SHA, dirty state, Docker versions, exact commands, exit codes, logs, and SHA-256 manifest outside Git | **Fail** | Provenance, command records, and bounded failure output exist externally, but fail-fast prevented helper finalization and no manifest was generated. |
+| 2 | Backend lint/unit and Web UI check/test/production build pass | **Fail** | `make lint-backend` failed with nine Ruff violations; all later Stage A commands were correctly not run. |
+| 3 | Compose expansion has only five expected services and app images build locally | **Blocked** | Stage B was not reached after the first mandatory failure. |
+| 4 | PostgreSQL/Qdrant/Redis health and idempotent schema application pass | **Blocked** | Stages C/D were not reached. |
+| 5 | FastAPI lifespan, `/utils/ping`, and Web UI HTTP 2xx pass | **Blocked** | Stage E was not reached. |
+| 6 | Board/note/link CRUD uses canonical stores and deterministic 512-dimensional fake embedder | **Blocked** | Stage D was not reached. |
+| 7 | PostgreSQL metadata, Qdrant payload/vector, and Redis sequence survive restart | **Blocked** | Stages D/E were not reached. |
+| 8 | Text mutation embeds, spatial/style mutation does not, and fake embedding failure prevents vector mutation | **Blocked** | Stage D was not reached. |
+| 9 | Provider construction is bounded and all invocation counters equal zero | **Blocked** | Counter-producing guarded paths were not run; no zero claim is inferred from absence. |
+| 10 | Browser evidence has no provider request and agent/external-tool flows remain unused | **Blocked** | Browser observation was not reached. |
+| 11 | Final worktree report has no generated baseline secret/log/screenshot/database/environment artifact | **Pass** | `21-git-status-after-failure.txt` is empty for `dim0`; evidence stayed external and `debug.log` was untouched. |
+
+### Blocker and next action
+
+The first-layer blocker is the committed backend lint state at `a96d785cb470253d659f14821fa80c52f2788223`, classified as an upstream-baseline failure for this evidence-only task. Fixing those nine lint violations requires a separate product-code change; after that change, the complete Stage A–F sequence must restart in another unique evidence directory, and only a fully finalized helper run with zero validated provider invocation counters can be accepted.
+
 ## Executive result
 
 The required provider-free harness is not present at the current Baley repository HEAD. In particular, the baseline Compose overlay, provider tripwire, backend live-storage test, and frontend provider-construction test are absent. The execution plan says to stop application acceptance when the tripwire cannot be installed, so no backend or Web UI container was built or started and no board/content API or UI action was attempted.
