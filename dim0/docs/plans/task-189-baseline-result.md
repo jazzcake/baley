@@ -204,3 +204,64 @@ Outcome: `down` exited `0`. All three attempt-created containers and volumes and
 - No external `baseline.env`, artifact directory, screenshots, browser trace, log bundle, or manifest was created because the prerequisite check blocked acceptance before Stage A. No existing developer environment file was read or mounted into a running container.
 - Docker application images, backend health, Web UI reachability, browser observation, and board/content persistence remain unvalidated.
 - WP0 must supply the four prerequisite assets from the execution plan. The full baseline must then be rerun from Stage A in a fresh evidence directory, with every provider invocation counter equal to zero, before Task #189 can be accepted.
+
+---
+
+## Retry 2026-09-14 04:45 KST — stopped at Stage A backend tests
+
+Outcome: **not accepted; reproducible Makefile shell-quoting blocker at the second mandatory Stage A command**
+
+External evidence: `C:\ProgramData\Dim0\validation\task-189\run-20260914-044533-848-c505aa7c`
+
+Evidence run ID: `run-20260914-044533-848-c505aa7c`
+
+Pinned Baley HEAD: `5a758a40e4a243b19bb0b559360a2bb73cb3d2e8`
+
+Manifest SHA-256: **not generated**. Fail-fast stopped the run before the provider counter exports, browser evidence, secret screening, and `Finalize`; the diagnostic SHA-256 of `commands.jsonl` is `ff8f90b651cdff1d5cc652b1fd7f184cf3a74519dae35cb6e9b48415ca06ddb7` and is not a manifest hash.
+
+### Retry result
+
+The helper created a new external run, recorded Git/Docker provenance, and passed Compose ownership and host-port preflight. Provider credential variables were explicitly blank in the acceptance process, no dependency synchronization or download command was run, and `make lint-backend` passed.
+
+The next mandatory command, `make test-backend`, exited `1` before pytest started. GNU Make selected the installed Git shell, which rejected the committed `setup-mini-app-compiler` recipe after reaching an unexpected EOF while looking for a matching double quote; `17-failure-makefile-context.txt` records the unmatched opening quote in the install-message line. The existing `backend/scripts/mini-app-compiler/node_modules` directory meant no dependency download was needed or attempted, but the shell still had to parse the malformed conditional recipe.
+
+Per section 10 of the execution plan, the acceptance sequence stopped at that first in-run failure. The network-disabled positive tripwire self-test, frontend checks, Compose expansion/build, five-service startup, canonical storage tests, app health, restart persistence, real UI/canvas interaction, provider counter validation, secret screening, and finalization were not run and are not claimed as passing. No Task #189 container or network was created, no timed-out `docker run` container exists, and the three previously retained `dim0-task189` volumes were observed but not modified or removed; `debug.log` was not read, modified, staged, or committed.
+
+Three earlier setup attempts from this dispatch remain preserved at `run-20260914-044244-174-854380cc`, `run-20260914-044335-322-c7330581`, and `run-20260914-044501-187-c79df81e`. They respectively record a Windows PowerShell preflight stderr incompatibility, GNU Make absent from the initial PATH, and `cat` absent from the Make tool PATH; the final run reused the already installed tools and reached the committed Makefile blocker without installing anything.
+
+### Retry evidence index
+
+| Artifact | Result |
+| --- | --- |
+| `01-git-head.txt` / `.exit.txt` | Required HEAD recorded; exit `0` |
+| `02-git-status-before.txt` / `.exit.txt` | `dim0` clean before execution; exit `0` |
+| `03-docker-version.txt`, `04-compose-version.txt` | Docker and Compose provenance recorded; exits `0` |
+| `05-compose-ownership-preflight.json` | Project/name/port ownership preflight passed |
+| `10-lint-backend.txt` / `.exit.txt` | Ruff passed; exit `0` |
+| `11-test-backend.txt` / `.exit.txt` | First mandatory failure; shell parse error; exit `1` |
+| `17-failure-makefile-context.txt` | Committed malformed recipe context captured; exit `0` |
+| `18-failure-compose-ps.txt`, `19-failure-compose-logs.txt` | No Task #189 services or service logs; exits `0` |
+| `20-failure-volume-state.txt` | Three previously retained project-scoped volumes recorded; exit `0` |
+| `21-failure-container-state.txt` | No Task #189 containers; exit `0` |
+| `22-git-status-after-failure.txt` | `dim0` remained clean after execution; exit `0` |
+| `commands.jsonl` | Exact command/timing/exit records; diagnostic SHA-256 `ff8f90b651cdff1d5cc652b1fd7f184cf3a74519dae35cb6e9b48415ca06ddb7` |
+
+### Retry acceptance criteria
+
+| # | Exact criterion | Result | Evidence / blocker |
+| --- | --- | --- | --- |
+| 1 | Pinned SHA, dirty state, Docker versions, exact commands, exit codes, logs, and SHA-256 manifest outside Git | **Fail** | Provenance and failure records exist externally, but fail-fast prevented finalization and no manifest was generated. |
+| 2 | Backend lint/unit and Web UI check/test/production build pass | **Fail** | Backend lint passed; `make test-backend` failed before pytest, and later Stage A commands were not run. |
+| 3 | Compose expansion has only five expected services and app images build locally | **Blocked** | Stage B was not reached. |
+| 4 | PostgreSQL/Qdrant/Redis health and idempotent schema application pass | **Blocked** | Stages C/D were not reached. |
+| 5 | FastAPI lifespan, `/utils/ping`, and Web UI HTTP 2xx pass | **Blocked** | Stage E was not reached. |
+| 6 | Board/note/link CRUD uses canonical stores and deterministic 512-dimensional fake embedder | **Blocked** | Stage D was not reached. |
+| 7 | PostgreSQL metadata, Qdrant payload/vector, and Redis sequence survive restart | **Blocked** | Stages D/E were not reached. |
+| 8 | Text mutation embeds, spatial/style mutation does not, and fake embedding failure prevents vector mutation | **Blocked** | Stage D was not reached. |
+| 9 | Provider construction is bounded and all invocation counters equal zero | **Blocked** | Positive self-test and counter-producing guarded paths were not reached; zero is not inferred from absence. |
+| 10 | Browser evidence has no provider request and agent/external-tool flows remain unused | **Blocked** | Browser/UI observation was not reached. |
+| 11 | Final worktree report has no generated baseline credential, log, screenshot, database, Qdrant, Redis, or environment artifact | **Pass** | `22-git-status-after-failure.txt` is empty; all evidence remained external and `debug.log` was untouched. |
+
+### Retry blocker and next action
+
+Correct the unmatched quote in the committed `setup-mini-app-compiler` recipe in a separate product/harness change, then rerun the complete Stage A–F sequence from a new unique evidence directory. Acceptance still requires the network-disabled positive tripwire self-test, all five isolated services, live canonical CRUD/restart semantics, real non-agent UI/canvas interaction, zero provider invocation counters, secret screening, and a finalized manifest.
