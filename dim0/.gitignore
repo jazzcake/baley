@@ -1,0 +1,51 @@
+__pycache__/
+config/*.yml
+models/
+downloads/
+mlruns/
+.ipynb_checkpoints
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov/
+webui/coverage/
+.vscode/
+data/
+*.csv
+**/*.exclude.*
+exclude/
+tmp/
+.idea/
+.env
+.env.*
+!.env.sample
+!.env.signing.sample
+**/.DS_Store
+apicache-py3/
+throttle.ctrl
+logs/
+default.sqlite
+site/
+backups/
+*.egg-info/
+notebooks.exclude/
+.ruff_cache/
+*.pyc
+
+# Ignore Codex files
+.codex/
+SKILL.md
+.codex
+
+# Local design / working notes — keep on disk, never publish.
+collab-archi.md
+sharing-archi.md
+next-steps.md
+# internal design/planning docs — local only
+dev-docs/
+
+# signing secrets — never commit
+*.p12
+*.p8
+*.cer
+*.certSigningRequest

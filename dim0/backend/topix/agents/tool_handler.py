@@ -1,0 +1,488 @@
+"""Convert agent/function as FunctionTool object."""
+
+import functools
+import inspect
+import json
+import traceback
+
+from typing import Any, Awaitable, Callable, Type
+
+from agents import (
+    Agent,
+    AgentBase,
+    FunctionTool,
+    RunContextWrapper,
+    Runner,
+    RunResult,
+    RunResultStreaming,
+    function_tool,
+)
+from openai.types.responses import (
+    ResponseOutputItemAddedEvent,
+    ResponseReasoningSummaryTextDeltaEvent,
+    ResponseTextDeltaEvent,
+)
+from pydantic import BaseModel
+
+from topix.agents.datatypes.context import Context
+from topix.agents.datatypes.outputs import (
+    MemorySearchOutput,
+    ToolOutput,
+    WebSearchOutput,
+)
+from topix.agents.datatypes.stream import (
+    AgentStreamMessage,
+    Content,
+    ContentType,
+    StreamingMessageType,
+)
+from topix.agents.datatypes.tool_call import ToolCall, ToolCallState
+from topix.agents.datatypes.tools import AgentToolName
+from topix.utils.common import gen_uid
+
+RAW_RESPONSE_EVENT = "raw_response_event"
+
+
+class ToolHandler:
+    """Convert agent/function as FunctionTool object."""
+
+    ToolEnabled = bool | Callable[[RunContextWrapper[Any], AgentBase], Any]
+
+    @classmethod
+    def convert_agent_to_tool(
+        cls,
+        agent: Agent,
+        tool_name: str,
+        tool_description: str = "",
+        max_turns: int = 5,
+        streamed: bool = False,
+        input_type: Type | None = None,
+        is_enabled: ToolEnabled = True,
+    ) -> FunctionTool:
+        """Convert agent object to a function.
+
+        Args:
+            context: The context for the agent.
+            agent: The agent object.
+            tool_name: The name of the tool.
+            tool_description: The description of the tool.
+            max_turns: The maximum number of turns for the tool.
+            streamed: Whether to stream the output.
+            input_type: The type of the input for the agent. If provided, it will be used to annotate the input in the function signature.
+            is_enabled: Whether the tool is exposed to the model for the current run.
+
+        Returns:
+            The FunctionTool object.
+
+        """
+        return function_tool(
+            func=cls.convert_agent_to_func(agent, tool_name, max_turns, streamed, input_type=input_type),
+            name_override=tool_name,
+            description_override=tool_description if tool_description else None,
+            is_enabled=is_enabled,
+        )
+
+    @classmethod
+    def convert_func_to_tool(
+        cls,
+        func: Callable,
+        tool_name: str,
+        tool_description: str = "",
+        is_enabled: ToolEnabled = True,
+    ) -> FunctionTool:
+        """Convert function to a function tool.
+
+        The first argument of a function must be a RunContextWrapper. The SDK
+        passes a ToolContext (a RunContextWrapper subclass) at runtime, so
+        wrapped functions can read `wrapper.tool_call_id`, `wrapper.tool_name`,
+        and `wrapper.tool_arguments` if they need access to the live tool call.
+
+        Args:
+            func: The wrapped function tool implementation.
+            tool_name: The tool name exposed to the model.
+            tool_description: Optional model-facing tool description.
+            is_enabled: Whether the tool is exposed to the model for the current run.
+
+        """
+        return function_tool(
+            func=cls._process_func(func, tool_name),
+            name_override=tool_name,
+            description_override=tool_description if tool_description else None,
+            is_enabled=is_enabled,
+        )
+
+    @classmethod
+    def _process_func(
+        cls, func: Callable, tool_name: str
+    ) -> Callable[[RunContextWrapper[Context], Any], Awaitable[Any]]:
+        """Convert function to a function tool."""
+
+        @functools.wraps(func)
+        async def wrapped_func(wrapper: RunContextWrapper[Context], *args, **kwargs):
+            # log the input:
+            context = wrapper.context
+            # Prefer the SDK-assigned tool_call_id so logs correlate with the
+            # model transcript and OpenAI's tracing dashboard. Fall back to a
+            # fresh uid if invoked outside the SDK (e.g. test stubs).
+            tool_id = getattr(wrapper, "tool_call_id", None) or gen_uid()
+
+            bound_arguments = inspect.signature(func).bind(wrapper, *args, **kwargs)
+            bound_arguments.apply_defaults()
+            input = {
+                name: value
+                for name, value in bound_arguments.arguments.items()
+                if not isinstance(value, RunContextWrapper)
+            }
+
+            await cls.log_input(tool_name, tool_id, input, context)
+            try:
+                output = await func(wrapper, *args, **kwargs)
+            except Exception as e:
+                raise ValueError(
+                    f"Function call failed: {e}. "
+                    "Pay attention that the first argument of a function must be a RunContextWrapper, "
+                    "though it's not necessarily the cause of the error. Please check the error message for details."
+                )
+            await cls.log_output(context, tool_name, tool_id, input, output)
+            return output
+
+        return wrapped_func
+
+    @classmethod
+    def convert_agent_to_func(
+        cls,
+        agent: Agent,
+        tool_name: str,
+        max_turns: int = 5,
+        streamed: bool = False,
+        is_subagent: bool = True,
+        input_type: Type | None = None
+    ) -> Callable[[RunContextWrapper[Context] | Context, Any], Awaitable[Any]]:
+        """Convert agent object to a function.
+
+        Args:
+            context: The context for the agent.
+            agent: The agent object.
+            tool_name: The name of the tool.
+            tool_description: The description of the tool.
+            max_turns: The maximum number of turns for the tool.
+            streamed: Whether to stream the output.
+            is_subagent: Whether the agent is a subagent.
+            input_type: The type of the input for the agent. If provided,
+                it will be used to annotate the input in the function signature.
+
+        Returns:
+            The function that can be later converted as FunctionTool.
+
+        """
+        async def run(context: Context, input: Any, tool_call_id: str | None = None) -> Any:
+            """Execute the agent with the provided context and input.
+
+            Args:
+                context: The context for the agent.
+                input: The input data for the agent
+                tool_call_id: Optional SDK-assigned tool_call_id used for log
+                    correlation. Falls back to a fresh uid when called outside
+                    the SDK invocation path.
+
+            Returns:
+                The final output from the agent as a string.
+
+            """
+            # Log the input message:
+            tool_id = tool_call_id or gen_uid()
+            await cls.log_input(tool_name, tool_id, input, context)
+
+            # Run the agent
+            agent_input = await agent._input_formatter(context, input)
+            try:
+                if streamed:
+                    response = Runner.run_streamed(
+                        starting_agent=agent,
+                        input=agent_input,
+                        context=context,
+                        max_turns=max_turns,
+                    )
+                    await cls.process_llm_streaming(context, response, tool_id, tool_name)
+                else:
+                    response = await Runner.run(agent, agent_input, context=context)
+            except Exception as e:
+                tb = traceback.format_exc()
+                # signal error in running agent
+                context._message_queue.put_nowait(
+                    AgentStreamMessage(
+                        tool_id=tool_id,
+                        tool_name=tool_name,
+                        content=Content(
+                            type=ContentType.STATUS,
+                            text=f"Error during agent run: {e}\n{tb}",
+                        ),
+                        is_stop='error',
+                    )
+                )
+                raise ValueError(f"An error occurred while running the agent: {e}")
+
+            try:
+                final_output = await agent._output_extractor(context, response)
+            except Exception as e:
+                tb = traceback.format_exc()
+                # signal error in output extraction
+                context._message_queue.put_nowait(
+                    AgentStreamMessage(
+                        tool_id=tool_id,
+                        tool_name=tool_name,
+                        content=Content(
+                            type=ContentType.STATUS,
+                            text=f"Error in output extraction: {e}\n{tb}",
+                        ),
+                        is_stop='error',
+                    )
+                )
+                raise ValueError(
+                    f"An error occurred in `agent._output_extractor`: {e}. \n"
+                    "To define a custom _output_extractor, "
+                    "ensure it uses the following parameters: "
+                    "context: Context, output: RunResult | RunResultStreaming"
+                )
+
+            # Log the output message:
+            await cls.log_output(
+                context,
+                tool_name,
+                tool_id,
+                input,
+                final_output,
+                response,
+            )
+
+            return final_output
+
+        if is_subagent:
+
+            async def run_agent(
+                wrapper: RunContextWrapper[Context], input: str
+            ) -> ToolOutput:
+                return await run(
+                    wrapper.context,
+                    input,
+                    tool_call_id=getattr(wrapper, "tool_call_id", None),
+                )
+            if input_type is not None:
+                run_agent.__annotations__["input"] = input_type
+            return run_agent
+
+        if input_type is not None:
+            run.__annotations__["input"] = input_type
+        return run
+
+    @classmethod
+    async def log_input(
+        cls,
+        tool_name: str,
+        tool_id: str,
+        input: Any,
+        context: Context,
+    ) -> str:
+        """Log the input of either agent or callable function.
+
+        Args:
+            tool_name: The name of the tool.
+            tool_id: The id of the tool.
+            input: The input data for the agent/function.
+            context: The context for the agent/function.
+
+        Returns:
+            The tool_id.
+
+        """
+        if isinstance(input, BaseModel):
+            input = input.model_dump()
+        if isinstance(input, list) and all(
+            isinstance(item, BaseModel) for item in input
+        ):
+            input = [item.model_dump() for item in input]
+        await context._message_queue.put(
+            AgentStreamMessage(
+                content=Content(
+                    type=ContentType.STATUS,
+                    text=json.dumps(input, indent=2),
+                ),
+                is_stop=False,
+                tool_id=tool_id,
+                tool_name=tool_name,
+            )
+        )
+        return tool_id
+
+    @classmethod
+    async def log_output(
+        cls,
+        context: Context,
+        tool_name: str,
+        tool_id: str,
+        input: Any,
+        output: ToolOutput,
+        llm_response: RunResultStreaming | RunResult | None = None,
+    ):
+        """Log the completed output and stop signal for a tool or agent run."""
+        # Extract the thoughts message from the raw response:
+        await cls._process_tool_output(context, output, tool_id, tool_name)
+
+        if tool_name == AgentToolName.RAW_MESSAGE:
+            await context._message_queue.put(
+                AgentStreamMessage(
+                    content=Content(
+                        type=ContentType.STATUS,
+                        text="",
+                    ),
+                    is_stop=True,
+                    tool_id=tool_id,
+                    tool_name=tool_name,
+                )
+            )
+            return
+
+        if llm_response:
+            thought = ToolHandler._extract_thoughts(llm_response)
+        else:
+            thought = ""
+
+        toolcall_output = ToolCall(
+            id=tool_id,
+            name=tool_name,
+            arguments={"input": input},  # TODO: input = input
+            thought=thought,
+            output=output,
+            state=ToolCallState.COMPLETED,
+        )
+
+        context.tool_calls.append(toolcall_output)
+        await context._message_queue.put(toolcall_output)
+
+        await context._message_queue.put(
+            AgentStreamMessage(
+                content=Content(
+                    type=ContentType.STATUS,
+                    text="",
+                ),
+                is_stop=True,
+                tool_id=tool_id,
+                tool_name=tool_name,
+            )
+        )
+
+    @classmethod
+    async def _process_tool_output(
+        cls,
+        context: Context,
+        output: ToolOutput,
+        tool_id: str,
+        tool_name: str,
+    ) -> None:
+        """Process the output for streaming messages."""
+        annotations = []
+
+        if isinstance(output, WebSearchOutput):
+            search_results = output.search_results
+
+            new_results = []
+            for result in search_results:
+                new_result = result.model_copy()
+                new_result.content = new_result.content[:500] if new_result.content else None
+                new_results.append(new_result)
+            annotations = new_results
+        elif isinstance(output, MemorySearchOutput):
+            annotations = output.references
+        else:
+            pass
+
+        if annotations:
+            await context._message_queue.put(
+                AgentStreamMessage(
+                    tool_id=tool_id,
+                    tool_name=tool_name,
+                    content=Content(annotations=annotations),
+                )
+            )
+
+    @classmethod
+    async def process_llm_streaming(
+        cls,
+        context: Context,
+        stream_response: RunResultStreaming,
+        tool_id: str,
+        tool_name: str,
+    ) -> None:
+        """Process the streaming response from the LLM.
+
+        Forwards reasoning/text deltas as token messages, and surfaces an early
+        "started" signal the moment the model commits to a function call so the
+        UI can render a placeholder before arguments finish streaming.
+
+        Args:
+            context: The context for the agent.
+            stream_response: The streaming response from the LLM from Runner.run_streamed
+            tool_id: The id of the tool.
+            tool_name: The name of the tool.
+
+        """
+        event_type_map = {
+            ResponseTextDeltaEvent: StreamingMessageType.STREAM_MESSAGE,
+            ResponseReasoningSummaryTextDeltaEvent: StreamingMessageType.STREAM_REASONING_MESSAGE,
+        }
+        reasoning_text_tools = {
+            AgentToolName.RAW_MESSAGE,
+            AgentToolName.SYNTHESIZER,
+            AgentToolName.ANSWER_REFORMULATE,
+        }
+
+        async for event in stream_response.stream_events():
+            if event.type != RAW_RESPONSE_EVENT:
+                continue
+
+            if isinstance(event.data, ResponseOutputItemAddedEvent):
+                item = event.data.item
+                if item.type == "function_call":
+                    # Use ``call_id`` (not ``id``): the SDK later sets
+                    # ``wrapper.tool_call_id`` from ``call_id``, so keying on it
+                    # keeps this start signal and the eventual log_input/
+                    # log_output events on the same step in the UI.
+                    try:
+                        started_tool = AgentToolName(item.name)
+                    except ValueError:
+                        started_tool = None
+                    if started_tool is not None and started_tool not in reasoning_text_tools:
+                        await context._message_queue.put(
+                            AgentStreamMessage(
+                                tool_id=item.call_id,
+                                tool_name=started_tool,
+                                content=Content(type=ContentType.STATUS, text="started"),
+                                is_stop=False,
+                            )
+                        )
+                continue
+
+            for cls, msg_type in event_type_map.items():
+                if isinstance(event.data, cls):
+                    msg = AgentStreamMessage(
+                        type=msg_type,
+                        content=Content(
+                            type=ContentType.TOKEN, text=event.data.delta
+                        ),
+                        tool_id=tool_id,
+                        tool_name=tool_name,
+                        is_stop=False,
+                    )
+                    await context._message_queue.put(msg)
+
+    @classmethod
+    def _extract_thoughts(cls, response: RunResult | RunResultStreaming) -> str:
+        thought = ""
+        for raw_response in response.raw_responses:
+            for message in raw_response.output:
+                if message.type == "reasoning":
+                    if message.summary:
+                        thought += "\n\n".join(
+                            summary.text for summary in message.summary
+                        )
+        return thought

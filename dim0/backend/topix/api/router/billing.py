@@ -1,0 +1,415 @@
+"""Billing API router for Stripe checkout, portal, and webhook."""
+
+import logging
+
+from datetime import datetime
+from typing import Annotated
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+
+from topix.api.datatypes.requests import BillingCheckoutRequest, BillingPortalRequest
+from topix.api.utils.billing.stripe_client import StripeApiError, StripeClient
+from topix.api.utils.billing.stripe_config import get_stripe_config, is_billing_active
+from topix.api.utils.billing.stripe_webhook import verify_stripe_signature
+from topix.api.utils.decorators import with_standard_response
+from topix.api.utils.security import get_current_user_uid
+from topix.datatypes.user_billing import (
+    ACCESS_GRANTING_STATUSES,
+    BillingStatus,
+    coerce_plan,
+    effective_plan,
+)
+from topix.store.user import UserStore
+from topix.store.user_billing import UserBillingStore
+
+logger = logging.getLogger(__name__)
+
+
+router = APIRouter(
+    prefix="/billing",
+    tags=["billing"],
+    responses={404: {"description": "Not found"}},
+)
+
+
+def _resolve_status(value: str) -> BillingStatus:
+    allowed = {"active", "trialing", "past_due", "canceled", "incomplete"}
+    return value if value in allowed else "incomplete"
+
+
+def _timestamp_to_datetime(value: int | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.utcfromtimestamp(value)
+
+
+def _resolve_urls(
+    *,
+    app_base_url: str,
+    success_url: str | None = None,
+    cancel_url: str | None = None,
+    return_url: str | None = None,
+) -> tuple[str, str, str]:
+    success = success_url or f"{app_base_url}/settings/billing?checkout=success"
+    cancel = cancel_url or f"{app_base_url}/settings/billing?checkout=cancel"
+    portal_return = return_url or f"{app_base_url}/settings/billing"
+    return success, cancel, portal_return
+
+
+async def _ensure_stripe_customer(
+    *,
+    user_uid: str,
+    user_store: UserStore,
+    user_billing_store: UserBillingStore,
+    stripe_client: StripeClient,
+) -> str:
+    billing = await user_billing_store.get_user_billing(user_uid)
+    if billing and billing.stripe_customer_id:
+        return billing.stripe_customer_id
+
+    user = await user_store.get_user(user_uid)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    customer = await stripe_client.create_customer(
+        email=user.email,
+        name=user.name,
+        user_uid=user_uid,
+    )
+    customer_id = customer.get("id")
+    if not customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Stripe customer creation returned no customer id",
+        )
+
+    await user_billing_store.upsert_user_billing(
+        user_uid=user_uid,
+        data={"stripe_customer_id": customer_id},
+    )
+    return customer_id
+
+
+@router.post("/checkout-session")
+@with_standard_response
+async def create_checkout_session(
+    request: Request,
+    user_id: Annotated[str, Depends(get_current_user_uid)],
+    body: Annotated[BillingCheckoutRequest, Body(description="Stripe checkout session input")],
+):
+    """Create a hosted Stripe checkout session for plus subscription."""
+    config = get_stripe_config()
+    stripe_client = StripeClient(secret_key=config.secret_key)
+    user_store: UserStore = request.app.user_store
+    user_billing_store: UserBillingStore = request.app.user_billing_store
+    success_url, cancel_url, _ = _resolve_urls(
+        app_base_url=config.app_base_url,
+        success_url=body.success_url,
+        cancel_url=body.cancel_url,
+    )
+
+    price_id = config.plan_to_price().get(body.plan)
+    if not price_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Plan '{body.plan}' is not purchasable",
+        )
+
+    # An existing subscriber must change tier via the billing portal — a new
+    # checkout would create a second subscription (double billing).
+    existing = await user_billing_store.get_user_billing(user_id)
+    if existing and existing.stripe_subscription_id and existing.status in ACCESS_GRANTING_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have an active subscription. Use the billing portal to change your plan.",
+        )
+
+    try:
+        customer_id = await _ensure_stripe_customer(
+            user_uid=user_id,
+            user_store=user_store,
+            user_billing_store=user_billing_store,
+            stripe_client=stripe_client,
+        )
+        session = await stripe_client.create_checkout_session(
+            customer_id=customer_id,
+            price_id=price_id,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            user_uid=user_id,
+            plan=body.plan,
+        )
+    except StripeApiError as exc:
+        logger.error("Stripe checkout session failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return {
+        "checkout_url": session.get("url"),
+        "session_id": session.get("id"),
+    }
+
+
+@router.get("/public-config")
+@with_standard_response
+async def get_public_billing_config():
+    """Return public billing pricing metadata for UI rendering."""
+    if not is_billing_active():
+        return {"billing_enabled": False}
+
+    config = get_stripe_config()
+    stripe_client = StripeClient(secret_key=config.secret_key)
+
+    async def _price_payload(price_id: str) -> dict:
+        stripe_price = await stripe_client.get_price(price_id)
+        return {
+            "unit_amount": stripe_price.get("unit_amount"),
+            "currency": stripe_price.get("currency"),
+            "interval": (stripe_price.get("recurring") or {}).get("interval"),
+        }
+
+    try:
+        basic_price = await _price_payload(config.basic_monthly_price_id)
+        plus_price = await _price_payload(config.plus_monthly_price_id)
+    except StripeApiError as exc:
+        logger.error("Stripe price fetch failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return {
+        "billing_enabled": True,
+        "basic_price": basic_price,
+        "plus_price": plus_price,
+    }
+
+
+@router.get("/me")
+@with_standard_response
+async def get_billing_state(
+    request: Request,
+    user_id: Annotated[str, Depends(get_current_user_uid)],
+):
+    """Return billing state used by the settings UI.
+
+    `billing_enabled` is the authoritative deploy flag (`is_billing_active` =
+    flag on AND Stripe keys present); the UI must gate tiers/limits on it rather
+    than re-deriving from its own env flag. When billing is inactive the deploy
+    runs full-OSS: plan `plus`, everything unlocked.
+    """
+    if not is_billing_active():
+        return {
+            "plan": "plus",
+            "status": "active",
+            "billing_enabled": False,
+            "cancel_at_period_end": False,
+            "current_period_start": None,
+            "current_period_end": None,
+        }
+
+    user_billing_store: UserBillingStore = request.app.user_billing_store
+    billing = await user_billing_store.get_user_billing(user_id)
+    if billing is None:
+        return {
+            "plan": "free",
+            "status": "active",
+            "billing_enabled": True,
+            "cancel_at_period_end": False,
+            "current_period_start": None,
+            "current_period_end": None,
+        }
+
+    return {
+        # Status-gated so a never-paid (`incomplete`) sub doesn't display as paid.
+        "plan": effective_plan(billing.plan, billing.status),
+        "status": billing.status,
+        "billing_enabled": True,
+        "cancel_at_period_end": billing.cancel_at_period_end,
+        "current_period_start": billing.current_period_start,
+        "current_period_end": billing.current_period_end,
+    }
+
+
+@router.post("/portal-session")
+@with_standard_response
+async def create_portal_session(
+    request: Request,
+    user_id: Annotated[str, Depends(get_current_user_uid)],
+    body: Annotated[BillingPortalRequest, Body(description="Stripe customer portal input")],
+):
+    """Create a Stripe customer portal session."""
+    config = get_stripe_config()
+    stripe_client = StripeClient(secret_key=config.secret_key)
+    user_billing_store: UserBillingStore = request.app.user_billing_store
+    _, _, return_url = _resolve_urls(
+        app_base_url=config.app_base_url,
+        return_url=body.return_url,
+    )
+
+    billing = await user_billing_store.get_user_billing(user_id)
+    if billing is None or not billing.stripe_customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No Stripe customer found for user",
+        )
+
+    try:
+        session = await stripe_client.create_billing_portal_session(
+            customer_id=billing.stripe_customer_id,
+            return_url=return_url,
+        )
+    except StripeApiError as exc:
+        logger.error("Stripe portal session failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return {
+        "portal_url": session.get("url"),
+    }
+
+
+async def _handle_checkout_completed(data_object: dict, user_billing_store: UserBillingStore) -> dict:
+    """Persist billing state from a completed checkout session.
+
+    Only grants access once payment is settled — async payment methods complete
+    the session before funds clear (card checkouts are "paid").
+    """
+    user_uid = data_object.get("client_reference_id") or data_object.get("metadata", {}).get("user_uid")
+    if not user_uid:
+        return {"processed": False, "reason": "missing_user_uid"}
+    payment_status = data_object.get("payment_status")
+    if payment_status not in ("paid", "no_payment_required"):
+        return {"processed": False, "reason": "payment_not_settled"}
+    # Plan is stamped into session metadata at checkout; coerce to a valid plan
+    # (fail-closed) and let the price-based subscription.* events reconcile the
+    # paid tier authoritatively.
+    plan = coerce_plan(data_object.get("metadata", {}).get("plan"))
+    await user_billing_store.upsert_user_billing(
+        user_uid=user_uid,
+        data={
+            "plan": plan,
+            "status": "active",
+            "stripe_customer_id": data_object.get("customer"),
+            "stripe_subscription_id": data_object.get("subscription"),
+        },
+    )
+    return {"processed": True, "event_type": "checkout.session.completed"}
+
+
+async def _resolve_webhook_user_uid(
+    data_object: dict,
+    stripe_subscription_id: str | None,
+    stripe_customer_id: str | None,
+    user_billing_store: UserBillingStore,
+) -> str | None:
+    """Resolve the local user from event metadata, then subscription/customer id."""
+    user_uid = data_object.get("metadata", {}).get("user_uid")
+    if not user_uid and stripe_subscription_id:
+        billing = await user_billing_store.get_user_billing_by_stripe_subscription_id(stripe_subscription_id)
+        user_uid = billing.user_uid if billing else None
+    if not user_uid and stripe_customer_id:
+        billing = await user_billing_store.get_user_billing_by_stripe_customer_id(stripe_customer_id)
+        user_uid = billing.user_uid if billing else None
+    return user_uid
+
+
+async def _handle_subscription_event(
+    event_type: str, data_object: dict, config, user_billing_store: UserBillingStore
+) -> dict:
+    """Persist billing state from a subscription lifecycle event.
+
+    Resolves the plan from the purchased price, gates it on status, and ignores
+    stale `incomplete` events so out-of-order delivery cannot downgrade an
+    already-active subscription.
+    """
+    stripe_customer_id = data_object.get("customer")
+    stripe_subscription_id = data_object.get("id")
+    status_value = _resolve_status(data_object.get("status", "incomplete"))
+    cancel_at = data_object.get("cancel_at")
+    cancel_at_period_end = bool(data_object.get("cancel_at_period_end", False))
+
+    item_period_start = None
+    item_period_end = None
+    price_id = None
+    items = (data_object.get("items") or {}).get("data") or []
+    if items:
+        first_item = items[0] or {}
+        item_period_start = first_item.get("current_period_start")
+        item_period_end = first_item.get("current_period_end")
+        price_id = (first_item.get("price") or {}).get("id")
+
+    user_uid = await _resolve_webhook_user_uid(
+        data_object, stripe_subscription_id, stripe_customer_id, user_billing_store
+    )
+    if not user_uid:
+        logger.warning("Stripe webhook %s ignored: no user mapping", event_type)
+        return {"processed": False, "reason": "no_user_mapping", "event_type": event_type}
+
+    # Guard against out-of-order delivery: `incomplete` is only ever a
+    # pre-activation state, so a late/duplicate incomplete event must never
+    # downgrade a subscription we already recorded as active. Stripe does not
+    # guarantee webhook ordering.
+    if status_value == "incomplete":
+        existing = await user_billing_store.get_user_billing(user_uid)
+        if (
+            existing
+            and existing.stripe_subscription_id == stripe_subscription_id
+            and existing.status in ACCESS_GRANTING_STATUSES
+        ):
+            logger.info("Ignoring stale incomplete event for active subscription %s", stripe_subscription_id)
+            return {"processed": False, "reason": "stale_incomplete", "event_type": event_type}
+
+    if event_type.endswith(".deleted"):
+        plan = "free"
+    else:
+        # Price id is the source of truth (survives portal plan changes); fall
+        # back to checkout metadata. Fail closed to `free` on an unmapped price
+        # so a misconfigured/legacy price never over-grants the top tier.
+        resolved = config.price_to_plan().get(price_id) or data_object.get("metadata", {}).get("plan")
+        if resolved is None:
+            logger.warning(
+                "Stripe webhook %s: price %s not in price map and no plan metadata; defaulting to free",
+                event_type,
+                price_id,
+            )
+        # Gate on status: a never-paid (`incomplete`) or canceled subscription
+        # must not persist a paid plan.
+        plan = effective_plan(coerce_plan(resolved), status_value)
+    await user_billing_store.upsert_user_billing(
+        user_uid=user_uid,
+        data={
+            "plan": plan,
+            "status": status_value,
+            "stripe_customer_id": stripe_customer_id,
+            "stripe_subscription_id": stripe_subscription_id,
+            "current_period_start": _timestamp_to_datetime(data_object.get("current_period_start") or item_period_start),
+            "current_period_end": _timestamp_to_datetime(data_object.get("current_period_end") or item_period_end or cancel_at),
+            "cancel_at_period_end": cancel_at_period_end or cancel_at is not None,
+        },
+    )
+    return {"processed": True, "event_type": event_type}
+
+
+@router.post("/webhook")
+@with_standard_response
+async def handle_stripe_webhook(request: Request):
+    """Handle Stripe billing webhooks and persist billing state transitions."""
+    config = get_stripe_config()
+    payload = await request.body()
+    event = verify_stripe_signature(
+        payload=payload,
+        sig_header=request.headers.get("Stripe-Signature"),
+        webhook_secret=config.webhook_secret,
+    )
+
+    event_type = event.get("type", "")
+    data_object = event.get("data", {}).get("object", {})
+    user_billing_store: UserBillingStore = request.app.user_billing_store
+
+    if event_type == "checkout.session.completed":
+        return await _handle_checkout_completed(data_object, user_billing_store)
+
+    if event_type in {
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    }:
+        return await _handle_subscription_event(event_type, data_object, config, user_billing_store)
+
+    return {"processed": False, "event_type": event_type, "reason": "ignored_event"}

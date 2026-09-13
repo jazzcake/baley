@@ -1,0 +1,37 @@
+outline_generator:
+  model: gpt-5.4
+  instructions_template: deep_research/outline_generator.jinja
+  model_settings:
+    temperature: 0.01
+
+  web_search:
+    model: gpt-5.4-mini
+    instructions_template: decoupled_web_search.jinja
+    search_engine: linkup
+    search_context_size: medium
+    model_settings:
+      temperature: 0.01
+    enable_summary: false
+    streaming: false
+
+web_collector:
+  model: gpt-5.4
+  instructions_template: deep_research/web_collector.jinja
+  model_settings:
+    temperature: 0.01
+
+  web_search:
+    model: gpt-5.4-mini
+    instructions_template: decoupled_web_search.jinja
+    search_engine: linkup
+    search_context_size: medium
+    model_settings:
+      temperature: 0.01
+    enable_summary: false
+    streaming: false
+
+synthesis:
+  model: gpt-5.4
+  instructions_template: deep_research/synthesis.system.jinja
+  model_settings:
+    temperature: 0.05

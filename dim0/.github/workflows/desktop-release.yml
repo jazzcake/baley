@@ -1,0 +1,219 @@
+name: Desktop Release
+
+# Cut a desktop release: push a version tag (e.g. `v0.3.60`) → build installers for
+# macOS, Linux, and Windows → publish ONE GitHub Release with them attached, plus a
+# curl-installable macOS `.app` zip (see install.sh). A tag with a prerelease part
+# (e.g. `v0.3.60-rc.1`) publishes as a pre-release.
+#
+# (`desktop-build.yml` is the workflow_dispatch "does it compile on every OS" check;
+# this one is the tag-driven publish.)
+#
+# Triggered three ways: `workflow_call` from the Release workflow (the normal path —
+# a GITHUB_TOKEN-pushed tag does NOT fire the `push: tags` event, so Release invokes
+# this directly), a `push` of a `v*` tag (a manually pushed tag still works), and a
+# manual `workflow_dispatch` to (re)build a specific existing tag.
+#
+# The public server URL is baked from the `API_ORIGIN` repo VARIABLE into
+# VITE_API_URL, passed via the build step's env (no .env file is written in CI —
+# see the build step). Unset ⇒ a local-only build that asks the user to connect a
+# server.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build installers for and attach (e.g. v0.3.61)
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: Version tag to build installers for and attach (e.g. v0.3.61)
+        required: true
+        type: string
+
+permissions:
+  contents: write # create the release + upload assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # push: builds the pushed tag. call/dispatch: build the requested tag
+          # (the reusable-workflow default would otherwise be the caller's ref).
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: webui/src-tauri
+
+      - name: Install Tauri system dependencies (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf
+
+      - name: Install webui dependencies
+        run: npm ci
+        working-directory: webui
+
+      # macOS signing + notarization credentials, prepared in ONE gated step so
+      # they reach the build ONLY when signing. Gate is the public
+      # APPLE_SIGNING_IDENTITY variable: a fork (or the repo before secrets are
+      # configured) skips this step, so APPLE_CERTIFICATE et al. are never set —
+      # Tauri then takes the ad-hoc path. (Passing them straight to the build step
+      # would set APPLE_CERTIFICATE="" — present-but-empty — which makes Tauri try
+      # to import an empty cert and fail, breaking the fork/ad-hoc promise.) Fails
+      # fast if the identity is set but a required secret is missing, rather than
+      # dying deep in codesign/notarytool. Written via $GITHUB_ENV (the cert is
+      # base64 and may be multi-line, hence the heredoc form).
+      - name: Prepare Apple signing + notarization (macOS)
+        if: matrix.platform == 'macos-latest' && vars.APPLE_SIGNING_IDENTITY != ''
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          # bash indirect expansion (${!v}) — NOT eval, whose word-splitting would
+          # execute the multi-line .p8/.p12 secrets line by line.
+          missing=
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::APPLE_SIGNING_IDENTITY is set but these secrets are missing:$missing"
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/apple_api_key.p8"
+          # Exactly one trailing newline: strip any the stored secret carried, then
+          # add one — strict PEM/ES256 parsers (notarytool) can reject a key with
+          # none, and a doubled blank line is likewise avoided.
+          printf '%s\n' "${APPLE_API_KEY_P8%$'\n'}" > "$key_path"
+          # Propagate to the build step ONLY when signing (absent otherwise).
+          {
+            echo "APPLE_API_KEY_PATH=$key_path"
+            echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+            echo "APPLE_API_KEY=$APPLE_API_KEY"
+            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_CERTIFICATE<<__DIM0_P12_EOF__"
+            echo "$APPLE_CERTIFICATE"
+            echo "__DIM0_P12_EOF__"
+          } >> "$GITHUB_ENV"
+
+      # Committed tauri.conf.json pins `signingIdentity: "-"` (ad-hoc) so the repo
+      # builds for anyone — forks and contributors without an Apple cert. The real
+      # Developer ID is injected HERE, at release time only, via `--config`: when
+      # the APPLE_SIGNING_IDENTITY repo VARIABLE is set (not a secret — the identity
+      # string is public), the macOS leg overrides it and signs + notarizes; unset
+      # (a fork) ⇒ it falls through to the ad-hoc build. Linux/Windows always take
+      # the plain path.
+      - name: Build desktop installers
+        working-directory: webui
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "macos-latest" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            npm run tauri-build -- --config "{\"bundle\":{\"macOS\":{\"signingIdentity\":\"$APPLE_SIGNING_IDENTITY\"}}}"
+          else
+            npm run tauri-build
+          fi
+        env:
+          # Only the PUBLIC identity variable is set here. When it's non-empty (and
+          # macOS), the run step above injects it via --config and Tauri signs +
+          # notarizes using the credentials the prep step put in $GITHUB_ENV
+          # (APPLE_CERTIFICATE, _PASSWORD, APPLE_API_ISSUER/KEY, APPLE_API_KEY_PATH).
+          # Empty (a fork) ⇒ the else branch ⇒ ad-hoc build, no Apple vars present.
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          # The one build-time value the desktop app needs: the public server URL
+          # users sign in to, from the API_ORIGIN repo VARIABLE (a public URL, not
+          # a secret). Passed straight into the environment — Vite bakes
+          # process.env.VITE_*, so NO .env file is written in CI (the build's
+          # `dotenv -e ../.env` no-ops on the absent file). We deliberately do NOT
+          # copy the dev `.env.sample` (localhost origins, empty secret
+          # placeholders) into a release. Unset ⇒ VITE_API_URL empty ⇒ local-only
+          # build (falls back in code); mini-app runs single-frontend from the
+          # bundled runtime since no origin is baked.
+          VITE_API_URL: ${{ vars.API_ORIGIN }}
+          # Pin the V8 heap: Node auto-sizes to available RAM, so the ~7 GB macOS
+          # runner defaults to ~2 GB and OOMs on the main `vite build` (works
+          # locally on 16 GB+). 4 GB matches a dev machine and fits every runner.
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      # install.sh curls a zip of the .app (not the .dmg): a terminal download isn't
+      # Gatekeeper-quarantined, so the ad-hoc-signed app launches with no prompt.
+      - name: Package macOS .app zip
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          ditto -c -k --keepParent \
+            "webui/src-tauri/target/release/bundle/macos/Dim0.app" \
+            "Dim0-aarch64-mac.zip"
+
+      - name: Collect installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: dim0-${{ matrix.platform }}
+          path: |
+            webui/src-tauri/target/release/bundle/dmg/*.dmg
+            webui/src-tauri/target/release/bundle/appimage/*.AppImage
+            webui/src-tauri/target/release/bundle/deb/*.deb
+            webui/src-tauri/target/release/bundle/msi/*.msi
+            webui/src-tauri/target/release/bundle/nsis/*-setup.exe
+            Dim0-aarch64-mac.zip
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          # Only the desktop build artifacts (dim0-<platform>). When invoked via
+          # workflow_call from Release, the run also holds the docker job's
+          # `*.dockerbuild` artifact; downloading everything pulls that in and the
+          # step dies on it ("failed after 5 retries").
+          pattern: dim0-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: ${{ inputs.tag || github.ref_name }}
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}
+          generate_release_notes: true
+          files: dist/**
+          fail_on_unmatched_files: false
