@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+  Initial theme defaults on <html> match where the host writes them
+  (theme-provider.tsx). `/theme-bootstrap.js` in <head> upgrades these
+  from URL query params (`?theme=parchment&mode=dark`) BEFORE any CSS
+  paints, so the iframe boots in the host's active palette without a
+  flash. main.tsx then keeps them in sync via the `mini-app:theme`
+  postMessage protocol on live changes.
+
+  The bootstrap script is external (not inline) so the production CSP
+  `script-src 'self' 'unsafe-eval'` allows it — an inline <script>
+  would be blocked silently and the flash-prevention would regress.
+-->
+<!--
+  `scrollbar-thin` (defined in src/index.css, shipped via runtime.css) styles
+  the document scrollbar. It only shows when a widget's content exceeds the
+  host's height cap (MAX_AUTO_GROW_PX) — at which point the iframe document
+  scrolls instead of clipping. #root owns the layout; the agent never touches
+  this element, so the thin scrollbar can't be overridden by widget code.
+-->
+<html lang="en" data-theme="parchment" data-mode="light" class="scrollbar-thin">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Content Security Policy is NOT set as a meta-tag — it ships via
+      HTTP response headers from Caddy in production (see
+      mini-app-deploy.md §2). Meta-tag CSPs don't support all
+      directives we need (notably `frame-ancestors`), and the iframe
+      sandbox + cross-origin deploy is what actually fences off the
+      runtime; CSP is the network-layer defense on top of that.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mini-app runtime</title>
+    <!--
+      Theme bootstrap MUST come before runtime.css so the <html> data
+      attributes are settled before any [data-theme=...] selectors
+      evaluate. Synchronous external script — no async/defer.
+    -->
+    <script src="/theme-bootstrap.js"></script>
+    <link rel="stylesheet" href="/runtime.css" />
+    <!--
+      Runtime config injection — docker-entrypoint.sh generates
+      /config.js from config.template.js with per-env substitutions
+      and copies it into dist-mini-app/. main.tsx reads
+      window.__APP_CONFIG__.hostOrigin to know which origin's
+      postMessage events to trust. In vite-dev there's no config.js
+      (the dev server doesn't run the entrypoint) — main.tsx falls
+      back to import.meta.env.VITE_HOST_ORIGIN there.
+    -->
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

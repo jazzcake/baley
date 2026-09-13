@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "enables the default permissions",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://api.openai.com/*" },
+        { "url": "https://openrouter.ai/*" },
+        { "url": "https://api.linkup.so/*" },
+        { "url": "https://api.tavily.com/*" },
+        { "url": "https://api.perplexity.ai/*" },
+        { "url": "https://api.exa.ai/*" },
+        { "url": "https://api.mistral.ai/*" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+# LLM models and provider keys now live in models.yml (the model catalog).
+# This file declares the non-LLM services (search / navigate / code / image),
+# gated by the same provider availability the catalog computes.
+
+services:
+  search:
+    - name: linkup
+      provider: linkup
+    - name: perplexity
+      provider: perplexity
+    - name: openai
+      provider: openai
+    - name: tavily
+      provider: tavily
+    - name: exa
+      provider: exa
+
+  navigate:
+    - name: tavily
+      provider: tavily
+
+  code:
+    - name: openai
+      provider: openai
+
+  image_generation:
+    - name: openrouter
+      provider: openrouter

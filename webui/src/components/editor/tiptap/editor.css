@@ -1,0 +1,1056 @@
+/* ── TipTap editor content styles ──────────────────────────────────────── */
+
+.tiptap-editor {
+  height: 100%;
+  overflow-y: auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+.tiptap-editor .ProseMirror {
+  max-width: 720px;
+  margin: 0 auto;
+  outline: none;
+  color: var(--foreground);
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  line-height: 1.75;
+  caret-color: oklch(0.55 0.11 38);
+}
+
+/* ── headings ───────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror h1,
+.tiptap-editor .ProseMirror h2,
+.tiptap-editor .ProseMirror h3,
+.tiptap-editor .ProseMirror h4 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--foreground);
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.tiptap-editor .ProseMirror h1 { font-size: 2rem; margin-top: 0; }
+.tiptap-editor .ProseMirror h2 { font-size: 1.4rem; }
+.tiptap-editor .ProseMirror h3 { font-size: 1.15rem; }
+.tiptap-editor .ProseMirror h4 { font-size: 1rem; }
+
+/* ── paragraphs ─────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror p {
+  margin: 0 0 0.75rem;
+}
+
+.tiptap-editor .ProseMirror p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── inline code ────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+/* ── code blocks ────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror pre {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin: 1rem 0;
+  overflow-x: auto;
+}
+
+.tiptap-editor .ProseMirror pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+/* ── blockquote ─────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror blockquote {
+  border-left: 3px solid var(--border);
+  margin: 1rem 0;
+  padding: 0.25rem 0 0.25rem 1.25rem;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+/* ── lists ──────────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+/* Notion-style nested bullet variants by depth: disc → circle → square */
+.tiptap-editor .ProseMirror ul ul { list-style-type: circle; }
+.tiptap-editor .ProseMirror ul ul ul { list-style-type: square; }
+
+.tiptap-editor .ProseMirror ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+/* Nested ordered variants: 1. → a. → i. */
+.tiptap-editor .ProseMirror ol ol { list-style-type: lower-alpha; }
+.tiptap-editor .ProseMirror ol ol ol { list-style-type: lower-roman; }
+
+.tiptap-editor .ProseMirror li {
+  margin: 0.2rem 0;
+}
+
+
+/* ── task list ──────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li > label {
+  flex: 0 0 auto;
+  margin-top: 0.25em;
+  cursor: pointer;
+}
+
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+  accent-color: oklch(0.55 0.11 38);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+/* ── horizontal rule ────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.75rem 0;
+}
+
+/* ── links ──────────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror a.editor-link {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.tiptap-editor .ProseMirror a.editor-link:hover {
+  color: var(--link-foreground);
+}
+
+/* ── placeholder ────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+/* ── text selection ─────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror ::selection {
+  background: oklch(0.55 0.11 38 / 0.15);
+}
+
+/* ── focus ──────────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror:focus {
+  outline: none;
+}
+
+/* Shiki dual-theme rules live in `@/lib/shiki.css`, imported as a side
+   effect of `@/lib/shiki`. */
+
+/* ── code block node view ───────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror .code-block-node {
+  margin: 1rem 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+  background: var(--muted);
+}
+
+.code-block-lang-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.code-block-lang-select {
+  appearance: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  padding-right: 1rem;
+  cursor: pointer;
+}
+
+.code-block-lang-select:hover { color: var(--foreground); }
+
+.code-block-lang-caret {
+  position: absolute;
+  right: 0.25rem;
+  pointer-events: none;
+  color: var(--muted-foreground);
+}
+
+.code-block-copy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.code-block-copy-btn:hover {
+  background: var(--border);
+  color: var(--foreground);
+}
+
+/* Stacked grid: Shiki layer behind, editable layer in front. Wrapper bg
+   matches --card so the parent surface aligns with .shiki's own background
+   (pinned to --card in shiki.css). Without this, trailing empty lines Shiki
+   trims — plus the brief window before first highlight — leak a different
+   color through the parent. */
+.code-block-body {
+  display: grid;
+  overflow-x: auto;
+  background: var(--card);
+}
+
+.code-block-shiki-layer,
+.code-block-edit-pre {
+  grid-area: 1 / 1;
+}
+
+.code-block-shiki-layer {
+  pointer-events: none;
+  user-select: none;
+}
+
+.code-block-shiki-layer .shiki {
+  margin: 0 !important;
+  padding: 1rem 1.25rem !important;
+  border: none !important;
+  border-radius: 0 !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.875rem !important;
+  line-height: 1.6 !important;
+  tab-size: 2 !important;
+  overflow: visible !important;
+}
+
+
+/* Override the general pre styles inside the node view */
+.tiptap-editor .ProseMirror .code-block-edit-pre {
+  margin: 0 !important;
+  padding: 1rem 1.25rem !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.875rem !important;
+  line-height: 1.6 !important;
+  overflow: visible !important;
+  position: relative;
+  z-index: 1;
+  tab-size: 2;
+}
+
+/* Transparent text once Shiki overlay is ready; caret stays visible */
+.code-block-edit-pre.shiki-loaded .code-block-editable {
+  color: transparent !important;
+  caret-color: var(--foreground);
+}
+
+
+.code-block-editable {
+  display: block;
+  outline: none;
+  background: transparent;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.code-block-editable ::selection {
+  background: oklch(0.55 0.11 38 / 0.35) !important;
+}
+
+/* ── math (KaTeX) ───────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror .tiptap-mathematics-render {
+  cursor: pointer;
+  padding: 0.1em 0.2em;
+  border-radius: 3px;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.tiptap-editor .ProseMirror .tiptap-mathematics-render:hover {
+  background: var(--muted);
+}
+
+/* Block math wrapper: bordered card on the wrapper itself so it survives all
+   three NodeView states — success (wrapper > inner > KaTeX), empty
+   (wrapper > inner empty), and error (KaTeX overwrites wrapper.textContent
+   with the raw LaTeX, deleting inner). */
+.tiptap-editor .ProseMirror [data-type="block-math"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 1rem 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--secondary-foreground);
+  border-radius: 8px;
+  background: var(--muted);
+  min-height: 2.5rem;
+  cursor: pointer;
+}
+
+/* Empty: faded placeholder, accent stripe stays muted-foreground tone */
+.tiptap-editor .ProseMirror [data-type="block-math"][data-latex=""] {
+  border-left-color: var(--muted-foreground);
+}
+
+.tiptap-editor .ProseMirror [data-type="block-math"][data-latex=""]::before {
+  content: "Click to edit equation";
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+/* Error (invalid LaTeX): KaTeX has set wrapper.textContent = raw latex.
+   Show that raw text in red within the same bordered card, with a red
+   accent stripe so the state is clearly distinguishable. Skip when latex
+   is empty — that's the placeholder state, not an error to highlight. */
+.tiptap-editor .ProseMirror [data-type="block-math"].block-math-error:not([data-latex=""]) {
+  color: oklch(0.55 0.20 25);
+  border-left-color: oklch(0.55 0.20 25);
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+
+[data-mode="dark"] .tiptap-editor .ProseMirror [data-type="block-math"].block-math-error:not([data-latex=""]) {
+  color: oklch(0.72 0.18 25);
+  border-left-color: oklch(0.72 0.18 25);
+}
+
+/* ── math edit popover ─────────────────────────────────────────────────── */
+
+.math-edit-popover {
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  max-width: 480px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-sans);
+  overflow: hidden;
+}
+
+.math-edit-textarea {
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0.6rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--foreground);
+}
+
+.math-edit-textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* ── tables ─────────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror table {
+  border-collapse: collapse;
+  margin: 1rem 0;
+  width: 100%;
+  table-layout: fixed;
+  font-size: 0.9rem;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.tiptap-editor .ProseMirror table td,
+.tiptap-editor .ProseMirror table th {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.65rem;
+  vertical-align: top;
+  position: relative;
+  min-width: 80px;
+}
+
+.tiptap-editor .ProseMirror table th {
+  background: var(--muted);
+  font-weight: 600;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  text-align: left;
+}
+
+.tiptap-editor .ProseMirror table td > *,
+.tiptap-editor .ProseMirror table th > * {
+  margin: 0;
+}
+
+.tiptap-editor .ProseMirror table .selectedCell {
+  background: oklch(0.55 0.11 38 / 0.1);
+}
+
+.tiptap-editor .ProseMirror table .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: oklch(0.55 0.11 38 / 0.4);
+  cursor: col-resize;
+  pointer-events: all;
+}
+
+/* ── slash command menu ─────────────────────────────────────────────────── */
+
+.slash-menu {
+  min-width: 220px;
+  max-width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 4px;
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-sans);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.slash-menu:hover {
+  scrollbar-color: rgba(120, 120, 130, 0.4) transparent;
+}
+
+/* ── highlight mark ─────────────────────────────────────────────────────── */
+
+/* Highlight palette — vars on :root / [data-mode="dark"] (not editor-scoped) so
+   they're also reachable from portaled UI like the bubble-menu color picker
+   that renders outside .tiptap-editor. The Highlight extension emits
+   `data-color="<name>"` only for named colors (no inline style); CSS below
+   paints from the variable, so theme-awareness is implicit. Hex colors keep
+   their own inline style and bypass these vars. Palette is shared across all
+   themes for now — per-theme overrides can be added in a later PR. */
+:root {
+  --hl-yellow: #fef08a;
+  --hl-green:  #bbf7d0;
+  --hl-blue:   #bfdbfe;
+  --hl-red:    #fecaca;
+  --hl-pink:   #fbcfe8;
+  --hl-purple: #e9d5ff;
+  --hl-orange: #fed7aa;
+  --hl-gray:   #e5e7eb;
+}
+
+[data-mode="dark"] {
+  --hl-yellow: rgba(133, 77, 14, 0.55);
+  --hl-green:  rgba(20, 83, 45, 0.55);
+  --hl-blue:   rgba(30, 58, 138, 0.55);
+  --hl-red:    rgba(127, 29, 29, 0.55);
+  --hl-pink:   rgba(131, 24, 67, 0.55);
+  --hl-purple: rgba(88, 28, 135, 0.55);
+  --hl-orange: rgba(124, 45, 18, 0.55);
+  --hl-gray:   rgba(55, 65, 81, 0.55);
+}
+
+/* Default highlight (no color attribute) uses the yellow var, so the same
+   variable indirection drives both default and explicit yellow. */
+.tiptap-editor .ProseMirror mark {
+  background: var(--hl-yellow);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0.05em 0.1em;
+}
+
+.tiptap-editor .ProseMirror mark[data-color="yellow"] { background: var(--hl-yellow); }
+.tiptap-editor .ProseMirror mark[data-color="green"]  { background: var(--hl-green); }
+.tiptap-editor .ProseMirror mark[data-color="blue"]   { background: var(--hl-blue); }
+.tiptap-editor .ProseMirror mark[data-color="red"]    { background: var(--hl-red); }
+.tiptap-editor .ProseMirror mark[data-color="pink"]   { background: var(--hl-pink); }
+.tiptap-editor .ProseMirror mark[data-color="purple"] { background: var(--hl-purple); }
+.tiptap-editor .ProseMirror mark[data-color="orange"] { background: var(--hl-orange); }
+.tiptap-editor .ProseMirror mark[data-color="gray"]   { background: var(--hl-gray); }
+
+/* ── inline tag chips (decoration) ─────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror .editor-tag-chip {
+  display: inline;
+  background: oklch(0.93 0.04 250 / 0.5);
+  color: oklch(0.45 0.08 250);
+  border: 1px solid oklch(0.80 0.06 250 / 0.6);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+  font-family: var(--font-sans);
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+[data-mode="dark"] .tiptap-editor .ProseMirror .editor-tag-chip {
+  background: oklch(0.30 0.05 250 / 0.5);
+  color: oklch(0.75 0.08 250);
+  border-color: oklch(0.45 0.06 250 / 0.5);
+}
+
+.tiptap-editor .ProseMirror .editor-tag-chip--kv {
+  background: oklch(0.93 0.04 150 / 0.5);
+  color: oklch(0.40 0.09 150);
+  border-color: oklch(0.75 0.07 150 / 0.6);
+}
+
+[data-mode="dark"] .tiptap-editor .ProseMirror .editor-tag-chip--kv {
+  background: oklch(0.28 0.05 150 / 0.5);
+  color: oklch(0.72 0.10 150);
+  border-color: oklch(0.42 0.07 150 / 0.5);
+}
+
+/* ── tag panel ──────────────────────────────────────────────────────────── */
+
+.tag-panel {
+  max-width: 720px;
+  margin: 0 auto 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-sans);
+}
+
+.tag-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 1.6rem;
+}
+
+.tag-row-key {
+  width: 5rem;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.tag-row-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--foreground);
+  line-height: 1.5;
+}
+
+/* ── toggle (details) ───────────────────────────────────────────────────── */
+
+/* Outer: flex row — [arrow button] [contentDOM div] */
+.tiptap-editor .ProseMirror [data-type="details"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+}
+
+/* The button IS the toggle mechanism — style it as a rotating arrow */
+.tiptap-editor .ProseMirror [data-type="details"] > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.5rem;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  transition: transform 0.15s ease;
+}
+
+.tiptap-editor .ProseMirror [data-type="details"] > button::before {
+  content: "▶";
+  font-size: 0.75rem;
+}
+
+.tiptap-editor .ProseMirror [data-type="details"].is-open > button {
+  transform: rotate(90deg);
+}
+
+/* ContentDOM fills remaining space */
+.tiptap-editor .ProseMirror [data-type="details"] > div {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Summary (title line): block, no list marker */
+.tiptap-editor .ProseMirror summary {
+  display: block;
+  list-style: none;
+  font-weight: 500;
+  outline: none;
+  cursor: default;
+}
+
+.tiptap-editor .ProseMirror summary::-webkit-details-marker,
+.tiptap-editor .ProseMirror summary::marker { display: none; content: ""; }
+
+/* Content area: align with the summary text (same column), like a bullet's
+   continuation paragraph aligns with its bullet text. */
+.tiptap-editor .ProseMirror [data-type="detailsContent"] {
+  padding-left: 0;
+  margin-top: 0.25rem;
+}
+
+.tiptap-editor .ProseMirror [data-type="detailsContent"] > * {
+  margin-top: 0;
+}
+
+/* Hide content when the parent toggle is closed. Drive visibility from the
+   wrapper's `is-open` class (which mirrors the schema's `open` attribute)
+   rather than the NodeView-managed `hidden` attribute on detailsContent —
+   that way programmatic open (e.g. Mod-Enter) makes the content actually
+   visible so the caret can land inside it. */
+.tiptap-editor .ProseMirror [data-type="details"]:not(.is-open) [data-type="detailsContent"] {
+  display: none;
+}
+
+/* ── table of contents block ────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror .toc-block {
+  display: block;
+  margin: 1rem 0;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--secondary-foreground);
+  border-radius: 8px;
+  background: var(--muted);
+  user-select: none;
+}
+
+.toc-block-title {
+  margin: 0 0 0.4rem;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.toc-block-empty {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-style: italic;
+  color: var(--muted-foreground);
+}
+
+.toc-block-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.toc-block-item {
+  margin: 0;
+  padding: 0;
+}
+
+.toc-block-item--h2 .toc-block-link { padding-left: 1.25rem; }
+.toc-block-item--h3 .toc-block-link { padding-left: 2.25rem; }
+
+.toc-block-link {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0.2rem 0.25rem;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  text-align: left;
+  color: var(--foreground);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s, color 0.1s;
+}
+
+.toc-block-link:hover {
+  background: var(--background);
+  color: var(--secondary-foreground);
+}
+
+
+/* ── page reference chip ────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror .page-ref-wrap {
+  display: inline;
+  white-space: nowrap;
+}
+
+.tiptap-editor .ProseMirror .page-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.05em 0.25rem;
+  margin: 0 -0.1em; /* hover bg bleeds slightly past the icon/text */
+  border: none;
+  background: transparent;
+  border-radius: 3px;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.tiptap-editor .ProseMirror .page-ref:hover {
+  background: var(--muted);
+}
+
+.page-ref-prefix {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.page-ref-icon {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.page-ref-title {
+  text-decoration: underline;
+  text-decoration-color: var(--muted-foreground);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.page-ref--deleted {
+  color: var(--muted-foreground);
+  cursor: not-allowed;
+}
+
+.page-ref--deleted .page-ref-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted-foreground);
+}
+
+.page-ref--deleted:hover {
+  background: transparent;
+}
+
+.page-ref-suffix {
+  font-size: 0.75em;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+
+/* ── subpage link (block-level page embed, Notion-style) ────────────────── */
+
+.tiptap-editor .ProseMirror .subpage-card-wrap {
+  display: block;
+  margin: 0.25rem 0;
+}
+
+.tiptap-editor .ProseMirror .subpage-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: 100%;
+  padding: 0.2rem 0.35rem;
+  margin: 0 -0.35rem; /* hover bg bleeds slightly past the icon/text */
+  border: none;
+  background: transparent;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.tiptap-editor .ProseMirror .subpage-card:hover {
+  background: var(--muted);
+}
+
+.subpage-card-icon {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.subpage-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--muted-foreground);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.subpage-card-suffix {
+  font-size: 0.85em;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.subpage-card--deleted {
+  cursor: not-allowed;
+  color: var(--muted-foreground);
+}
+
+.subpage-card--deleted .subpage-card-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted-foreground);
+}
+
+.subpage-card--deleted:hover {
+  background: transparent;
+}
+
+
+/* ── @-mention search menu ──────────────────────────────────────────────── */
+
+.page-search-menu {
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 4px;
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-sans);
+}
+
+.page-search-section {
+  margin: 0;
+  padding: 0.4rem 0.6rem 0.2rem;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.page-search-empty {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--muted-foreground);
+}
+
+.page-search-divider {
+  margin: 0.25rem 0.25rem;
+  height: 1px;
+  background: var(--border);
+}
+
+.page-search-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--foreground);
+  text-align: left;
+}
+
+.page-search-item:hover {
+  background: var(--muted);
+}
+
+.page-search-item--active {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}
+
+.page-search-item-icon {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+
+/* ── images ─────────────────────────────────────────────────────────────── */
+
+.tiptap-editor .ProseMirror .editor-image-wrap {
+  display: block;
+  margin: 0.75rem 0;
+}
+
+.tiptap-editor .ProseMirror img.editor-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.tiptap-editor .ProseMirror .editor-image-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+  width: 100%;
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+
+/* ── block drag handle ──────────────────────────────────────────────────── */
+
+.block-handle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+/* For list items, shift the handle further left to clear the bullet/number
+   that lives inside the parent <ul>/<ol>'s padding. */
+.block-handle-wrap--list {
+  margin-left: -1.6rem;
+}
+
+.block-handle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--muted-foreground);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+  padding: 0;
+}
+
+/* Show when the DragHandle wrapper is visible (extension adds inline style/display) */
+.block-handle-wrap:hover .block-handle-btn,
+.block-handle-wrap:focus-within .block-handle-btn {
+  opacity: 0.5;
+}
+
+.block-handle-btn:hover {
+  opacity: 1 !important;
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.block-drag-btn {
+  cursor: grab;
+}
+
+.block-drag-btn:active {
+  cursor: grabbing;
+}
+
+/* ── responsive ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .tiptap-editor {
+    padding: 1.25rem 1rem 4rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .tiptap-editor {
+    padding: 1rem 0.875rem 4rem;
+  }
+}

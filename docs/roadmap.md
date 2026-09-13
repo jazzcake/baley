@@ -1,0 +1,49 @@
+# Dim0 — Roadmap & known follow-ups
+
+In-flight work, phased plans, and durable engineering follow-ups. Sourced from code markers, recent PR reviews, and design drafts — this **drifts**; verify against the codebase. Terminology is in [`architecture.md`](./architecture.md).
+
+## In-flight cutovers / migrations
+
+**North star — one agent runtime, in the browser.** The agent is migrating *entirely* to the client-side (local) engine; the server-side OpenAI-Agents runtime is being retired. End state: every chat runs the in-browser tool-calling loop against BYOK-or-managed models, and the backend keeps only the thin metered `/ai/*` proxies — no in-process agent, no `AssistantManager`/`Plan`, no server-side board writes via `AgentBoardBridge`. This is the single largest planned change in the agent domain.
+
+- **Retire the backend agent runtime ("G5"):** the major step toward the north star — delete the server-side agent path (`POST /chats/{id}/messages`, `backend/topix/agents/` incl. `agents/assistant/`) and the browser code that drives it (`features/agent/api/send-message.ts`, `hooks/use-submit-prompt.ts`), plus the LEGACY chat-store fields it needs (`webSearchEngine`, `enabledTools`, `useDeepResearch`). Deep Research is backend-only and goes with it. The `navigate`→`fetch` tool/service rename is a mid-flight step (translated client-side today). Markers across `features/agent/store/chat-store.ts`, `api/send-message.ts`. After this, `local` on ChatContext is effectively always true and the branch collapses.
+  - **Shipped behind `dim0_local_agent_on_synced` (soaking):** the browser agent now runs on synced boards (pill + drawer), with transcripts backed up to the server for cross-device history (→ [ADR-AGENT-001](./adr/ADR-AGENT-001-opaque-transcript-storage.md)) and off-board tools behind a confirm gate (→ [ADR-AGENT-002](./adr/ADR-AGENT-002-tool-confirm-gate-and-result-contract.md)). **Next:** flip the flag on by default after soak, then delete the server path above.
+- **react-flow → canvas-harness:** the board migrated to the in-house engine; `@xyflow/react` and legacy converters (`utils/graph.ts`, deprecated `types/note.ts` fields) linger.
+- **Legacy WS client → v2 offline-first sync:** `use-ws-collab.ts` (and its duplicated normalize/enrich/dedupe helpers) is retired once every synced board is `v2`; then the transient `BoardMeta.syncEngine` field and the `dim0SyncV2` localStorage override go away.
+
+## Collaboration phases (not built)
+
+- **Phase 3 multi-worker:** `RoomRegistry` is single-worker v1; multi-worker needs Redis room-pinning + per-peer outbox queues (sends currently block the room under `room.lock`). Soft edit-locks are also Phase 3.
+- Welcome holds `room.lock` across the snapshot DB read (<500ms); a buffered-peer-op optimization is deferred.
+- Bulk/import writes (the NLP parsing pipeline) bypass the `peer-op` broadcast — a live board won't see an import until reload.
+- Anonymous (signed-out) share access is Phase 2+.
+
+## Durable engineering follow-ups (from recent fixes/reviews)
+
+- **Offline-first base — Phase 2 (drift-replace).** A v2 board's base is now materialized whole (all layers) via `materializeBoardOffline` + `?whole=true` (`offline-first-data-model.md`) whenever the replica is **fully synced and quiet across the fetch** — no snapshot, no unsent local edit, and the oplog unchanged for the fetch's duration — not only on a pristine first open. Because `foldBase` truncates by **local seq**, we can only safely fold when the whole oplog is known to be on the server, so materialize **defers** (returns false, retries on next open/download) in three cases: (a) an **unsent local edit** (folding would drop it); (b) a **relay op sequenced during the fetch** (can't tell by local seq whether it's already in the fetched base → folding could double-apply it); (c) a reconnect **drift** snapshot (still applied in-memory only). Folding *without* deferring in (a)/(b) — truncate by the fetch's authoritative position while preserving interleaved unsent-locals — needs the **serverSeq-based** truncation model. (Legacy non-v2 synced boards keep no local replica at all.) Unblocks: sourcing a synced board's sidebar hierarchy from the local store for never-opened boards. Remaining note from the #192 review:
+  - **`isBoardAvailableOffline` trusts any `snapshots` row = complete base.** Safe **today** (only `foldBase` writes one, always the full fetch, and `compact()` is unwired), but wiring compaction or any partial-state snapshot writer later must gate the offline marker on "whole-board seed ran", not mere row existence.
+  - **Fold assumes the `?whole=true` fetch is ≥ the newest relay op the client holds** (#198 review). If the REST whole-board read can lag the relay's sequencer (read replica / snapshot table behind), an op already in the local oplog (with a `serverSeq`) but not yet in the fetch gets folded away by local seq and permanently omitted from the base until drift-replace ships. This is a backend read-consistency assumption the client can't enforce; the serverSeq model (comparing the fetch's position to each entry's `serverSeq`) is what makes it safe.
+  - **`useDownloadBoard` doesn't pass the mounted persistence** (#198 review), so the writer-flush defense is a no-op on the "download the currently-open board" path — a local edit buffered in the <50ms debounce window could be folded away. Narrow (the coordinator's auto-materialize, which does flush, usually seeds the open board first), but the download path should pass the active persistence when the board is open, guarded by matching board id.
+- **Sidebar tree — REST `/contents` path now dead + open-board replay.** The sidebar tree reads the on-device store for local + offline-available synced boards (`useLocalBoardContents` + `useSidebarContentsSync`); the REST `/contents` path (`useBoardContents`, `invalidateBoardContents`, and the `boardContents` cache patches in `sheet-panel` / `node-title-caption`) is no longer consumed by the tree and can be pruned in a follow-up sweep (`listBoardContents` raw fn stays — editor page-provider uses it). Separately, `listLocalBoardContents` replays snapshot+oplog on each invalidation; for the **currently-open** board it could read the live attached store instead (skips the replay + the flush round-trip). (#193 review.)
+- **`mini_app_state` not cascaded on `deleteBoard`** — needs a `by-board` index (record + write-path change + DB version bump). Storage leak, not data loss.
+- **`enforce_rate_limit` isn't atomic** — it increments each window before a later rule rejects, so a rejected-then-retried run re-increments the minute/day counters. Fix: roll back on a later-rule reject.
+- **Relay dedup is by envelope `batch.id`** — a coalesced re-send whose membership changed can re-apply an already-applied prefix. Proper fix: idempotency by covered oplog seq-range. (Benign today because the Qdrant apply is an idempotent upsert.)
+- **Adopt cap advisory lock** is unit-tested only via a fake store; add a Postgres integration test for the real concurrency.
+- **No cross-store (Postgres↔Qdrant) atomicity**; chunk cleanup on node delete is fire-and-forget (transient orphans).
+- **No local-turn `AbortController`** — a hung turn can't be cancelled and blocks chat switching; adding it also retires the mid-stream-guard edge.
+- **Viewer edit-UI not fully gated (pre-existing).** `HarnessToolbar` and the `<Canvas>` node-interaction layer aren't gated on `canEdit`, so a read-only viewer still sees the create/edit toolbar and can drag/edit default nodes — the ops are then server-rejected (`op-rejected`, rolled back), but the UI shouldn't offer them. Affects legacy viewers too (not a v2 regression). Fix: thread `canEdit` into the toolbar + a `readonly` prop on `<Canvas>`. (Surfaced by the #170 review; the owner-only Share button + node-view edit buttons are already correctly gated.)
+- **`board-app-store.canEdit` defaults `true` (fail-open).** The default/reset value is `true`; a viewer's store briefly reports editable before hydrate resolves the role. Largely masked because most affordances also gate on `ready` (false until hydrated), but a fail-closed default (`false`) would remove the window and match the v2 fail-closed intent. (#170 review.)
+- **Per-board legacy escape hatch doesn't cover meta-less boards.** With v2 now the default (Phase 1), a synced board with no local `BoardMeta` can only be forced back to the legacy client via the `dim0SyncV2` dev flag, not a persisted `syncEngine: "legacy"` pin. Fine given v2 is fail-closed/role-aware + canary rollout, but there's no per-board opt-out for meta-less boards. (#170 review.)
+- `TODO(folder)` cluster in `store/graph.py`: no `parent_id` validation (existence / same-graph / cycle) on create/update; soft-deleted descendants aren't excluded from the descendant BFS.
+- Mini-app **CSP / network-egress hardening ("Phase 4")** is deployment-delivered, not yet in the repo.
+- HLC logical clock deferred to "Lift 2" (v1 relies on relay ordering). Local search-index persistence to IndexedDB is deferred. A desktop SQLite storage engine is pre-wired but not built.
+
+## Product
+
+- **Free tier is intentionally limited** while running on a small budget ("plan to make it more usable over time"). **Basic tier** shipped (v0.3.58: model gating + freemium limits + canvas counters).
+- Tauri desktop build exists but is early (version pinned `0.1.0`, `csp:null`).
+
+## Dead code / cleanup candidates
+
+- `backend/topix/llm_models.yml` — superseded by `models.yml`; referenced by no Python.
+- `datatypes/note/note.py` `emoji` field (→ `icon_data`); `agents/notes/tools.py` `create_note` tool (→ `write_note`); the `html-widget` skill (→ mini-app); `features/agent/local/use-local-agent.ts` (→ `use-local-submit-prompt.ts`).
