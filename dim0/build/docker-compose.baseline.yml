@@ -1,0 +1,27 @@
+# Provider-free WP0 overlay. Use only with the upstream `test` profile and an
+# external non-secret ENVFILE as documented in task-189-baseline-execution.md.
+services:
+  backend-test:
+    environment:
+      DIM0_BASELINE_PROVIDER_TRIPWIRE: "1"
+      DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION: "512"
+      DIM0_BASELINE_TRIPWIRE_OUTPUT: /app/data/task-189-provider-invocations.json
+      DIM0_BASELINE_CONSTRUCTION_OUTPUT: /app/data/task-189-provider-constructions.json
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      OPENAI_AGENTS_DISABLE_TRACING: "1"
+      OPENAI_AGENTS_DONT_LOG_MODEL_DATA: "1"
+      OPENAI_AGENTS_DONT_LOG_TOOL_DATA: "1"
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      OPENROUTER_API_KEY: ""
+      MISTRAL_API_KEY: ""
+      PERPLEXITY_API_KEY: ""
+      TAVILY_API_KEY: ""
+      LINKUP_API_KEY: ""
+      EXA_API_KEY: ""
+      DAYTONA_API_KEY: ""
+    command: ["python", "-m", "test.integration.baseline.provider_tripwire"]
+
+  webui-test:
+    environment:
+      DIM0_BASELINE_PROVIDER_TRIPWIRE: "1"
