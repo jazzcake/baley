@@ -14,7 +14,11 @@ function New-EvidenceFixture([string]$Name) {
     $directory = Join-Path $TestRoot $Name
     New-Item -ItemType Directory -Path $directory | Out-Null
     [IO.File]::WriteAllText((Join-Path $directory 'run-provenance.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText((Join-Path $directory 'baseline.env'), "OPENAI_API_KEY=`n", [Text.UTF8Encoding]::new($false))
+    $baselineEnvironment = @(
+        'DOPPLER_TOKEN=', 'OPENAI_API_KEY=', 'ANTHROPIC_API_KEY=',
+        'API_ORIGIN=http://localhost:18082', 'DIM0_BASELINE_PROVIDER_TRIPWIRE=1'
+    )
+    [IO.File]::WriteAllText((Join-Path $directory 'baseline.env'), (($baselineEnvironment -join [Environment]::NewLine) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     $counters = '{"llm":0,"embedding":0,"search":0,"fetch":0,"ocr":0,"image":0,"daytona":0}'
     [IO.File]::WriteAllText((Join-Path $directory 'provider-invocations.json'), $counters, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $directory 'provider-constructions.json'), $counters, [Text.UTF8Encoding]::new($false))
@@ -32,6 +36,9 @@ function Assert-FinalizeFails([string]$Directory, [string]$ExpectedMessage) {
     }
     Assert-True $failed "Expected finalization to fail: $ExpectedMessage"
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $Directory 'finalized.json'))) 'Failed finalization wrote a finalized marker.'
+    foreach ($generated in @('finalization-policy.json', 'integrity-metadata.json', 'secret-screening.json', 'manifest.sha256')) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $Directory $generated))) "Failed finalization left retry-blocking artifact: $generated"
+    }
 }
 
 try {
@@ -49,7 +56,21 @@ try {
     $marker = Get-Content -Raw -LiteralPath (Join-Path $valid 'finalized.json') | ConvertFrom-Json
     $actualManifestHash = (Get-FileHash -LiteralPath (Join-Path $valid 'manifest.sha256') -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-True ($marker.manifestSha256 -eq $actualManifestHash) 'Finalized marker does not bind the manifest hash.'
+    $manifestEntries = @($manifest -split '\r?\n' | Where-Object { $_ })
+    Assert-True ($marker.fileCount -eq $manifestEntries.Count) 'Finalized marker file count does not match the manifest.'
+    foreach ($entry in $manifestEntries) {
+        Assert-True ($entry -match '^([0-9a-f]{64})  (.+)$') "Malformed manifest entry: $entry"
+        $actualFileHash = (Get-FileHash -LiteralPath (Join-Path $valid $Matches[2]) -Algorithm SHA256).Hash.ToLowerInvariant()
+        Assert-True ($Matches[1] -eq $actualFileHash) "Manifest hash mismatch for $($Matches[2])."
+    }
     Assert-True ($marker.filesystemImmutable -eq $false) 'Finalization incorrectly claims filesystem immutability.'
+
+    $correctedRetry = New-EvidenceFixture 'corrected-retry'
+    [IO.File]::WriteAllText((Join-Path $correctedRetry 'baseline.env'), "OPENAI_API_KEY=definitely-not-a-real-credential`n", [Text.UTF8Encoding]::new($false))
+    Assert-FinalizeFails $correctedRetry 'credential-field'
+    [IO.File]::WriteAllText((Join-Path $correctedRetry 'baseline.env'), "OPENAI_API_KEY=`n", [Text.UTF8Encoding]::new($false))
+    & $Helper -Action Finalize -EvidenceRoot $TestRoot -RunDirectory $correctedRetry | Out-Null
+    Assert-True (Test-Path -LiteralPath (Join-Path $correctedRetry 'finalized.json')) 'Corrected finalization retry did not succeed.'
 
     $unsupported = New-EvidenceFixture 'unsupported'
     [IO.File]::WriteAllBytes((Join-Path $unsupported 'screen.png'), [byte[]](1, 2, 3))

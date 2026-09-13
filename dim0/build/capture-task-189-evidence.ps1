@@ -240,7 +240,7 @@ function Assert-NoCredentials([string]$Directory) {
     $checks = @(
         @{ category = 'bearer-credential'; pattern = '(?i)\bbearer\s+[a-z0-9._~+/=-]{12,}' },
         @{ category = 'provider-key'; pattern = '(?i)\bsk-(?:proj-|or-v1-)?[a-z0-9_-]{12,}' },
-        @{ category = 'credential-field'; pattern = '(?i)["'']?[a-z0-9_]*(?:api[_-]?key|token|password|secret)[a-z0-9_]*["'']?\s*[:=]\s*["'']?(?!\s|["'']?$|null\b)[^\s,"'']+' },
+        @{ category = 'credential-field'; pattern = '(?i)["'']?[a-z0-9_]*(?:api[_-]?key|token|password|secret)[a-z0-9_]*["'']?[^\S\r\n]*[:=][^\S\r\n]*["'']?(?![^\S\r\n]*(?:\r?\n|$|["''][^\S\r\n]*(?:\r?\n|$)|null\b))[^\s,"'']+' },
         @{ category = 'url-userinfo'; pattern = '(?i)\bhttps?://[^\s/@:]+:[^\s/@]+@' },
         @{ category = 'url-sensitive-query'; pattern = '(?i)[?&](?:api[_-]?key|token|access[_-]?token|auth|password|secret|session(?:[_-]?id)?)=[^&\s"''<>]+' },
         @{ category = 'authorization-or-cookie'; pattern = '(?i)(?:authorization|proxy-authorization|cookie|set-cookie)\s*["'']?\s*[:=]\s*["'']?(?!\s|["'']?$|null\b|\[\s*\]|\{\s*\})[^\r\n,"'']+' },
@@ -329,40 +329,52 @@ switch ($Action) {
     'Finalize' {
         $directory = Resolve-RunDirectory
         Assert-TripwireFiles $directory
-        foreach ($generated in @('finalization-policy.json', 'integrity-metadata.json', 'secret-screening.json', 'manifest.sha256')) {
+        $generatedArtifacts = @(
+            'finalization-policy.json', 'integrity-metadata.json', 'secret-screening.json',
+            'manifest.sha256', 'finalized.json'
+        )
+        foreach ($generated in $generatedArtifacts) {
             if (Test-Path -LiteralPath (Join-Path $directory $generated)) {
                 throw "Refusing pre-existing finalization artifact: $generated"
             }
         }
         Assert-SafeArtifacts $directory | Out-Null
-        Write-NewUtf8 (Join-Path $directory 'finalization-policy.json') ((@{
-            schemaVersion = 1; enforcement = 'capture-helper'
-            helperRefusesWritesAfterMarker = $true; filesystemImmutable = $false
-            finalizedMarker = 'finalized.json'; safeArtifactAllowlist = $SafeArtifactAllowlist
-            unsupportedArtifacts = 'reject'; credentialDetection = 'reject'
-        } | ConvertTo-Json -Depth 5) + "`n")
-        Write-NewUtf8 (Join-Path $directory 'integrity-metadata.json') ((@{
-            schemaVersion = 1; algorithm = 'SHA-256'; manifest = 'manifest.sha256'
-            manifestIncludes = 'all allowlisted evidence files, finalization policy, integrity metadata, and screening result'
-            manifestExcludes = @('manifest.sha256', 'finalized.json')
-            finalizedMarkerBindsManifestHash = $true
-        } | ConvertTo-Json -Depth 5) + "`n")
-        Assert-SafeArtifacts $directory | Out-Null
-        Assert-NoCredentials $directory
-        $manifest = Join-Path $directory 'manifest.sha256'
-        $entries = Get-ChildItem -LiteralPath $directory -File |
-            Where-Object Name -notin @('manifest.sha256', 'finalized.json') |
-            Sort-Object Name |
-            Get-FileHash -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" }
-        Write-NewUtf8 $manifest (($entries -join [Environment]::NewLine) + [Environment]::NewLine)
-        $manifestHash = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
-        Write-NewUtf8 (Join-Path $directory 'finalized.json') ((@{
-            finalizedAt = [DateTimeOffset]::Now.ToString('o'); manifest = 'manifest.sha256'
-            manifestSha256 = $manifestHash; fileCount = @($entries).Count
-            finalizationPolicy = 'finalization-policy.json'; integrityMetadata = 'integrity-metadata.json'
-            overwritePolicy = 'helper-refuses-finalized-run'; filesystemImmutable = $false
-        } | ConvertTo-Json) + "`n")
+        try {
+            Write-NewUtf8 (Join-Path $directory 'finalization-policy.json') ((@{
+                schemaVersion = 1; enforcement = 'capture-helper'
+                helperRefusesWritesAfterMarker = $true; filesystemImmutable = $false
+                finalizedMarker = 'finalized.json'; safeArtifactAllowlist = $SafeArtifactAllowlist
+                unsupportedArtifacts = 'reject'; credentialDetection = 'reject'
+            } | ConvertTo-Json -Depth 5) + "`n")
+            Write-NewUtf8 (Join-Path $directory 'integrity-metadata.json') ((@{
+                schemaVersion = 1; algorithm = 'SHA-256'; manifest = 'manifest.sha256'
+                manifestIncludes = 'all allowlisted evidence files, finalization policy, integrity metadata, and screening result'
+                manifestExcludes = @('manifest.sha256', 'finalized.json')
+                finalizedMarkerBindsManifestHash = $true
+            } | ConvertTo-Json -Depth 5) + "`n")
+            Assert-SafeArtifacts $directory | Out-Null
+            Assert-NoCredentials $directory
+            $manifest = Join-Path $directory 'manifest.sha256'
+            $entries = Get-ChildItem -LiteralPath $directory -File |
+                Where-Object Name -notin @('manifest.sha256', 'finalized.json') |
+                Sort-Object Name |
+                Get-FileHash -Algorithm SHA256 |
+                ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" }
+            Write-NewUtf8 $manifest (($entries -join [Environment]::NewLine) + [Environment]::NewLine)
+            $manifestHash = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-NewUtf8 (Join-Path $directory 'finalized.json') ((@{
+                finalizedAt = [DateTimeOffset]::Now.ToString('o'); manifest = 'manifest.sha256'
+                manifestSha256 = $manifestHash; fileCount = @($entries).Count
+                finalizationPolicy = 'finalization-policy.json'; integrityMetadata = 'integrity-metadata.json'
+                overwritePolicy = 'helper-refuses-finalized-run'; filesystemImmutable = $false
+            } | ConvertTo-Json) + "`n")
+        }
+        catch {
+            foreach ($generated in $generatedArtifacts) {
+                Remove-Item -LiteralPath (Join-Path $directory $generated) -Force -ErrorAction SilentlyContinue
+            }
+            throw
+        }
         Write-Output "Finalized helper-sealed evidence run: $directory"
         break
     }
