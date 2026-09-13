@@ -21,13 +21,15 @@ BALEY_OIDC_POST_LOGIN_URL=https://<configured-viewer-host>/workspaces
 Register the redirect URL exactly as shown. The API refuses a post-login URL
 whose origin is not one of `BALEY_VIEWER_ORIGINS`.
 
-For the local Pilot Compose deployment, create the ignored file
-`.tmp/local-pilot/secrets/google_oidc_client_secret` (one secret, newline
-allowed) and start the API with:
+For the Windows local Pilot Compose deployment, set `BALEY_SECRET_ROOT` to the
+stable host directory `C:\ProgramData\Baley\secrets` (the default) and create
+`google_oidc_client_secret` there (one secret, newline allowed). Persistent
+secrets must not be stored in a repository, worktree, or `.tmp` directory.
+Start the API with:
 
 ```text
 BALEY_GOOGLE_OIDC_CLIENT_ID=<Google OAuth web client ID>
-BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE=/legacy-secrets/google_oidc_client_secret
+BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE=/run/secrets/baley_google_oidc_client_secret
 BALEY_GOOGLE_OIDC_REDIRECT_URL=https://jazzcake-home.tail87e929.ts.net/api/v1/auth/oidc/google/callback
 BALEY_OIDC_POST_LOGIN_URL=https://jazzcake-home.tail87e929.ts.net/workspaces
 ```

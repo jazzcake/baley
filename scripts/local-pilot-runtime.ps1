@@ -12,7 +12,11 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $runtimeRoot = Join-Path $repoRoot ".tmp\local-pilot"
 $binRoot = Join-Path $runtimeRoot "bin"
 $logRoot = Join-Path $runtimeRoot "logs"
-$secretRoot = Join-Path $runtimeRoot "secrets"
+$secretRoot = if ([string]::IsNullOrWhiteSpace($env:BALEY_SECRET_ROOT)) {
+  "C:\ProgramData\Baley\secrets"
+} else {
+  $env:BALEY_SECRET_ROOT
+}
 $statePath = Join-Path $runtimeRoot "runtime.json"
 $serverBinary = Join-Path $binRoot "baley-server.exe"
 $leaseSecretPath = Join-Path $secretRoot "lease_token_secret"

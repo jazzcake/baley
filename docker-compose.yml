@@ -31,7 +31,7 @@ services:
       # Keep every optional provider input operator-supplied so a deployment
       # without the ignored secret mount starts with OIDC disabled as a unit.
       BALEY_GOOGLE_OIDC_CLIENT_ID: ${BALEY_GOOGLE_OIDC_CLIENT_ID:-}
-      BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE: ${BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE:-}
+      BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE: ${BALEY_GOOGLE_OIDC_CLIENT_SECRET_FILE:-/run/secrets/baley_google_oidc_client_secret}
       BALEY_GOOGLE_OIDC_REDIRECT_URL: ${BALEY_GOOGLE_OIDC_REDIRECT_URL:-}
       BALEY_OIDC_POST_LOGIN_URL: ${BALEY_OIDC_POST_LOGIN_URL:-}
     ports:
@@ -41,9 +41,8 @@ services:
       - local-dev
     volumes:
       - baley-server-state:/var/lib/baley
-      # Preserves the existing local-Pilot lease signing secret on first
-      # container startup. The API copies it into its named volume once.
-      - ./.tmp/local-pilot/secrets:/legacy-secrets:ro
+    secrets:
+      - baley_google_oidc_client_secret
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/readyz >/dev/null"]
       interval: 5s
@@ -74,6 +73,9 @@ services:
 volumes:
   baley-server-state:
 
+secrets:
+  baley_google_oidc_client_secret:
+    file: ${BALEY_SECRET_ROOT:-C:/ProgramData/Baley/secrets}/google_oidc_client_secret
 networks:
   local-dev:
     external: true
