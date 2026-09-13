@@ -117,16 +117,58 @@ Expected results: PostgreSQL reports accepting connections for database/user `to
 Run the live-storage test against the named Compose services. It must apply the PostgreSQL schema twice, create a Qdrant collection through the existing `GraphStore -> ContentStore` path, and use the deterministic fake embedder.
 
 ```powershell
-$env:POSTGRES_HOST = 'localhost'
-$env:POSTGRES_PORT = '15434'
-$env:QDRANT_HOST = 'localhost'
-$env:QDRANT_PORT = '16335'
-$env:REDIS_HOST = 'localhost'
-$env:REDIS_PORT = '16381'
-$env:DIM0_BASELINE_PROVIDER_TRIPWIRE = '1'
-$env:DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION = '512'
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '40-storage-contract' -CommandText 'uv run pytest -q test/integration/baseline/test_provider_free_baseline.py' -WorkingDirectory dim0/backend
+$StageDContainer = "docker run --rm --network dim0-task189_default --env-file `"$BaselineEnv`" --mount `"type=bind,source=$EvidenceRoot,target=/baseline-evidence`" -e POSTGRES_HOST=postgres-test -e POSTGRES_PORT=5432 -e QDRANT_HOST=qdrant-test -e QDRANT_PORT=6333 -e REDIS_HOST=redis-test -e REDIS_PORT=6379 -e DIM0_BASELINE_PROVIDER_TRIPWIRE=1 -e DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION=512 -e DIM0_BASELINE_TRIPWIRE_OUTPUT=/baseline-evidence/provider-invocations.json -e DIM0_BASELINE_CONSTRUCTION_OUTPUT=/baseline-evidence/provider-constructions.json -e LITELLM_LOCAL_MODEL_COST_MAP=True dim0-task189-backend-test:latest"
+$StageDTest = "$StageDContainer sh -lc 'uv run pytest -q test/integration/baseline/test_provider_free_baseline.py 2>&1'"
+try {
+    & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '40-storage-contract' -CommandText $StageDTest
+}
+catch {
+    $StageDFailure = $_
+    $StageDLog = Join-Path $EvidenceRoot '40-storage-contract.txt'
+    $ProtocolRecurrence =
+        (Select-String -LiteralPath $StageDLog -SimpleMatch 'protocol.pyx' -Quiet) -and
+        (Select-String -LiteralPath $StageDLog -SimpleMatch "'NoneType' object has no attribute 'decode'" -Quiet)
+    if ($ProtocolRecurrence) {
+        $StageDRuntime = "$StageDContainer sh -lc 'python -VV; python -c `"import asyncpg,asyncpg.protocol.protocol as p,hashlib,pathlib; q=pathlib.Path(p.__file__); print(`"asyncpg=`"+asyncpg.__version__); print(`"protocol_extension=`"+q.name); print(`"protocol_sha256=`"+hashlib.sha256(q.read_bytes()).hexdigest()); print(`"dsn=postgresql://topix@postgres-test:5432/topix`")`"'"
+        $StageDDiagnostics = @(
+            @{ Name = '41-storage-runtime-on-recurrence'; Command = $StageDRuntime },
+            @{ Name = '42-postgres-runtime-on-recurrence'; Command = "docker exec dim0-task189-postgres sh -lc 'psql -U topix -d topix -At -v ON_ERROR_STOP=1 -c `"SELECT version(); SHOW server_encoding; SHOW client_encoding;`" 2>&1'" },
+            @{ Name = '43-postgres-transport-on-recurrence'; Command = 'docker logs --tail 200 dim0-task189-postgres' }
+        )
+        foreach ($Diagnostic in $StageDDiagnostics) {
+            try {
+                & $Harness -Action Run -RunDirectory $EvidenceRoot -Name $Diagnostic.Name -CommandText $Diagnostic.Command
+            }
+            catch {
+                Write-Warning "Bounded Stage D diagnostic failed: $($Diagnostic.Name)"
+            }
+        }
+    }
+    throw $StageDFailure
+}
 ```
+
+`docker run` uses the exact `dim0-task189-backend-test:latest` image already
+built in Stage B and joins the Compose project's isolated
+`dim0-task189_default` network. It mounts the unique evidence directory, loads
+the generated non-secret `baseline.env`, and repeats the overlay's
+provider-tripwire settings and output paths. The
+explicit service-name endpoints preserve the container DSN
+`postgresql://topix@postgres-test:5432/topix` and prevent host environment
+variables from redirecting the test to published loopback ports. The command
+requires the three Stage C services to remain the only persistence services;
+`--rm` removes only the one-off Stage D container. The container shell merges
+pytest's stderr into its stdout so PowerShell records the complete bounded
+stream instead of treating native status output as a terminating error. The
+shell still returns pytest's exit code unchanged.
+
+The catch inspects the bounded test log and runs diagnostics only if the known
+asyncpg `protocol.pyx` missing-status decode signature recurs. Those non-secret
+diagnostics record the locked Python/asyncpg protocol extension identity and
+hash, the sanitized DSN shape, PostgreSQL runtime and encoding, and the final
+200 PostgreSQL log lines. The catch then rethrows the original failure,
+preserving the first-failure stop and non-zero result; it must not be used to
+continue to Stage E.
 
 The test records:
 
