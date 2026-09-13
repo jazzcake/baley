@@ -20,6 +20,7 @@ tmp/
 .env.*
 !.env.sample
 !.env.signing.sample
+!.env.codex.example
 **/.DS_Store
 apicache-py3/
 throttle.ctrl

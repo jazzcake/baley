@@ -39,6 +39,10 @@ RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 # the COPY above; this just fetches node_modules from the lockfile.
 RUN cd /app/scripts/mini-app-compiler && npm ci --omit=dev
 
+# Pin app-server because the protocol is versioned with the Codex CLI.
+ARG CODEX_VERSION=0.154.0
+RUN npm install --global "@openai/codex@${CODEX_VERSION}" && mkdir -p /var/empty/dim0-codex
+
 # expose typical ports (compose will map the actual one via env)
 EXPOSE 8000 8080 8081 8888 80
 

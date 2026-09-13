@@ -11,6 +11,8 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from topix.ai_runtime import CodexAppServerRuntime
+
 from topix.api.router import (
     ai,
     billing,
@@ -82,6 +84,7 @@ def create_app(stage: StageEnum):
         app.subscription_store = SubscriptionStore()
         await app.subscription_store.open()
         app.parser_pipeline = ParsingPipeline()
+        app.codex_runtime = CodexAppServerRuntime()
 
         # Initialize Redis
         app.redis_store = RedisStore.from_config()
@@ -117,6 +120,7 @@ def create_app(stage: StageEnum):
         await app.collab_oplog.close()
         # Close Redis
         await app.redis_store.close()
+        await app.codex_runtime.close()
         await app.pg_pool.close()
 
     # Expose interactive docs and the OpenAPI schema only in local/dev. In

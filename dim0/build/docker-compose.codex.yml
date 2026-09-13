@@ -1,0 +1,20 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+      args:
+        CODEX_VERSION: ${CODEX_VERSION:-0.154.0}
+    image: dim0-codex-backend:local
+    environment:
+      DIM0_AI_RUNTIME: codex
+      DIM0_CODEX_MODEL: ${DIM0_CODEX_MODEL:-}
+      DIM0_CODEX_WORKSPACE: /var/empty/dim0-codex
+      CODEX_HOME: /var/lib/dim0-codex
+    volumes:
+      - ${DIM0_CODEX_HOME:?Set DIM0_CODEX_HOME outside the repository}:/var/lib/dim0-codex
+  webui:
+    build:
+      context: ..
+      dockerfile: webui/Dockerfile
+    image: dim0-codex-webui:local

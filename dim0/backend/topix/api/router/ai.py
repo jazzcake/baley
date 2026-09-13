@@ -25,6 +25,8 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 
+from topix.ai_runtime.codex import CodexAppServerError
+
 from topix.agents.assistant.auto_model import classify_auto_model_complexity
 from topix.agents.assistant.code import execute_code
 from topix.agents.websearch.tools import (
@@ -249,8 +251,18 @@ async def ai_llm(
     body: AiLlmRequest,
     user_id: Annotated[str, Depends(get_current_user_uid)],
     _meter: Annotated[None, Depends(meter_run_managed)],
+    x_run_id: Annotated[str | None, Header()] = None,
 ):
     """Forward one model turn with our keys. Returns `{choices:[{message}]}`."""
+    if os.getenv("DIM0_AI_RUNTIME", "provider") == "codex":
+        try:
+            message = await request.app.codex_runtime.complete(
+                body.messages, body.tools, x_run_id, body.reasoning_effort
+            )
+        except CodexAppServerError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        return {"choices": [{"message": message}]}
+
     entitlement = await resolve_entitlement_context(request, user_id)
     allowed_tiers = resolve_allowed_model_tiers(entitlement.plan)
     model_code = await _resolve_managed_model(body.model, body.messages, allowed_tiers)
@@ -311,6 +323,7 @@ async def ai_llm_stream(
     body: AiLlmRequest,
     user_id: Annotated[str, Depends(get_current_user_uid)],
     _meter: Annotated[None, Depends(meter_run_managed)],
+    x_run_id: Annotated[str | None, Header()] = None,
 ):
     """Stream one model turn as NDJSON lines.
 
@@ -319,6 +332,17 @@ async def ai_llm_stream(
     is known (before its args finish), then `{type:"final",message}`. Tier/model
     resolution (and any 403/503) runs before streaming, so errors are plain HTTP.
     """
+    if os.getenv("DIM0_AI_RUNTIME", "provider") == "codex":
+        async def generate_codex():
+            """Translate Codex events to the existing NDJSON wire format."""
+            try:
+                async for event in request.app.codex_runtime.stream(body.messages, body.tools, x_run_id, body.reasoning_effort):
+                    yield json.dumps(event) + "\n"
+            except CodexAppServerError as exc:
+                yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
+
+        return StreamingResponse(generate_codex(), media_type="application/x-ndjson")
+
     entitlement = await resolve_entitlement_context(request, user_id)
     allowed_tiers = resolve_allowed_model_tiers(entitlement.plan)
     model_code = await _resolve_managed_model(body.model, body.messages, allowed_tiers)
