@@ -14,6 +14,8 @@ Establish a reproducible provider-free baseline for the existing Dim0 Docker sta
 
 Task #189 produces evidence only. Runtime, Compose, application, and test-harness code belongs to the later WP0 implementation commit. The operator must stop if a required provider tripwire cannot be installed: absence of an observed call is not proof that no call was possible.
 
+The remaining H5 item is the next fresh Stage A-F execution of this corrected harness. It is not an implementation defect and cannot be closed by reusing historical evidence.
+
 Hard constraints:
 
 - Do not submit an agent prompt or call a real LLM, embedding, search, fetch, OCR, image, or Daytona endpoint.
@@ -29,7 +31,7 @@ WP0 must provide these test-only assets before the acceptance run:
 
 - `backend/test/integration/baseline/test_provider_free_baseline.py`: exercises FastAPI lifespan plus board/note/link storage with live PostgreSQL, Qdrant, and Redis and a deterministic 512-dimensional fake embedder.
 - `backend/test/integration/baseline/provider_tripwire.py`: replaces LLM, embedding, search, fetch, OCR, image, and Daytona network clients; it records construction and invocation separately and fails on any outbound invocation.
-- `webui/src/features/agent/engine/__tests__/provider-free-baseline.test.ts`: asserts that page loading and basic non-agent canvas interactions construct no BYOK/provider LLM client instances.
+- `webui/src/features/agent/engine/__tests__/provider-free-baseline.test.tsx`: mounts the real `HarnessCanvas` application boundary and asserts that page loading plus a basic non-agent viewport interaction construct no BYOK/provider LLM client instances.
 - `build/docker-compose.baseline.yml`: a test-only overlay that adds provider-tripwire configuration without adding a provider service or weakening the upstream PostgreSQL/Qdrant/Redis topology.
 
 The tripwire output schema is fixed:
@@ -81,9 +83,11 @@ Run repository checks before starting services:
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '12-lint-ui' -CommandText 'make lint-ui' -WorkingDirectory dim0
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '13-test-ui' -CommandText 'make test-ui' -WorkingDirectory dim0
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '14-webui-build' -CommandText 'npm --prefix webui run build' -WorkingDirectory dim0
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '15-provider-tripwire-self-test' -CommandText 'uv run pytest -q test/integration/baseline/test_provider_tripwire.py' -WorkingDirectory dim0/backend
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '16-evidence-finalization-self-test' -CommandText 'powershell -NoProfile -File build/capture-task-189-evidence.tests.ps1' -WorkingDirectory dim0
 ```
 
-Expected result: each exit file contains `0`; backend unit tests, frontend type/lint/tests, and the production Web UI build complete without a provider invocation. A dependency-install network fetch is environment setup, not a provider call, but it must be recorded separately from the acceptance run.
+Expected result: each exit file contains `0`; backend unit tests, the positive provider-tripwire self-test, evidence finalization self-tests, frontend type/lint/tests, and the production Web UI build pass. The focused tripwire self-test must prove that supported provider boundaries increment their counters and fail before outbound I/O; it does not make a real provider call. A dependency-install network fetch is environment setup, not a provider call, but it must be recorded separately from the acceptance run.
 
 ## 5. Stage B — Compose expansion and images
 
@@ -148,7 +152,7 @@ The test records:
 
 Expected results: backend and Web UI return HTTP 2xx; after container restart, the seeded board, note, link, Qdrant payload/vector, and Redis-backed sequence contract remain readable. The persistence assertion must identify the records created before restart rather than creating replacements.
 
-For the UI observation, load the existing board without opening the agent or external-tool controls. Capture one screenshot and a browser console/network export. The network export must contain no provider host and the frontend provider-construction assertion must remain zero.
+The recorded Stage A frontend test mounts the real `HarnessCanvas`, observes its canvas host, and uses its viewport control without opening agent or external-tool controls. For the Stage E browser observation, load the existing board without opening those controls and export sanitized `browser-console.json` and `browser-network.har`; the network export must contain no provider host and both files must contain no authorization, cookie, session, or credential-bearing URL data. Screenshots and other binary artifacts are deliberately unsupported because this helper cannot credential-screen their pixels.
 
 ## 9. Stage F — final evidence and cleanup
 
@@ -164,7 +168,7 @@ Before cleanup, record bounded logs, container/volume names, tripwire counters, 
 Remove-Item Env:POSTGRES_HOST,Env:POSTGRES_PORT,Env:QDRANT_HOST,Env:QDRANT_PORT,Env:REDIS_HOST,Env:REDIS_PORT,Env:DIM0_BASELINE_PROVIDER_TRIPWIRE,Env:DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION -ErrorAction SilentlyContinue
 ```
 
-`Finalize` secret-screens and redacts recognized credential patterns before hashing, writes `secret-screening.json`, and only then writes the relative-path SHA-256 manifest and finalization marker.
+`Finalize` accepts only the explicit safe artifact allowlist recorded in `finalization-policy.json`; unclassified files, subdirectories, and unsupported binary artifacts fail closed. It rejects recognized credentials, credential-bearing URLs, authorization/cookie headers, and non-empty session fields, writes `secret-screening.json`, and then hashes the allowlisted evidence plus `finalization-policy.json` and `integrity-metadata.json`. The final marker binds the manifest hash and makes later helper actions refuse the run; it explicitly does not claim filesystem immutability against direct external writers.
 
 `down` intentionally preserves named volumes for rerun and investigation. Volume deletion is a separate explicit cleanup decision scoped to project `dim0-task189`.
 

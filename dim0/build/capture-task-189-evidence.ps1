@@ -18,6 +18,13 @@ $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $Dim0Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ExpectedProject = 'dim0-task189'
 $CounterKeys = @('llm', 'embedding', 'search', 'fetch', 'ocr', 'image', 'daytona')
+$SafeArtifactAllowlist = @(
+    'run-provenance.json', 'baseline.env', 'commands.jsonl',
+    '05-compose-ownership-preflight.json', 'provider-invocations.json',
+    'provider-constructions.json', 'browser-console.json', 'browser-network.har',
+    'finalization-policy.json', 'integrity-metadata.json', 'secret-screening.json',
+    'NN-lowercase-kebab-case.txt', 'NN-lowercase-kebab-case.exit.txt'
+)
 
 function Resolve-ExternalRoot([string]$Path) {
     $resolved = [IO.Path]::GetFullPath($Path)
@@ -169,7 +176,9 @@ function Assert-TripwireFiles([string]$Directory) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing exported tripwire file: $file" }
         $value = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
         $properties = @($value.PSObject.Properties)
-        if (@($properties.Name | Sort-Object) -join ',' -ne @($CounterKeys | Sort-Object) -join ',') {
+        $actualKeys = @($properties.Name | Sort-Object) -join ','
+        $expectedKeys = @($CounterKeys | Sort-Object) -join ','
+        if ($actualKeys -ne $expectedKeys) {
             throw "Unexpected tripwire schema in $file"
         }
         if (@($properties.Value | Where-Object { $_ -ne 0 }).Count) {
@@ -178,36 +187,79 @@ function Assert-TripwireFiles([string]$Directory) {
     }
 }
 
-function Protect-Secrets([string]$Directory) {
-    $patterns = @(
-        '(?i)(bearer\s+)[a-z0-9._~+/=-]{12,}',
-        '(?i)(sk-(?:proj-|or-v1-)?)[a-z0-9_-]{12,}',
-        '(?i)(["'']?[a-z0-9_]*(?:api[_-]?key|token|password|secret)[a-z0-9_]*["'']?\s*[:=]\s*["'']?)(?!\s|["'']?$)[^\s,"'']+'
+function Get-SafeArtifactKind([string]$FileName) {
+    $structured = @(
+        'run-provenance.json', '05-compose-ownership-preflight.json',
+        'provider-invocations.json', 'provider-constructions.json',
+        'browser-console.json', 'browser-network.har', 'finalization-policy.json',
+        'integrity-metadata.json', 'secret-screening.json'
     )
-    $extensions = @('.txt', '.json', '.jsonl', '.yml', '.yaml', '.env', '.har', '.log', '.md')
-    $redactions = @()
+    if ($FileName -in $structured) { return 'structured-text' }
+    if ($FileName -eq 'commands.jsonl') { return 'json-lines' }
+    if ($FileName -eq 'baseline.env') { return 'plain-text' }
+    if ($FileName -match '^\d{2}-[a-z0-9][a-z0-9-]*(?:\.exit)?\.txt$') { return 'plain-text' }
+    return $null
+}
+
+function Read-StrictUtf8([string]$Path) {
+    $encoding = [Text.UTF8Encoding]::new($false, $true)
+    return $encoding.GetString([IO.File]::ReadAllBytes($Path))
+}
+
+function Assert-SafeArtifacts([string]$Directory) {
+    $directories = @(Get-ChildItem -LiteralPath $Directory -Directory)
+    if ($directories.Count) {
+        throw 'Evidence finalization accepts top-level allowlisted files only; subdirectories are unsupported.'
+    }
+    $inventory = @()
     foreach ($file in Get-ChildItem -LiteralPath $Directory -File) {
-        if ($file.Extension.ToLowerInvariant() -notin $extensions) { continue }
-        $content = Get-Content -Raw -LiteralPath $file.FullName
-        $count = 0
-        foreach ($pattern in $patterns) {
-            $content = [regex]::Replace($content, $pattern, {
-                param($match)
-                $script:matchCount++
-                if ($match.Groups.Count -gt 1) { return $match.Groups[1].Value + '<redacted>' }
-                return '<redacted>'
-            })
-            $count += $script:matchCount
-            $script:matchCount = 0
+        $kind = Get-SafeArtifactKind $file.Name
+        if (-not $kind) {
+            throw "Unclassified or unsupported evidence artifact: $($file.Name)"
         }
-        if ($count) {
-            [IO.File]::WriteAllText($file.FullName, $content, [Text.UTF8Encoding]::new($false))
-            $redactions += @{ file = $file.Name; replacements = $count }
+        try {
+            $content = Read-StrictUtf8 $file.FullName
+            if ($kind -eq 'structured-text') {
+                $content | ConvertFrom-Json | Out-Null
+            }
+            elseif ($kind -eq 'json-lines') {
+                foreach ($line in @($content -split '\r?\n' | Where-Object { $_.Trim() })) {
+                    $line | ConvertFrom-Json | Out-Null
+                }
+            }
         }
+        catch {
+            throw "Unsupported encoding or malformed structured evidence artifact: $($file.Name)"
+        }
+        $inventory += @{ name = $file.Name; kind = $kind }
+    }
+    return $inventory
+}
+
+function Assert-NoCredentials([string]$Directory) {
+    $checks = @(
+        @{ category = 'bearer-credential'; pattern = '(?i)\bbearer\s+[a-z0-9._~+/=-]{12,}' },
+        @{ category = 'provider-key'; pattern = '(?i)\bsk-(?:proj-|or-v1-)?[a-z0-9_-]{12,}' },
+        @{ category = 'credential-field'; pattern = '(?i)["'']?[a-z0-9_]*(?:api[_-]?key|token|password|secret)[a-z0-9_]*["'']?\s*[:=]\s*["'']?(?!\s|["'']?$|null\b)[^\s,"'']+' },
+        @{ category = 'url-userinfo'; pattern = '(?i)\bhttps?://[^\s/@:]+:[^\s/@]+@' },
+        @{ category = 'url-sensitive-query'; pattern = '(?i)[?&](?:api[_-]?key|token|access[_-]?token|auth|password|secret|session(?:[_-]?id)?)=[^&\s"''<>]+' },
+        @{ category = 'authorization-or-cookie'; pattern = '(?i)(?:authorization|proxy-authorization|cookie|set-cookie)\s*["'']?\s*[:=]\s*["'']?(?!\s|["'']?$|null\b|\[\s*\]|\{\s*\})[^\r\n,"'']+' },
+        @{ category = 'session-field'; pattern = '(?i)["'']?(?:session|session[_-]?id|sessionid)["'']?\s*[:=]\s*["'']?(?!\s|["'']?$|null\b|\[\s*\]|\{\s*\})[^\s,"'']+' },
+        @{ category = 'har-sensitive-header'; pattern = '(?is)["'']name["'']\s*:\s*["''](?:authorization|proxy-authorization|cookie|set-cookie)["''].{0,200}?["'']value["'']\s*:\s*["''](?!["''])' }
+    )
+    $screened = @()
+    foreach ($file in Get-ChildItem -LiteralPath $Directory -File) {
+        $content = Read-StrictUtf8 $file.FullName
+        foreach ($check in $checks) {
+            if ($content -match $check.pattern) {
+                throw "Credential screening failed closed for $($file.Name): $($check.category)"
+            }
+        }
+        $screened += $file.Name
     }
     Write-NewUtf8 (Join-Path $Directory 'secret-screening.json') ((@{
-        screenedAt = [DateTimeOffset]::Now.ToString('o'); filesRedacted = $redactions
-        result = if ($redactions.Count) { 'redacted' } else { 'clear' }
+        schemaVersion = 1; screenedAt = [DateTimeOffset]::Now.ToString('o')
+        result = 'clear'; files = $screened; policy = 'reject-on-detection'
     } | ConvertTo-Json -Depth 5) + "`n")
 }
 
@@ -277,7 +329,26 @@ switch ($Action) {
     'Finalize' {
         $directory = Resolve-RunDirectory
         Assert-TripwireFiles $directory
-        Protect-Secrets $directory
+        foreach ($generated in @('finalization-policy.json', 'integrity-metadata.json', 'secret-screening.json', 'manifest.sha256')) {
+            if (Test-Path -LiteralPath (Join-Path $directory $generated)) {
+                throw "Refusing pre-existing finalization artifact: $generated"
+            }
+        }
+        Assert-SafeArtifacts $directory | Out-Null
+        Write-NewUtf8 (Join-Path $directory 'finalization-policy.json') ((@{
+            schemaVersion = 1; enforcement = 'capture-helper'
+            helperRefusesWritesAfterMarker = $true; filesystemImmutable = $false
+            finalizedMarker = 'finalized.json'; safeArtifactAllowlist = $SafeArtifactAllowlist
+            unsupportedArtifacts = 'reject'; credentialDetection = 'reject'
+        } | ConvertTo-Json -Depth 5) + "`n")
+        Write-NewUtf8 (Join-Path $directory 'integrity-metadata.json') ((@{
+            schemaVersion = 1; algorithm = 'SHA-256'; manifest = 'manifest.sha256'
+            manifestIncludes = 'all allowlisted evidence files, finalization policy, integrity metadata, and screening result'
+            manifestExcludes = @('manifest.sha256', 'finalized.json')
+            finalizedMarkerBindsManifestHash = $true
+        } | ConvertTo-Json -Depth 5) + "`n")
+        Assert-SafeArtifacts $directory | Out-Null
+        Assert-NoCredentials $directory
         $manifest = Join-Path $directory 'manifest.sha256'
         $entries = Get-ChildItem -LiteralPath $directory -File |
             Where-Object Name -notin @('manifest.sha256', 'finalized.json') |
@@ -285,11 +356,14 @@ switch ($Action) {
             Get-FileHash -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" }
         Write-NewUtf8 $manifest (($entries -join [Environment]::NewLine) + [Environment]::NewLine)
+        $manifestHash = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
         Write-NewUtf8 (Join-Path $directory 'finalized.json') ((@{
             finalizedAt = [DateTimeOffset]::Now.ToString('o'); manifest = 'manifest.sha256'
-            fileCount = @($entries).Count; overwritePolicy = 'helper-refuses-finalized-run'
+            manifestSha256 = $manifestHash; fileCount = @($entries).Count
+            finalizationPolicy = 'finalization-policy.json'; integrityMetadata = 'integrity-metadata.json'
+            overwritePolicy = 'helper-refuses-finalized-run'; filesystemImmutable = $false
         } | ConvertTo-Json) + "`n")
-        Write-Output "Finalized non-overwriteable evidence run: $directory"
+        Write-Output "Finalized helper-sealed evidence run: $directory"
         break
     }
 }

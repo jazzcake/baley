@@ -1,19 +1,22 @@
-import { act, useEffect } from "react"
+import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { asNodeId, type CanvasStore } from "@canvas-harness/core"
-import { freshStore, resetIdb } from "@/test/canvas"
-import { getLocalStores } from "@/features/local-stores"
+import { resetIdb } from "@/test/canvas"
+import { ThemeProvider } from "@/components/theme-provider"
 import { BoardsHome } from "@/features/board/screens/boards-home"
-import { BoardPersistence } from "@/features/board/persist/local/board-persistence"
-import { setBoardPersistenceRef } from "@/features/board/persist/local/board-persistence-ref"
-import { setBoardSyncRef } from "@/features/board/harness/sync/board-sync-ref"
-import { setCanvasStoreRef } from "@/features/board/harness/canvas-store-ref"
+import { HarnessCanvas } from "@/features/board/harness/canvas"
+import { getCanvasStoreRef } from "@/features/board/harness/canvas-store-ref"
 import { useBoardAppStore } from "@/features/board/harness/store/board-app-store"
-import { createBoardPageProvider } from "@/features/board/providers/board-page-provider"
-import { StoreMutator } from "../board-mutator"
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+Object.assign(globalThis, {
+  IS_REACT_ACT_ENVIRONMENT: true,
+  ResizeObserver: class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  },
+})
 
 
 const mocks = vi.hoisted(() => ({
@@ -25,11 +28,16 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../byok-client", () => ({
   ByokLlmClient: { fromConfig: mocks.constructProviderClient },
 }))
-vi.mock("@tanstack/react-router", () => ({
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@tanstack/react-router")>(),
   useNavigate: () => mocks.navigate,
+  useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
+    select({ location: { pathname: "/local/task-189-board" } }),
+  useSearch: () => undefined,
 }))
 vi.mock("@/store", () => ({
-  useAppStore: (select: (state: { userId: string }) => unknown) => select({ userId: "root" }),
+  useAppStore: (select: (state: { userId: string; userEmail: string }) => unknown) =>
+    select({ userId: "root", userEmail: "root@localhost" }),
 }))
 vi.mock("@/features/agent/components/chat/welcome-message", () => ({ ThemedWelcome: () => null }))
 vi.mock("@/features/board/api/list-boards", () => ({
@@ -50,47 +58,6 @@ const waitFor = async (condition: () => boolean): Promise<void> => {
 }
 
 
-/** Mount the real local board persistence and page-provider lifecycle. */
-function ProviderLifecycleFixture({
-  store,
-  persistence,
-  onProviderReady,
-}: {
-  store: CanvasStore
-  persistence: BoardPersistence
-  onProviderReady: () => void
-}) {
-  useEffect(() => {
-    const detach = persistence.attach(store)
-    setBoardPersistenceRef(persistence)
-    setCanvasStoreRef(store)
-    setBoardSyncRef(null)
-    useBoardAppStore.setState({ boardId: "task-189-board", rootId: null })
-    const provider = createBoardPageProvider({ boardId: "task-189-board" })
-    void provider.list().then(onProviderReady)
-    return () => {
-      detach()
-      persistence.close()
-      setBoardPersistenceRef(null)
-      setCanvasStoreRef(null)
-      setBoardSyncRef(null)
-      useBoardAppStore.setState({ boardId: null, rootId: null })
-    }
-  }, [onProviderReady, persistence, store])
-
-  const createCanvasNote = (): void => {
-    const mutator = new StoreMutator(store, null)
-    void mutator.createNote({
-      id: "task-189-note",
-      label: "Baseline",
-      content: "provider free",
-    })
-  }
-
-  return <button onClick={createCanvasNote}>Create baseline canvas note</button>
-}
-
-
 let container: HTMLDivElement
 let root: Root
 
@@ -107,7 +74,9 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  useBoardAppStore.getState().setBoardScope({})
   container.remove()
+  localStorage.clear()
   resetIdb()
 })
 
@@ -128,29 +97,32 @@ describe("provider-free baseline", () => {
     expect(mocks.constructProviderClient).not.toHaveBeenCalled()
   }, 15_000)
 
-  it("mounts the real board page provider lifecycle and performs a DOM-driven canvas write", async () => {
-    const { engine } = await getLocalStores()
-    const store = freshStore("task-189-live")
-    const persistence = new BoardPersistence("task-189-board", { engine })
-    const providerReady = vi.fn()
+  it("mounts the real canvas boundary and performs a non-agent viewport interaction", async () => {
+    localStorage.setItem("topix-ui-theme", JSON.stringify({ themeId: "noir", mode: "light" }))
+    useBoardAppStore.getState().setBoardScope({ boardId: "task-189-board" })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
     await act(async () => {
       root.render(
-        <ProviderLifecycleFixture
-          store={store}
-          persistence={persistence}
-          onProviderReady={providerReady}
-        />,
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider defaultMode="light">
+            <HarnessCanvas local />
+          </ThemeProvider>
+        </QueryClientProvider>,
       )
     })
-    await waitFor(() => providerReady.mock.calls.length === 1)
+    await waitFor(() => container.querySelector("[data-canvas-host]") !== null)
+    await waitFor(() => getCanvasStoreRef() !== null)
 
-    const button = container.querySelector("button")
-    expect(button).not.toBeNull()
-    await act(async () => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })) })
-    await waitFor(() => store.getNode(asNodeId("task-189-note")) !== undefined)
+    const store = getCanvasStoreRef()
+    expect(store).not.toBeNull()
+    act(() => store?.setCamera({ z: 0.5 }))
+    const resetZoom = container.querySelector<HTMLButtonElement>('[aria-label="Reset zoom to 100%"]')
+    expect(resetZoom).not.toBeNull()
+    await act(async () => { resetZoom?.click() })
 
-    expect(store.getNode(asNodeId("task-189-note"))?.content).toBe("provider free")
+    expect(store?.getCamera().z).toBe(1)
     expect(mocks.constructProviderClient).not.toHaveBeenCalled()
+    queryClient.clear()
   })
 })
