@@ -117,11 +117,13 @@ function Invoke-RecordedCommand {
     }
 }
 
+# Verify expected container ownership and reject host-port conflicts before Compose startup.
 function Assert-ComposeOwnership([string]$Directory) {
     $expectedContainers = @(
         'dim0-task189-postgres', 'dim0-task189-qdrant', 'dim0-task189-redis',
         'dim0-task189-backend', 'dim0-task189-webui'
     )
+    $ownedContainers = @()
     foreach ($container in $expectedContainers) {
         $id = docker ps -aq --filter "name=^/$container$"
         if ($LASTEXITCODE -ne 0) { throw 'docker ps failed during ownership preflight.' }
@@ -130,6 +132,7 @@ function Assert-ComposeOwnership([string]$Directory) {
             if ($LASTEXITCODE -ne 0 -or $owner -ne $ExpectedProject) {
                 throw "Container name '$container' is not owned by Compose project '$ExpectedProject'."
             }
+            $ownedContainers += $container
         }
     }
 
@@ -152,11 +155,12 @@ function Assert-ComposeOwnership([string]$Directory) {
         else { [int]$_.Value }
     })
     $ownedPorts = @()
-    foreach ($container in $expectedContainers) {
+    foreach ($container in $ownedContainers) {
         $published = docker port $container 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            $ownedPorts += @($published | ForEach-Object { if ($_ -match ':(\d+)$') { [int]$Matches[1] } })
+        if ($LASTEXITCODE -ne 0) {
+            throw "docker port failed during ownership preflight for '$container'."
         }
+        $ownedPorts += @($published | ForEach-Object { if ($_ -match ':(\d+)$') { [int]$Matches[1] } })
     }
     foreach ($port in $ports) {
         $listener = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
