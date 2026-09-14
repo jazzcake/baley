@@ -217,6 +217,15 @@ function Read-StrictUtf8([string]$Path) {
     return $encoding.GetString([IO.File]::ReadAllBytes($Path))
 }
 
+# Neutralize only exact uv package-add records for the literal tiktoken distribution.
+function Remove-SafeTiktokenPins([string]$Content) {
+    $safeLine = '(?m)^(?:(?:#\d+[ \t]+\d+(?:\.\d+)?[ \t]+)|[ \t]*)\+[ \t]+tiktoken==[0-9]+(?:\.[0-9]+)*[ \t]*(?=\r?$)'
+    return [regex]::Replace($Content, $safeLine, {
+        param($match)
+        return ' ' * $match.Length
+    })
+}
+
 function Assert-SafeArtifacts([string]$Directory) {
     $directories = @(Get-ChildItem -LiteralPath $Directory -Directory)
     if ($directories.Count) {
@@ -247,8 +256,10 @@ function Assert-SafeArtifacts([string]$Directory) {
     return $inventory
 }
 
+# Reject recognized credentials after applying the single line-scoped safe exception.
 function Assert-NoCredentials([string]$Directory) {
     $checks = @(
+        @{ category = 'credential-field'; pattern = '(?im)^(?:(?:#\d+[ \t]+\d+(?:\.\d+)?[ \t]+)|[ \t]*)\+[ \t]+[a-z0-9_.-]*tiktoken[a-z0-9_.-]*[ \t]*={1,3}[^\r\n]*(?=\r?$)' },
         @{ category = 'bearer-credential'; pattern = '(?i)\bbearer\s+[a-z0-9._~+/=-]{12,}' },
         @{ category = 'provider-key'; pattern = '(?i)\bsk-(?:proj-|or-v1-)?[a-z0-9_-]{12,}' },
         @{ category = 'credential-field'; pattern = '(?im)(?:^|[,{][^\S\r\n]*)["'']?[a-z0-9_]*(?:api[_-]?key|token|password|secret)["'']?[^\S\r\n]*[:=][^\S\r\n]*["'']?(?![^\S\r\n]*(?:\r?\n|$|["''][^\S\r\n]*(?:\r?\n|$)|null\b))[^\s,"'']+' },
@@ -263,8 +274,9 @@ function Assert-NoCredentials([string]$Directory) {
     $screened = @()
     foreach ($file in Get-ChildItem -LiteralPath $Directory -File) {
         $content = Read-StrictUtf8 $file.FullName
+        $screeningContent = Remove-SafeTiktokenPins $content
         foreach ($check in $checks) {
-            if ($content -match $check.pattern) {
+            if ($screeningContent -match $check.pattern) {
                 throw "Credential screening failed closed for $($file.Name): $($check.category)"
             }
         }

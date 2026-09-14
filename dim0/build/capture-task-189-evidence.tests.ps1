@@ -42,6 +42,17 @@ function Assert-FinalizeFails([string]$Directory, [string]$ExpectedMessage) {
     }
 }
 
+# Verify one evidence payload is rejected without ever printing its value.
+function Assert-CredentialPayloadFails([string]$Name, [string]$Content) {
+    $directory = New-EvidenceFixture $Name
+    [IO.File]::WriteAllText(
+        (Join-Path $directory '20-browser-check.txt'),
+        $Content,
+        [Text.UTF8Encoding]::new($false)
+    )
+    Assert-FinalizeFails $directory 'credential-field'
+}
+
 # Quote a filesystem path for direct invocation in recorded PowerShell command text.
 function Get-InvocationCommand([string]$Path) {
     return "& '$($Path.Replace("'", "''"))'"
@@ -120,6 +131,37 @@ try {
         Assert-True ($Matches[1] -eq $actualFileHash) "Manifest hash mismatch for $($Matches[2])."
     }
     Assert-True ($marker.filesystemImmutable -eq $false) 'Finalization incorrectly claims filesystem immutability.'
+
+    $safeTiktokenPin = New-EvidenceFixture 'safe-tiktoken-pin'
+    $safeTiktokenLog = "#29 21.24  + tiktoken==0.12.0`r`n  + tiktoken==1.2.3`t  `r`n"
+    [IO.File]::WriteAllText(
+        (Join-Path $safeTiktokenPin '20-browser-check.txt'),
+        $safeTiktokenLog,
+        [Text.UTF8Encoding]::new($false)
+    )
+    & $Helper -Action Finalize -EvidenceRoot $TestRoot -RunDirectory $safeTiktokenPin | Out-Null
+    Assert-True (Test-Path -LiteralPath (Join-Path $safeTiktokenPin 'finalized.json')) 'Exact Docker/uv tiktoken pins did not finalize.'
+
+    foreach ($adversarial in @(
+        @{ Name = 'api-key-assignment'; Content = 'API_KEY=redacted-nonempty-value' },
+        @{ Name = 'token-assignment'; Content = 'TOKEN=redacted-nonempty-value' },
+        @{ Name = 'password-assignment'; Content = 'PASSWORD=redacted-nonempty-value' },
+        @{ Name = 'secret-assignment'; Content = 'SECRET=redacted-nonempty-value' },
+        @{ Name = 'token-double-equals'; Content = 'TOKEN==1.2.3' },
+        @{ Name = 'uv-token-double-equals'; Content = '+ token==1.2.3' },
+        @{ Name = 'tiktoken-non-version'; Content = '+ tiktoken==not-a-version' },
+        @{ Name = 'tiktoken-trailing-credential'; Content = '+ tiktoken==0.12.0 TOKEN=redacted-nonempty-value' },
+        @{ Name = 'tiktoken-single-equals'; Content = '+ tiktoken=0.12.0' },
+        @{ Name = 'tiktoken-record-prefix'; Content = 'prefix + tiktoken==0.12.0' },
+        @{ Name = 'tiktoken-version-suffix'; Content = '+ tiktoken==0.12.0 suffix' },
+        @{ Name = 'tiktoken-name-prefix'; Content = '+ pre-tiktoken==0.12.0' },
+        @{ Name = 'tiktoken-name-suffix'; Content = '+ tiktoken-extra==0.12.0' },
+        @{ Name = 'tiktoken-case-lookalike'; Content = '+ TIKTOKEN==0.12.0' },
+        @{ Name = 'mixed-line-after'; Content = "+ tiktoken==0.12.0`r`nTOKEN=redacted-nonempty-value" },
+        @{ Name = 'mixed-line-before'; Content = "SECRET=redacted-nonempty-value`r`n+ tiktoken==0.12.0" }
+    )) {
+        Assert-CredentialPayloadFails $adversarial.Name $adversarial.Content
+    }
 
     $correctedRetry = New-EvidenceFixture 'corrected-retry'
     [IO.File]::WriteAllText((Join-Path $correctedRetry 'baseline.env'), "OPENAI_API_KEY=definitely-not-a-real-credential`n", [Text.UTF8Encoding]::new($false))
