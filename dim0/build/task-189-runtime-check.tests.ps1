@@ -51,6 +51,26 @@ try {
     $extra = Write-State 'extra-service' @($goodRows + @{ Service = 'provider-proxy'; State = 'running'; Health = '' })
     Assert-Throws { & $Check -Action AssertFinalServices -ComposeStatePath $extra | Out-Null } 'provider-proxy'
 
+    $planPath = Join-Path $PSScriptRoot '..\docs\plans\task-189-baseline-execution.md'
+    $plan = Get-Content -Raw -LiteralPath $planPath
+    $names = @([regex]::Matches($plan, "-Name '([^']+)'") | ForEach-Object { $_.Groups[1].Value })
+    $duplicates = @($names | Group-Object | Where-Object Count -gt 1)
+    if ($duplicates.Count) { throw "Execution plan contains duplicate evidence names: $($duplicates.Name -join ', ')" }
+    $orderedRestart = @(
+        '56-backend-stop-before-restart',
+        '57-persistence-restart',
+        '58-persistence-ready-after-restart',
+        '59-backend-start-after-persistence',
+        '60-backend-ready-after-restart',
+        '64-five-service-final-state'
+    )
+    $lastIndex = -1
+    foreach ($name in $orderedRestart) {
+        $index = $names.IndexOf($name)
+        if ($index -le $lastIndex) { throw "Execution plan restart ordering is invalid at $name" }
+        $lastIndex = $index
+    }
+
     Write-Output 'Task 189 runtime assertion self-tests passed.'
 }
 finally {

@@ -23,6 +23,7 @@ Hard constraints:
 - Never read, copy, print, or mount an existing developer `.env` or credential file.
 - Keep environment files, logs, database dumps, screenshots, and Docker state outside Git.
 - Use only the project name `dim0-task189`; never run Docker-wide prune or remove unrelated containers, networks, images, or volumes.
+- Never install or download a tool on the Windows host or change host `PATH`; Docker image builds and container-only locked dependency synchronization are the only setup steps allowed to use external package registries.
 - Record facts as observed. Do not repair product code during the baseline run.
 
 ## 2. Harness prerequisites
@@ -30,11 +31,13 @@ Hard constraints:
 WP0 must provide these test-only assets before the acceptance run:
 
 - `backend/test/integration/baseline/test_provider_free_baseline.py`: exercises FastAPI lifespan plus board/note/link storage with live PostgreSQL, Qdrant, and Redis and a deterministic 512-dimensional fake embedder.
-- `backend/test/integration/baseline/provider_tripwire.py`: replaces LLM, embedding, search, fetch, OCR, image, and Daytona network clients; it records construction and invocation separately and fails on any outbound invocation.
+- `backend/test/integration/baseline/provider_tripwire.py`: replaces LLM, embedding, search, fetch, OCR, image, and Daytona network clients, and replaces the test-profile Doppler loader with an empty local configuration; it records provider construction and invocation separately and fails on any outbound provider invocation.
 - `backend/test/integration/baseline/provider_free_pytest.py`: prevents the backend unit suite from consulting Doppler by returning an empty configuration before application modules are collected; it is used only in the network-isolated Stage A container.
 - `webui/src/features/agent/engine/__tests__/provider-free-baseline.test.tsx`: mounts the real `HarnessCanvas` application boundary and asserts that page loading plus a basic non-agent viewport interaction construct no BYOK/provider LLM client instances.
-- `build/docker-compose.baseline.yml`: a test-only overlay that adds provider-tripwire configuration without adding a provider service or weakening the upstream PostgreSQL/Qdrant/Redis topology.
-- `build/Dockerfile.task189-browser` and `webui/scripts/task189-browser-observation.mjs`: a disposable Docker-only Chromium observer that creates and opens a local board, records a non-agent canvas interaction, removes credential-bearing HAR fields, and fails on any provider host.
+- `build/docker-compose.baseline.yml`: a test-only overlay that adds provider-tripwire configuration and makes the Compose default network internal without adding a provider service or weakening the upstream PostgreSQL/Qdrant/Redis topology.
+- `build/task-189-runtime-check.ps1`: bounded PostgreSQL/Qdrant/Redis and backend/model readiness checks, exact five-service final-state assertion, and immutable persistence image identity capture.
+- `webui/scripts/task189-localize-dotlottie.mjs`: copies the installed dotLottie WASM into the disposable Web UI and rewrites its built asset URL so no jsDelivr request is attempted.
+- `build/Dockerfile.task189-browser` and `webui/scripts/task189-browser-observation.mjs`: a disposable Docker-only Chromium observer that creates and opens a local board, proves a rendered zoom transition, verifies backend ping/model responses, removes credential-bearing HAR fields, and fails on any request outside the two baseline origins.
 
 The tripwire output schema is fixed:
 
@@ -83,9 +86,11 @@ GNU Make or project package installation: the exact commands behind the Make
 targets run inside the locked backend and Web UI images. The first two commands
 build those images from the current checkout, then install the backend's locked
 development dependencies into a run-unique, project-labelled Docker volume.
-That dependency fetch is recorded separately and is the only Stage A command
-with container network access. Every acceptance check runs with Docker network
-mode `none`, blank provider credentials, and the provider tripwire enabled.
+Image builds and the locked dependency synchronization may access container
+package registries and are recorded as setup. Every acceptance test runs with
+Docker network mode `none`; live application/storage/browser checks run only on
+the internal Compose network, with blank provider credentials and the provider
+tripwire enabled.
 
 ```powershell
 $StageAVenv = "dim0-task189_stage_a_$((Split-Path $EvidenceRoot -Leaf) -replace '[^a-zA-Z0-9_.-]', '-')"
@@ -102,9 +107,11 @@ $StageADeps = "docker volume create --label com.docker.compose.project=dim0-task
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '14-webui-build' -CommandText "$WebUiStageA 'npm run build'"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '15-provider-tripwire-self-test' -CommandText "$BackendStageA 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_tripwire.py'"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '16-evidence-finalization-self-test' -CommandText 'powershell -NoProfile -File build/capture-task-189-evidence.tests.ps1' -WorkingDirectory dim0
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '17-runtime-assertion-self-test' -CommandText 'powershell -NoProfile -File build/task-189-runtime-check.tests.ps1' -WorkingDirectory dim0
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '18-browser-harness-self-test' -CommandText "$WebUiStageA 'node --test scripts/task189-localize-dotlottie.test.mjs scripts/task189-browser-observation.test.mjs'"
 ```
 
-Expected result: each exit file contains `0`; backend unit tests, the positive provider-tripwire self-test, evidence finalization self-tests, frontend type/lint/tests, and the production Web UI build pass. The focused tripwire self-test must prove that supported provider boundaries increment their counters and fail before outbound I/O; it does not make a real provider call. A dependency-install network fetch is environment setup, not a provider call, but it must be recorded separately from the acceptance run.
+Expected result: each exit file contains `0`; backend unit tests, the positive provider-tripwire self-test, evidence/runtime/browser harness self-tests, frontend type/lint/tests, and the production Web UI build pass. The focused tripwire self-test must prove that supported provider boundaries increment their counters and fail before outbound I/O; it does not make a real provider call. Image-build and dependency-install network access is environment setup, not a provider call, and remains separate from the egress-contained mandatory checks.
 
 The Stage A pytest bootstrap replaces only the imported Doppler configuration
 loader with a deterministic empty configuration before test collection. Docker
@@ -131,15 +138,16 @@ Expected services are exactly `postgres-test`, `qdrant-test`, `redis-test`, `bac
 
 ```powershell
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '30-persistence-up' -CommandText "$Compose up -d postgres-test qdrant-test redis-test"
-$PersistenceReady = "`$deadline=(Get-Date).AddMinutes(3); `$ready=`$false; do { docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file `"$BaselineEnv`" --profile test exec -T postgres-test pg_isready -U topix -d topix; `$pg=`$LASTEXITCODE; docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file `"$BaselineEnv`" --profile test exec -T redis-test redis-cli ping; `$redis=`$LASTEXITCODE; `$qdrant=`$false; try { `$null=Invoke-RestMethod http://localhost:16335/readyz; `$qdrant=`$true } catch {}; if (`$pg -eq 0 -and `$redis -eq 0 -and `$qdrant) { `$ready=`$true; break }; Start-Sleep -Seconds 2 } while ((Get-Date) -lt `$deadline); if (-not `$ready) { throw 'Persistence readiness deadline exceeded.' }; Write-Output 'PostgreSQL, Qdrant, and Redis are ready.'"
+$PersistenceReady = "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action WaitPersistence -BaselineEnv `"$BaselineEnv`""
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '31-persistence-ready-wait' -CommandText $PersistenceReady
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '32-persistence-ps' -CommandText "$Compose ps"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '33-postgres-health' -CommandText "$Compose exec -T postgres-test pg_isready -U topix -d topix"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '34-qdrant-health' -CommandText 'Invoke-RestMethod http://localhost:16335/readyz | ConvertTo-Json -Compress'
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '35-redis-health' -CommandText "$Compose exec -T redis-test redis-cli ping"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '36-persistence-image-identities' -CommandText "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action RecordPersistenceImages -BaselineEnv `"$BaselineEnv`""
 ```
 
-Expected results: PostgreSQL reports accepting connections for database/user `topix`; Qdrant `/readyz` succeeds; Redis prints `PONG`; all three containers are running and PostgreSQL/Redis are healthy. Capture `docker compose ... logs --no-color --tail 200` if any check fails.
+Expected results: PostgreSQL reports accepting connections for database/user `topix`; Qdrant `/readyz` succeeds; Redis prints `PONG`; all three containers are running and PostgreSQL/Redis are healthy. The identity artifact must record the exact running PostgreSQL, Qdrant, and Redis container image IDs (`sha256:...`) plus any available repo digests, rather than relying on mutable configured tags. Capture `docker compose ... logs --no-color --tail 200` if any check fails.
 
 ## 7. Stage D — provider-free backend and storage contract
 
@@ -179,7 +187,7 @@ catch {
 
 `docker run` uses the exact `dim0-task189-backend-test:latest` image already
 built in Stage B and joins the Compose project's isolated
-`dim0-task189_default` network. It mounts the unique evidence directory, loads
+internal `dim0-task189_default` network, which has no external route. It mounts the unique evidence directory, loads
 the generated non-secret `baseline.env`, reuses the locked development
 environment prepared in Stage A, and repeats the overlay's
 provider-tripwire settings and output paths. The
@@ -219,37 +227,45 @@ The test records:
 
 ```powershell
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '50-app-up' -CommandText "$Compose up -d backend-test webui-test"
-$AppReady = "`$deadline=(Get-Date).AddMinutes(3); `$ready=`$false; do { try { `$api=(Invoke-WebRequest http://localhost:18082/utils/ping -UseBasicParsing).StatusCode } catch { `$api=0 }; try { `$ui=(Invoke-WebRequest http://localhost:15175 -UseBasicParsing).StatusCode } catch { `$ui=0 }; if (`$api -ge 200 -and `$api -lt 300 -and `$ui -ge 200 -and `$ui -lt 300) { `$ready=`$true; break }; Start-Sleep -Seconds 2 } while ((Get-Date) -lt `$deadline); if (-not `$ready) { throw 'Application readiness deadline exceeded.' }; Write-Output `"backend=`$api webui=`$ui`""
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '51-app-ready-wait' -CommandText $AppReady
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '52-backend-ping' -CommandText 'Invoke-WebRequest http://localhost:18082/utils/ping -UseBasicParsing | Select-Object StatusCode'
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '53-webui-http' -CommandText 'Invoke-WebRequest http://localhost:15175 -UseBasicParsing | Select-Object StatusCode'
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '54-app-ps-before-restart' -CommandText "$Compose ps"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '55-restart' -CommandText "$Compose restart postgres-test qdrant-test redis-test backend-test"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '56-persistence-ready-after-restart' -CommandText $PersistenceReady
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '57-persistence-after-restart' -CommandText "$StageDContainer sh -lc 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart 2>&1'"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '58-browser-image-build' -CommandText 'docker build -f dim0/build/Dockerfile.task189-browser -t dim0-task189-browser-observer:latest dim0'
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '59-browser-observation' -CommandText "docker run --rm --label com.docker.compose.project=dim0-task189 --network container:dim0-task189-webui --mount `"type=bind,source=$EvidenceRoot,target=/baseline-evidence`" -e TASK189_WEBUI_URL=http://localhost -e TASK189_EVIDENCE_DIR=/baseline-evidence dim0-task189-browser-observer:latest"
+$BackendReady = "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action WaitBackend -BaselineEnv `"$BaselineEnv`""
+$WebUiReady = "`$deadline=(Get-Date).AddMinutes(3); do { try { `$ui=(Invoke-WebRequest http://localhost:15175 -UseBasicParsing).StatusCode } catch { `$ui=0 }; if (`$ui -ge 200 -and `$ui -lt 300) { Write-Output `"webui=`$ui`"; break }; Start-Sleep -Seconds 2 } while ((Get-Date) -lt `$deadline); if (`$ui -lt 200 -or `$ui -ge 300) { throw 'Web UI readiness deadline exceeded.' }"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '51-backend-ready-wait' -CommandText $BackendReady
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '52-webui-ready-wait' -CommandText $WebUiReady
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '53-backend-ping' -CommandText 'Invoke-WebRequest http://localhost:18082/utils/ping -UseBasicParsing | Select-Object StatusCode'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '54-webui-http' -CommandText 'Invoke-WebRequest http://localhost:15175 -UseBasicParsing | Select-Object StatusCode'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '55-app-ps-before-restart' -CommandText "$Compose ps"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '56-backend-stop-before-restart' -CommandText "$Compose stop backend-test"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '57-persistence-restart' -CommandText "$Compose restart postgres-test qdrant-test redis-test"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '58-persistence-ready-after-restart' -CommandText $PersistenceReady
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '59-backend-start-after-persistence' -CommandText "$Compose start backend-test"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '60-backend-ready-after-restart' -CommandText $BackendReady
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '61-persistence-after-restart' -CommandText "$StageDContainer sh -lc 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart 2>&1'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '62-browser-image-build' -CommandText 'docker build -f dim0/build/Dockerfile.task189-browser -t dim0-task189-browser-observer:latest dim0'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '63-browser-observation' -CommandText "docker run --rm --label com.docker.compose.project=dim0-task189 --network container:dim0-task189-webui --mount `"type=bind,source=$EvidenceRoot,target=/baseline-evidence`" -e TASK189_WEBUI_URL=http://localhost -e TASK189_BACKEND_URL=http://backend-test:8082 -e TASK189_EVIDENCE_DIR=/baseline-evidence dim0-task189-browser-observer:latest"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '64-five-service-final-state' -CommandText "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action AssertFinalServices -BaselineEnv `"$BaselineEnv`""
 ```
 
-Expected results: backend and Web UI return HTTP 2xx; after container restart, the seeded board, note, link, Qdrant payload/vector, and Redis-backed sequence contract remain readable. The persistence assertion must identify the records created before restart rather than creating replacements.
+Expected results: backend and Web UI return HTTP 2xx; after persistence restart, all three stores must become ready before backend is started, then a fresh `/utils/ping` and `/ai/models` result must succeed. The seeded board, note, link, Qdrant payload/vector, and Redis-backed sequence contract remain readable, and the final assertion requires exactly five Compose services with every service running and every reported health state healthy. The persistence assertion must identify the records created before restart rather than creating replacements.
 
-The bounded persistence readiness command is repeated after restart so the
-read-only assertion never races PostgreSQL recovery, Qdrant shard readiness,
-or Redis startup.
+Backend is explicitly stopped before the three persistence services restart.
+The bounded persistence readiness command is then repeated before either the
+backend starts or the read-only assertion runs, so neither can race PostgreSQL
+recovery, Qdrant shard readiness, or Redis startup. A successful restart or
+start command is never treated as service readiness.
 
-The recorded Stage A frontend test mounts the real `HarnessCanvas`, observes its canvas host, and uses its viewport control without opening agent or external-tool controls. For the Stage E browser observation, load the existing board without opening those controls and export sanitized `browser-console.json` and `browser-network.har`; the network export must contain no provider host and both files must contain no authorization, cookie, session, or credential-bearing URL data. Screenshots and other binary artifacts are deliberately unsupported because this helper cannot credential-screen their pixels.
+The recorded Stage A frontend test mounts the real `HarnessCanvas`, observes its canvas host, and uses its viewport control without opening agent or external-tool controls. The Stage E observer runs in the Web UI container's internal network namespace, uses the locally copied dotLottie WASM, requires a visible zoom value to change after a real wheel event, and performs browser-side `/utils/ping` and `/ai/models` requests against `backend-test`. The sanitized HAR must contain zero provider requests and zero requests outside the Web UI/backend origins; browser errors, failed backend probes, empty model catalogs, or unchanged canvas state fail the command. Both JSON files must contain no authorization, cookie, session, or credential-bearing URL data. Screenshots and other binary artifacts are deliberately unsupported because this helper cannot credential-screen their pixels.
 
 ## 9. Stage F — final evidence and cleanup
 
 Before cleanup, record bounded logs, container/volume names, tripwire counters, and worktree state:
 
 ```powershell
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '60-compose-logs' -CommandText "$Compose logs --no-color --tail 300"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '61-compose-ps-final' -CommandText "$Compose ps --all"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '62-git-status-after' -CommandText 'git status --short -- dim0'
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '63-compose-down' -CommandText "$Compose down --remove-orphans"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '64-stage-a-volume-cleanup' -CommandText "docker volume rm $StageAVenv"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '65-browser-image-cleanup' -CommandText 'docker image rm dim0-task189-browser-observer:latest'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '70-compose-logs' -CommandText "$Compose logs --no-color --tail 300"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '71-compose-ps-final' -CommandText "$Compose ps --all"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '72-git-status-after' -CommandText 'git status --short -- dim0'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '73-compose-down' -CommandText "$Compose down --remove-orphans"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '74-stage-a-volume-cleanup' -CommandText "docker volume rm $StageAVenv"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '75-browser-image-cleanup' -CommandText 'docker image rm dim0-task189-browser-observer:latest'
 & $Harness -Action ValidateTripwires -RunDirectory $EvidenceRoot
 & $Harness -Action Finalize -RunDirectory $EvidenceRoot
 Remove-Item Env:POSTGRES_HOST,Env:POSTGRES_PORT,Env:QDRANT_HOST,Env:QDRANT_PORT,Env:REDIS_HOST,Env:REDIS_PORT,Env:DIM0_BASELINE_PROVIDER_TRIPWIRE,Env:DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION -ErrorAction SilentlyContinue
@@ -281,14 +297,14 @@ Task #189's baseline is accepted only when all are true:
 
 1. The pinned Git SHA, dirty-state report, Docker versions, exact commands, exit codes, logs, and SHA-256 manifest are present outside the repository.
 2. Backend lint/unit tests and Web UI check/test/production build pass.
-3. Compose expansion names only the five expected test-profile services and images build locally.
+3. Compose expansion names only the five expected test-profile services, uses an internal default network, images build locally, and the running PostgreSQL/Qdrant/Redis image IDs or repo digests are recorded.
 4. PostgreSQL, Qdrant, and Redis health checks pass; schema application is idempotent.
-5. FastAPI lifespan and `/utils/ping` succeed; the Web UI returns HTTP 2xx.
+5. FastAPI lifespan and `/utils/ping` succeed; after persistence restart the stores are ready before backend starts, fresh backend ping/model requests succeed, the Web UI returns HTTP 2xx, and exactly five final services are healthy/running.
 6. Board, note, and link CRUD uses the canonical stores with a deterministic 512-dimensional fake embedder.
 7. PostgreSQL metadata, Qdrant content/vector payloads, and the Redis sequence contract remain valid after restart.
 8. Text mutation embeds; spatial/style-only mutation does not; fake embedding failure prevents the storage mutation without a zero-vector fallback.
-9. Provider construction is limited to explicitly asserted harmless construction tests, and every network invocation counter is zero.
-10. Browser network evidence contains no provider request and the agent/external-tool flows were not exercised.
+9. Provider construction is limited to explicitly asserted harmless construction tests, every provider invocation counter is zero, and mandatory application/browser validation has no external route.
+10. Browser evidence records a changed rendered canvas zoom, successful backend ping and non-empty model catalog, zero external requests, zero provider requests, and no exercised agent/external-tool flow.
 11. The final worktree report contains no baseline credential, log, screenshot, database, Qdrant, Redis, or generated environment artifact.
 
-The acceptance report lists each criterion as pass/fail with artifact paths. Optional real embedding and external-service checks are explicitly outside this baseline and cannot compensate for a failed mandatory criterion.
+The acceptance report lists each criterion as pass/fail with artifact paths. Its no-host-install statement is limited to the complete recorded command ledger and Git evidence; it does not claim a machine-wide forensic before/after inventory. Optional real embedding and external-service checks are explicitly outside this baseline and cannot compensate for a failed mandatory criterion.

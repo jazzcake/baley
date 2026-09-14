@@ -139,6 +139,12 @@ switch ($Action) {
             if ($LASTEXITCODE -ne 0 -or @($container).Count -ne 1) {
                 throw "Unable to inspect persistence container: $containerName"
             }
+            if ($container[0].Config.Labels.'com.docker.compose.project' -ne 'dim0-task189') {
+                throw "Persistence container is not owned by Compose project dim0-task189: $containerName"
+            }
+            if (-not $container[0].State.Running) {
+                throw "Persistence container is not running: $containerName"
+            }
             $imageId = [string]$container[0].Image
             if ($imageId -notmatch '^sha256:[0-9a-f]{64}$') {
                 throw "Persistence container has no immutable image ID: $containerName"
