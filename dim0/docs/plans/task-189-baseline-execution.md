@@ -69,13 +69,13 @@ $Compose = "docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f d
 & $Harness -Action Preflight -RunDirectory $EvidenceRoot
 ```
 
-`Initialize` creates `baseline.env` with non-secret settings only. It includes absolute forward-slash `BASELINE_ENV_FILE` and `BASELINE_RUN_DIR` values, allowing the `D:` repository to bind the `C:` evidence/environment roots through Compose long syntax.
+`Initialize` creates `baseline.env` with non-secret settings only. It includes absolute forward-slash `BASELINE_ENV_FILE` and `BASELINE_RUN_DIR` values, allowing the `D:` repository to bind the `C:` evidence/environment roots through Compose long syntax. It does not reserve host ports: all service endpoints use Compose DNS names on the one internal network.
 
 ```powershell
 Get-Content $BaselineEnv
 ```
 
-The overlay replaces the base `/.env` mount by container target and binds the evidence directory at `/baseline-evidence`, where the backend exports both counter files directly.
+The overlay replaces the base `/.env` mount by container target, resets the inherited `ports` value to an empty list on all five services, and binds the evidence directory at `/baseline-evidence`, where the backend exports both counter files directly. Task #189 proves container-internal acceptance only; it does not provide or claim host usability or ingress.
 
 For every command, use the helper's `Run` action with a unique `NN-lowercase-kebab-case` name. It records exact command text, working directory, timestamps, duration, exit code, and the bounded final 1,000 log lines in `commands.jsonl`, `NAME.txt`, and `NAME.exit.txt`; duplicate names are rejected rather than overwritten.
 
@@ -132,7 +132,7 @@ code or persisting browser state outside the disposable container.
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '22-image-build' -CommandText "$Compose build backend-test webui-test"
 ```
 
-Expected services are exactly `postgres-test`, `qdrant-test`, `redis-test`, `backend-test`, and `webui-test`. Expansion must show persistent PostgreSQL, Qdrant, and Redis volumes, no Codex profile, no real provider endpoint, and the external read-only `baseline.env` mount. Image build success is recorded independently from service startup.
+Expected services are exactly `postgres-test`, `qdrant-test`, `redis-test`, `backend-test`, and `webui-test`. Expansion must show persistent PostgreSQL, Qdrant, and Redis volumes, no `ports` publication on any service, only the `internal: true` default network, no Codex profile, no real provider endpoint, and the external read-only `baseline.env` mount. Image build success is recorded independently from service startup.
 
 ## 6. Stage C — persistence services
 
@@ -142,12 +142,13 @@ $PersistenceReady = "powershell -NoProfile -File dim0/build/task-189-runtime-che
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '31-persistence-ready-wait' -CommandText $PersistenceReady
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '32-persistence-ps' -CommandText "$Compose ps"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '33-postgres-health' -CommandText "$Compose exec -T postgres-test pg_isready -U topix -d topix"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '34-qdrant-health' -CommandText 'Invoke-RestMethod http://localhost:16335/readyz | ConvertTo-Json -Compress'
+$QdrantInternal = "$Compose exec -T qdrant-test bash -ec `"exec 3<>/dev/tcp/127.0.0.1/6333; printf 'GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3; grep -q 'all shards are ready' <&3`""
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '34-qdrant-health' -CommandText $QdrantInternal
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '35-redis-health' -CommandText "$Compose exec -T redis-test redis-cli ping"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '36-persistence-image-identities' -CommandText "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action RecordPersistenceImages -BaselineEnv `"$BaselineEnv`""
 ```
 
-Expected results: PostgreSQL reports accepting connections for database/user `topix`; Qdrant `/readyz` succeeds; Redis prints `PONG`; all three containers are running and PostgreSQL/Redis are healthy. The identity artifact must record the exact running PostgreSQL, Qdrant, and Redis container image IDs (`sha256:...`) plus any available repo digests, rather than relying on mutable configured tags. Capture `docker compose ... logs --no-color --tail 200` if any check fails.
+Expected results: PostgreSQL reports accepting connections for database/user `topix`; Qdrant's bounded in-container `/readyz` healthcheck and direct probe succeed; Redis prints `PONG`; all three containers are running and healthy. No check depends on host loopback publication. The identity artifact must record the exact running PostgreSQL, Qdrant, and Redis container image IDs (`sha256:...`) plus any available repo digests, rather than relying on mutable configured tags. Capture `docker compose ... logs --no-color --tail 200` if any check fails.
 
 ## 7. Stage D — provider-free backend and storage contract
 
@@ -193,7 +194,7 @@ environment prepared in Stage A, and repeats the overlay's
 provider-tripwire settings and output paths. The
 explicit service-name endpoints preserve the container DSN
 `postgresql://topix@postgres-test:5432/topix` and prevent host environment
-variables from redirecting the test to published loopback ports. The command
+variables from redirecting the test to host endpoints. The command
 requires the three Stage C services to remain the only persistence services;
 `--rm` removes only the one-off Stage D container. The container shell merges
 pytest's stderr into its stdout so PowerShell records the complete bounded
@@ -228,11 +229,11 @@ The test records:
 ```powershell
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '50-app-up' -CommandText "$Compose up -d backend-test webui-test"
 $BackendReady = "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action WaitBackend -BaselineEnv `"$BaselineEnv`""
-$WebUiReady = "`$deadline=(Get-Date).AddMinutes(3); do { try { `$ui=(Invoke-WebRequest http://localhost:15175 -UseBasicParsing).StatusCode } catch { `$ui=0 }; if (`$ui -ge 200 -and `$ui -lt 300) { Write-Output `"webui=`$ui`"; break }; Start-Sleep -Seconds 2 } while ((Get-Date) -lt `$deadline); if (`$ui -lt 200 -or `$ui -ge 300) { throw 'Web UI readiness deadline exceeded.' }"
+$WebUiReady = "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action WaitWebUi -BaselineEnv `"$BaselineEnv`""
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '51-backend-ready-wait' -CommandText $BackendReady
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '52-webui-ready-wait' -CommandText $WebUiReady
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '53-backend-ping' -CommandText 'Invoke-WebRequest http://localhost:18082/utils/ping -UseBasicParsing | Select-Object StatusCode'
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '54-webui-http' -CommandText 'Invoke-WebRequest http://localhost:15175 -UseBasicParsing | Select-Object StatusCode'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '53-backend-ping-models' -CommandText $BackendReady
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '54-webui-http' -CommandText $WebUiReady
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '55-app-ps-before-restart' -CommandText "$Compose ps"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '56-backend-stop-before-restart' -CommandText "$Compose stop backend-test"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '57-persistence-restart' -CommandText "$Compose restart postgres-test qdrant-test redis-test"
@@ -242,10 +243,11 @@ $WebUiReady = "`$deadline=(Get-Date).AddMinutes(3); do { try { `$ui=(Invoke-WebR
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '61-persistence-after-restart' -CommandText "$StageDContainer sh -lc 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart 2>&1'"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '62-browser-image-build' -CommandText 'docker build -f dim0/build/Dockerfile.task189-browser -t dim0-task189-browser-observer:latest dim0'
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '63-browser-observation' -CommandText "docker run --rm --label com.docker.compose.project=dim0-task189 --network container:dim0-task189-webui --mount `"type=bind,source=$EvidenceRoot,target=/baseline-evidence`" -e TASK189_WEBUI_URL=http://localhost -e TASK189_BACKEND_URL=http://backend-test:8082 -e TASK189_EVIDENCE_DIR=/baseline-evidence dim0-task189-browser-observer:latest"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '64-five-service-final-state' -CommandText "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action AssertFinalServices -BaselineEnv `"$BaselineEnv`""
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '64-runtime-isolation' -CommandText "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action AssertIsolation -BaselineEnv `"$BaselineEnv`""
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '65-five-service-final-state' -CommandText "powershell -NoProfile -File dim0/build/task-189-runtime-check.ps1 -Action AssertFinalServices -BaselineEnv `"$BaselineEnv`""
 ```
 
-Expected results: backend and Web UI return HTTP 2xx; after persistence restart, all three stores must become ready before backend is started, then a fresh `/utils/ping` and `/ai/models` result must succeed. The seeded board, note, link, Qdrant payload/vector, and Redis-backed sequence contract remain readable, and the final assertion requires exactly five Compose services with every service running and every reported health state healthy. The persistence assertion must identify the records created before restart rather than creating replacements.
+Expected results: probes executed from `backend-test` on the internal network receive HTTP 2xx from the backend service name and Web UI service name; after persistence restart, all three stores must become ready before backend is started, then a fresh internal `/utils/ping` and `/ai/models` result must succeed. The seeded board, note, link, Qdrant payload/vector, and Redis-backed sequence contract remain readable. The isolation assertion requires the sole Compose network to remain internal, every service to have empty configured/effective host bindings, and every service network namespace to lack a default route usable for egress. The final assertion requires exactly five long-running Compose services with every service running and every reported health state healthy; `docker run --rm` probes and the Chromium observer are disposable containers, never a sixth Compose service. The persistence assertion must identify the records created before restart rather than creating replacements.
 
 Backend is explicitly stopped before the three persistence services restart.
 The bounded persistence readiness command is then repeated before either the
@@ -282,7 +284,7 @@ On the first failed command:
 1. Record its non-zero exit code, timestamp, command, bounded stdout/stderr, `docker compose ... ps --all`, and service logs.
 2. Stop the acceptance sequence; do not continue and create misleading downstream failures.
 3. Classify the first failure:
-   - **environment**: Docker unavailable, port collision, disk/resource shortage, or missing local toolchain;
+   - **environment**: Docker unavailable, container/network ownership collision, disk/resource shortage, or missing local toolchain;
    - **upstream baseline**: reproducible failure in unmodified Dim0 behavior at the pinned baseline;
    - **harness**: fake/tripwire/fixture cannot represent the existing boundary or changes product behavior.
 4. If any provider invocation counter is non-zero, treat the run as invalid and failed even if the request itself failed before billing.

@@ -17,7 +17,7 @@ function New-EvidenceFixture([string]$Name) {
     [IO.File]::WriteAllText((Join-Path $directory 'run-provenance.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
     $baselineEnvironment = @(
         'DOPPLER_TOKEN=', 'OPENAI_API_KEY=', 'ANTHROPIC_API_KEY=',
-        'API_ORIGIN=http://localhost:18082', 'DIM0_BASELINE_PROVIDER_TRIPWIRE=1'
+        'API_ORIGIN=http://backend-test:8082', 'DIM0_BASELINE_PROVIDER_TRIPWIRE=1'
     )
     [IO.File]::WriteAllText((Join-Path $directory 'baseline.env'), (($baselineEnvironment -join [Environment]::NewLine) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     $counters = '{"llm":0,"embedding":0,"search":0,"fetch":0,"ocr":0,"image":0,"daytona":0}'

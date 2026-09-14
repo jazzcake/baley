@@ -633,3 +633,55 @@ network. After resolving that environment/runtime boundary without weakening
 network isolation, rerun the complete sequence from `Initialize` in another
 unique external directory; none of the blocked criteria above can be accepted
 from this partial run.
+
+---
+
+## Baseline network correction validation — 2026-09-15 05:12 KST
+
+Outcome: **the focused network/readiness correction passes; Task #189 remains
+not accepted because the required live canvas observation failed.**
+
+External evidence:
+`C:\ProgramData\Dim0\validation\task-189\run-20260915-051229-668-27d56918`
+
+This correction removes every inherited host publication from the five-service
+provider-free overlay. The expanded Compose model contains exactly
+`postgres-test`, `qdrant-test`, `redis-test`, `backend-test`, and `webui-test`,
+has no service `ports` entry, and retains only `dim0-task189_default` with
+`internal: true`. The overlay adds a bounded Qdrant `/readyz` healthcheck and
+requires all three persistence services to become healthy before the backend
+starts. It does not add ingress, dual-home a service, change Dim0
+product/provider behavior, or make a host-usability claim.
+
+The bounded live run recreated the exact five services without building or
+pulling application images. `31-persistence-ready.txt` records PostgreSQL and
+Redis exec readiness plus Qdrant internal `/readyz` and `healthy` state.
+`32-backend-internal-http.txt` records backend ping `204`, model catalog `200`,
+and 20 models using the `backend-test:8082` service endpoint from inside the
+network. `33-webui-internal-http.txt` records Web UI `200` and 4,014 response
+bytes through the `webui-test` service endpoint from inside the same network.
+
+`34-runtime-isolation.txt` inspects every live service and records exactly one
+network per container (`dim0-task189_default`), empty `HostConfig.PortBindings`,
+empty effective `NetworkSettings.Ports` mappings, and no default route in any
+container network namespace. `35-five-service-final-state.txt` records exactly
+five running Compose services, with PostgreSQL, Qdrant, and Redis healthy. The
+backend-exported provider construction and invocation files contain the seven
+expected keys and all values are zero.
+
+The required disposable Chromium observer was run with `--rm` in the Web UI
+network namespace; it did not become a sixth Compose service. It reached the
+real local board and visible canvas but `36-browser-observation.txt` records a
+30-second timeout waiting for the wheel interaction to change the visible zoom
+value at `task189-browser-observation.mjs:110`. Because the script failed before
+writing its sanitized HAR and browser result, this run makes no zero-browser-
+egress or canvas-interaction acceptance claim. `37-isolation-after-browser.txt`
+and `38-five-services-after-browser.txt` prove that the disposable observer was
+removed and the isolated exact-five topology remained intact.
+
+Manifest SHA-256: **not created**. The failed mandatory browser command keeps
+this focused validation non-finalized and prevents promotion to a complete
+Stage A-F acceptance result. The next Task #189 acceptance run must diagnose
+the canvas wheel divergence with the required event/state/DOM instrumentation,
+then rerun the complete documented sequence; the network correction itself no
+longer depends on host port publication.

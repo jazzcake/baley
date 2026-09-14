@@ -134,7 +134,7 @@ function Invoke-RecordedCommand {
     }
 }
 
-# Verify expected container ownership and reject host-port conflicts before Compose startup.
+# Verify expected container ownership before Compose startup. Task 189 publishes no host ports.
 function Assert-ComposeOwnership([string]$Directory) {
     $expectedContainers = @(
         'dim0-task189-postgres', 'dim0-task189-qdrant', 'dim0-task189-redis',
@@ -145,49 +145,27 @@ function Assert-ComposeOwnership([string]$Directory) {
         $id = docker ps -aq --filter "name=^/$container$"
         if ($LASTEXITCODE -ne 0) { throw 'docker ps failed during ownership preflight.' }
         if ($id) {
-            $owner = docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' $id
-            if ($LASTEXITCODE -ne 0 -or $owner -ne $ExpectedProject) {
+            $inspection = @(docker inspect $id | ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 0 -or $inspection.Count -ne 1 -or
+                $inspection[0].Config.Labels.'com.docker.compose.project' -ne $ExpectedProject) {
                 throw "Container name '$container' is not owned by Compose project '$ExpectedProject'."
             }
             $ownedContainers += $container
         }
     }
 
-    $portDefaults = @{
-        BASELINE_POSTGRES_PORT = 15434; BASELINE_QDRANT_PORT = 16335
-        BASELINE_REDIS_PORT = 16381; BASELINE_API_PORT = 18082
-        BASELINE_APP_PORT = 15175; BASELINE_MINI_APP_PORT = 15182
-    }
-    $configuredPorts = @{}
-    $baselineEnvPath = Join-Path $Directory 'baseline.env'
-    foreach ($line in Get-Content -LiteralPath $baselineEnvPath) {
-        if ($line -match '^(BASELINE_[A-Z_]+)=(\d+)$') {
-            $configuredPorts[$Matches[1]] = [int]$Matches[2]
-        }
-    }
-    $ports = @($portDefaults.GetEnumerator() | ForEach-Object {
-        $configured = [Environment]::GetEnvironmentVariable($_.Key)
-        if ($configured) { [int]$configured }
-        elseif ($configuredPorts.ContainsKey($_.Key)) { [int]$configuredPorts[$_.Key] }
-        else { [int]$_.Value }
-    })
-    $ownedPorts = @()
     foreach ($container in $ownedContainers) {
         $published = docker port $container 2>$null
         if ($LASTEXITCODE -ne 0) {
             throw "docker port failed during ownership preflight for '$container'."
         }
-        $ownedPorts += @($published | ForEach-Object { if ($_ -match ':(\d+)$') { [int]$Matches[1] } })
-    }
-    foreach ($port in $ports) {
-        $listener = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
-        if ($listener -and $port -notin $ownedPorts) {
-            throw "Host port $port is occupied by a process outside '$ExpectedProject'."
+        if (@($published).Count) {
+            throw "Task 189 container must not publish host ports: '$container'."
         }
     }
     Write-NewUtf8 (Join-Path $Directory '05-compose-ownership-preflight.json') ((@{
         checkedAt = [DateTimeOffset]::Now.ToString('o'); project = $ExpectedProject
-        containers = $expectedContainers; hostPorts = $ports; result = 'clear'
+        containers = $expectedContainers; expectedHostPorts = @(); result = 'clear'
     } | ConvertTo-Json -Depth 4) + "`n")
 }
 
@@ -306,13 +284,10 @@ switch ($Action) {
         $composeEnv = $envFile.Replace('\', '/')
         $nonSecretEnvironment = @(
             "BASELINE_RUN_DIR=$composeRun", "BASELINE_ENV_FILE=$composeEnv",
-            'BASELINE_POSTGRES_PORT=15434', 'BASELINE_QDRANT_PORT=16335',
-            'BASELINE_REDIS_PORT=16381', 'BASELINE_API_PORT=18082',
-            'BASELINE_APP_PORT=15175', 'BASELINE_MINI_APP_PORT=15182',
             'DOPPLER_TOKEN=', 'API_PORT=8082', 'APP_PORT=5175', 'MINI_APP_PORT=5182',
-            'API_ORIGIN=http://localhost:18082', 'VITE_API_URL=http://localhost:18082',
-            'VITE_HOST_ORIGIN=http://localhost:15175',
-            'VITE_MINI_APP_ORIGIN=http://localhost:15182',
+            'API_ORIGIN=http://backend-test:8082', 'VITE_API_URL=http://backend-test:8082',
+            'VITE_HOST_ORIGIN=http://webui-test',
+            'VITE_MINI_APP_ORIGIN=http://webui-test:5001',
             'EMAIL_VERIFICATION_ENABLED=false', 'PASSWORD_RESET_ENABLED=false',
             'GOOGLE_CONNECT_ENABLED=false', 'OPENAI_AGENTS_DISABLE_TRACING=1',
             'OPENAI_AGENTS_DONT_LOG_MODEL_DATA=1', 'OPENAI_AGENTS_DONT_LOG_TOOL_DATA=1',
@@ -333,7 +308,7 @@ switch ($Action) {
     'Preflight' {
         $directory = Resolve-RunDirectory
         Assert-ComposeOwnership $directory
-        Write-Output 'Compose ownership and port preflight passed.'
+        Write-Output 'Compose ownership and no-publication preflight passed.'
         break
     }
     'Run' {

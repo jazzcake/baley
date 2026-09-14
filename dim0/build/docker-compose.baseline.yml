@@ -3,21 +3,31 @@
 services:
   qdrant-test:
     container_name: dim0-task189-qdrant
-    ports: !override
-      - "127.0.0.1:${BASELINE_QDRANT_PORT:-16335}:6333"
+    ports: !reset []
+    healthcheck:
+      test: ["CMD", "bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/6333; printf 'GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3; grep -q 'all shards are ready' <&3"]
+      interval: 2s
+      timeout: 5s
+      retries: 90
+      start_period: 10s
 
   postgres-test:
     container_name: dim0-task189-postgres
-    ports: !override
-      - "127.0.0.1:${BASELINE_POSTGRES_PORT:-15434}:5432"
+    ports: !reset []
 
   redis-test:
     container_name: dim0-task189-redis
-    ports: !override
-      - "127.0.0.1:${BASELINE_REDIS_PORT:-16381}:6379"
+    ports: !reset []
 
   backend-test:
     container_name: dim0-task189-backend
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      qdrant-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
     volumes:
       # Long syntax accepts an absolute Windows path on another drive. Because
       # Compose merges service volumes by container target, this replaces the
@@ -49,8 +59,7 @@ services:
       EXA_API_KEY: ""
       DAYTONA_API_KEY: ""
     command: ["python", "-m", "test.integration.baseline.provider_tripwire"]
-    ports: !override
-      - "127.0.0.1:${BASELINE_API_PORT:-18082}:${API_PORT:-8082}"
+    ports: !reset []
 
   webui-test:
     container_name: dim0-task189-webui
@@ -63,13 +72,11 @@ services:
     # the disposable container copy before execution; product sources and the
     # host checkout remain untouched.
     command: ["/bin/sh", "-c", "node /app/scripts/task189-localize-dotlottie.mjs && sed -i 's/\\r$//' /docker-entrypoint.sh && exec /docker-entrypoint.sh"]
-    ports: !override
-      - "127.0.0.1:${BASELINE_APP_PORT:-15175}:80"
-      - "127.0.0.1:${BASELINE_MINI_APP_PORT:-15182}:5001"
+    ports: !reset []
 
 networks:
   default:
     # Mandatory provider-free application and browser checks can reach only
-    # the five baseline services. Published loopback ports remain available
-    # to the host-side readiness probes.
+    # the five baseline services. No baseline service publishes a host port;
+    # readiness and acceptance probes execute inside this network.
     internal: true

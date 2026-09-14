@@ -9,17 +9,9 @@ $ExpectedContainers = @(
     'dim0-task189-postgres', 'dim0-task189-qdrant', 'dim0-task189-redis',
     'dim0-task189-backend', 'dim0-task189-webui'
 )
-$ExpectedPorts = @(15434, 16335, 16381, 18082, 15175, 15182)
-$PortEnvironment = @{
-    BASELINE_POSTGRES_PORT = 15434; BASELINE_QDRANT_PORT = 16335
-    BASELINE_REDIS_PORT = 16381; BASELINE_API_PORT = 18082
-    BASELINE_APP_PORT = 15175; BASELINE_MINI_APP_PORT = 15182
-}
-$PreviousPortEnvironment = @{}
 $global:Dim0Task189PreflightMock = @{
     Containers = @{}
     PublishedPorts = @{}
-    OccupiedPorts = @()
     DockerFailure = $null
     DockerCalls = @()
 }
@@ -33,10 +25,9 @@ function Assert-True([bool]$Condition, [string]$Message) {
 function New-PreflightFixture([string]$Name) {
     $directory = Join-Path $TestRoot $Name
     New-Item -ItemType Directory -Path $directory | Out-Null
-    $baselineEnvironment = $PortEnvironment.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }
     [IO.File]::WriteAllText(
         (Join-Path $directory 'baseline.env'),
-        (($baselineEnvironment -join [Environment]::NewLine) + [Environment]::NewLine),
+        "API_ORIGIN=http://backend-test:8082`n",
         [Text.UTF8Encoding]::new($false)
     )
     return $directory
@@ -47,13 +38,11 @@ function Set-PreflightScenario {
     param(
         [hashtable]$Containers = @{},
         [hashtable]$PublishedPorts = @{},
-        [int[]]$OccupiedPorts = @(),
         [string]$DockerFailure
     )
 
     $global:Dim0Task189PreflightMock.Containers = $Containers
     $global:Dim0Task189PreflightMock.PublishedPorts = $PublishedPorts
-    $global:Dim0Task189PreflightMock.OccupiedPorts = $OccupiedPorts
     $global:Dim0Task189PreflightMock.DockerFailure = $DockerFailure
     $global:Dim0Task189PreflightMock.DockerCalls = @()
 }
@@ -92,7 +81,8 @@ function docker {
         }
         'inspect' {
             $id = $dockerArguments[-1]
-            return @($global:Dim0Task189PreflightMock.Containers.Values | Where-Object id -eq $id)[0].owner
+            $owner = @($global:Dim0Task189PreflightMock.Containers.Values | Where-Object id -eq $id)[0].owner
+            return @{ Config = @{ Labels = @{ 'com.docker.compose.project' = $owner } } } | ConvertTo-Json -Compress
         }
         'port' {
             $container = $dockerArguments[1]
@@ -104,25 +94,8 @@ function docker {
     }
 }
 
-# Emulate host listeners without consulting or changing the real machine state.
-function Get-NetTCPConnection {
-    param(
-        [string]$State,
-        [int]$LocalPort,
-        [System.Management.Automation.ActionPreference]$ErrorAction
-    )
-
-    if ($LocalPort -in $global:Dim0Task189PreflightMock.OccupiedPorts) {
-        return [pscustomobject]@{ State = $State; LocalPort = $LocalPort }
-    }
-}
-
 try {
     New-Item -ItemType Directory -Path $TestRoot | Out-Null
-    foreach ($entry in $PortEnvironment.GetEnumerator()) {
-        $PreviousPortEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key)
-        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value.ToString())
-    }
 
     $clean = New-PreflightFixture 'zero-containers'
     Set-PreflightScenario
@@ -135,16 +108,11 @@ try {
     for ($index = 0; $index -lt $ExpectedContainers.Count; $index++) {
         $ownedContainers[$ExpectedContainers[$index]] = @{ id = "owned-$index"; owner = 'dim0-task189' }
     }
-    $ownedPublishedPorts = @{
-        'dim0-task189-postgres' = '5432/tcp -> 0.0.0.0:15434'
-        'dim0-task189-qdrant' = '6333/tcp -> 0.0.0.0:16335'
-        'dim0-task189-redis' = '6379/tcp -> 0.0.0.0:16381'
-        'dim0-task189-backend' = '8082/tcp -> 0.0.0.0:18082'
-        'dim0-task189-webui' = @('5175/tcp -> 0.0.0.0:15175', '5182/tcp -> 0.0.0.0:15182')
-    }
-    Set-PreflightScenario -Containers $ownedContainers -PublishedPorts $ownedPublishedPorts -OccupiedPorts $ExpectedPorts
+    Set-PreflightScenario -Containers $ownedContainers
     & $Helper -Action Preflight -EvidenceRoot $TestRoot -RunDirectory $owned | Out-Null
     Assert-True (@($global:Dim0Task189PreflightMock.DockerCalls | Where-Object { $_[0] -eq 'port' }).Count -eq $ExpectedContainers.Count) 'Owned containers were not all queried for published ports.'
+    $ownedEvidence = Get-Content -Raw -LiteralPath (Join-Path $owned '05-compose-ownership-preflight.json') | ConvertFrom-Json
+    Assert-True (@($ownedEvidence.expectedHostPorts).Count -eq 0) 'Preflight still reserves host ports.'
 
     $foreign = New-PreflightFixture 'foreign-name-owner'
     Set-PreflightScenario -Containers @{
@@ -152,9 +120,11 @@ try {
     }
     Assert-PreflightFails $foreign "Container name 'dim0-task189-postgres' is not owned"
 
-    $collision = New-PreflightFixture 'foreign-port-collision'
-    Set-PreflightScenario -OccupiedPorts @(15434)
-    Assert-PreflightFails $collision "Host port 15434 is occupied by a process outside 'dim0-task189'."
+    $published = New-PreflightFixture 'owned-published-port'
+    Set-PreflightScenario -Containers $ownedContainers -PublishedPorts @{
+        'dim0-task189-backend' = '8082/tcp -> 127.0.0.1:18082'
+    }
+    Assert-PreflightFails $published "must not publish host ports: 'dim0-task189-backend'"
 
     $dockerFailure = New-PreflightFixture 'docker-command-failure'
     Set-PreflightScenario -DockerFailure 'ps'
@@ -166,12 +136,9 @@ try {
     } -DockerFailure 'port'
     Assert-PreflightFails $dockerPortFailure "docker port failed during ownership preflight for 'dim0-task189-postgres'."
 
-    Write-Output 'Task 189 ownership and port preflight regression tests passed.'
+    Write-Output 'Task 189 ownership and no-publication preflight regression tests passed.'
 }
 finally {
-    foreach ($entry in $PreviousPortEnvironment.GetEnumerator()) {
-        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value)
-    }
     $resolvedTestRoot = [IO.Path]::GetFullPath($TestRoot)
     if ($resolvedTestRoot.StartsWith($TempRoot, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $resolvedTestRoot)) {
         Remove-Item -LiteralPath $resolvedTestRoot -Recurse -Force
