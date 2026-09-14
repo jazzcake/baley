@@ -543,3 +543,93 @@ harness task. Then rerun the complete Initialize, Preflight, Stage A-F,
 tripwire-validation, and Finalize sequence in another unique external directory;
 none of the blocked criteria in this attempt may be promoted from the completed
 BuildKit records alone.
+
+---
+
+## Pinned-HEAD rerun attempt — 2026-09-15 04:21 KST
+
+Outcome: **not accepted; stopped at the first mandatory Stage C readiness
+failure**
+
+External evidence:
+`C:\ProgramData\Dim0\validation\task-189\run-20260915-042114-655-f08dc876`
+
+Evidence run ID: `run-20260915-042114-655-f08dc876`
+
+Pinned Baley HEAD: `0cfba13ebc871ec3b96f2452813adcaa12c2c421`
+
+Manifest SHA-256: **not created**; the storage contract did not run and the
+required provider counter files were therefore absent, so tripwire validation,
+secret screening, and finalization were correctly not invoked.
+
+`Initialize` and the corrected ownership/port `Preflight` passed. Stage A then
+passed the backend Ruff check, all 708 backend unit tests, Web UI type/lint
+checks, all 1,356 Web UI tests in 142 files, the production build, the positive
+provider-tripwire self-test, and all evidence/runtime/browser harness
+self-tests. Stage B expanded to exactly `postgres-test`, `qdrant-test`,
+`redis-test`, `backend-test`, and `webui-test` on the internal default network;
+both local application image builds passed.
+
+Stage C command `30-persistence-up` created and started the three persistence
+containers, but the next mandatory command, `31-persistence-ready-wait`,
+reached its 180-second deadline and exited `1`. The acceptance sequence stopped
+there: individual Stage C health and immutable-image commands, Stages D-F,
+tripwire validation, and `Finalize` were not run.
+
+Bounded failure diagnostics identify the first observable divergence between
+declared Compose state and Docker runtime state. `20-compose-config.txt`
+declares loopback publications for PostgreSQL `15434`, Qdrant `16335`, and
+Redis `16381`; `95-failure-port-bindings.txt` shows those requested
+`HostConfig.PortBindings` but empty runtime `NetworkSettings.Ports` arrays for
+all three containers. Consequently the readiness helper's host request to
+Qdrant at `http://localhost:16335/readyz` could not establish readiness even
+though `90-failure-compose-ps.txt` records all three containers running,
+PostgreSQL and Redis healthy, and `91-failure-compose-logs.txt` records Qdrant
+listening internally on port 6333 after recovering its retained collections.
+This is classified as an **environment/runtime integration failure** at the
+Docker port-publication boundary, not an application acceptance result.
+
+The diagnostic logs also show Qdrant's telemetry request was blocked by the
+internal network. No application or browser validation ran, no provider
+construction/invocation files were produced, and no zero-counter or zero-egress
+claim is inferred. The three running persistence containers, the project
+network, the retained project volumes, and the run-unique Stage A volume were
+preserved for investigation as required; prior evidence directories were not
+changed.
+
+### Attempt evidence index
+
+| Artifact | Result |
+| --- | --- |
+| `01`-`05` provenance/preflight | Exact pinned SHA, clean scoped `dim0` state, Docker/Compose versions, and clear ownership/ports recorded |
+| `08`-`18` Stage A | All image/dependency, lint, test, build, tripwire, and harness checks exited `0` |
+| `20`-`22` Stage B | Exact five-service/internal-network expansion and local application image builds exited `0` |
+| `30-persistence-up.txt` | Three persistence services created and started; exit `0` |
+| `31-persistence-ready-wait.txt` / `.exit.txt` | First mandatory failure: readiness deadline exceeded; exit `1` |
+| `90`-`95` failure diagnostics | Running service state, bounded logs, retained volumes, absent provider counter files, clean scoped worktree, and requested-versus-runtime port bindings recorded |
+| `commands.jsonl` | Exact commands, working directories, timestamps, durations, bounded output, and exit codes |
+
+### Attempt acceptance criteria
+
+| # | Criterion | Result | Authoritative evidence |
+| --- | --- | --- | --- |
+| 1 | Pinned SHA, dirty state, Docker versions, exact commands, exits, logs, secret-screened manifest | **Fail** | Provenance and command evidence exist, but fail-fast prevented counter export, secret screening, and finalization; no manifest exists. |
+| 2 | Backend lint/unit and Web UI check/test/build | **Pass** | `10`-`14`; Ruff, 708 backend tests, Web UI checks, 1,356 tests, and production build passed. |
+| 3 | Exact five-service topology, internal network, local app images, immutable persistence identities | **Fail** | `20`-`22` prove topology/build, but Stage C stopped before `36-persistence-image-identities`. |
+| 4 | Persistence health and idempotent schema | **Fail** | `31-persistence-ready-wait` timed out; schema application was not reached. |
+| 5 | Initial/post-restart API and UI success with exactly five healthy/running final services | **Blocked** | Stage E was not reached. |
+| 6 | Canonical board/note/link CRUD with deterministic 512-dimensional embeddings | **Blocked** | Stage D was not reached. |
+| 7 | PostgreSQL/Qdrant/Redis persistence across restart | **Blocked** | Seed contract and restart were not run. |
+| 8 | Text/spatial/failure vector semantics | **Blocked** | Stage D was not reached. |
+| 9 | All provider construction/invocation counters zero and no application/browser external requests | **Blocked** | Positive tripwire self-test passed, but application counter files and browser evidence were not produced. |
+| 10 | Real canvas interaction with successful backend requests | **Blocked** | Browser observation was not reached. |
+| 11 | No generated evidence in Git | **Pass** | `02-git-status-before.txt` and `94-failure-git-status.txt` are empty for `dim0`; external evidence stayed outside Git and root `debug.log` was not read or modified. |
+
+### Required disposition
+
+Investigate why Docker retained the requested `HostConfig.PortBindings` but
+created no runtime port publications for containers on the internal baseline
+network. After resolving that environment/runtime boundary without weakening
+network isolation, rerun the complete sequence from `Initialize` in another
+unique external directory; none of the blocked criteria above can be accepted
+from this partial run.
