@@ -2,7 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-const dotLottieCdnPattern = /https:\/\/cdn\.jsdelivr\.net\/npm\/@lottiefiles\/dotlottie-web@[^"'`\\\s]+\/dist\/dotlottie-player\.wasm/g
+const dotLottieCdnPattern = /https:\/\/cdn\.jsdelivr\.net\/npm\/[^"'`\\\s]+?\/dist\/dotlottie-player\.wasm/g
 
 function javascriptFiles(root) {
   if (!fs.existsSync(root)) return []
