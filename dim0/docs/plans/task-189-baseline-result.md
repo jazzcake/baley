@@ -406,3 +406,73 @@ images, added bounded readiness, made the fixed storage fixture rerunnable,
 added Docker-only canvas observation, waited for applications, waited for
 persistence after restart, removed credential-field false positives, and kept
 passing-test fake tokens out of credential-screened evidence.
+
+---
+
+## Authoritative rerun attempt — 2026-09-15 03:53 KST
+
+Outcome: **not accepted; stopped at the mandatory preflight before Stage A**
+
+This section records the fresh attempt at the completed review-fix commit. It
+does not supersede any prior accepted or rejected evidence or verdict, including
+the rejected `run-20260915-025900-783-70e2c872` bundle, because this attempt did
+not pass preflight or reach Stage A.
+
+External evidence:
+`C:\ProgramData\Dim0\validation\task-189\run-20260915-035316-225-4e8c9e53`
+
+Evidence run ID: `run-20260915-035316-225-4e8c9e53`
+
+Pinned Baley HEAD: `2558bb990e954b30eab6098ecde76c4277361874`
+
+Manifest SHA-256: **not created**; tripwire validation and finalization were
+correctly not run after preflight failed.
+
+The mandatory `Preflight` action failed in the clean expected state before any
+Stage A-F command or service startup. `Assert-ComposeOwnership` probes each of
+the five expected container names with `docker port`; because none exists,
+Docker writes `No such container: dim0-task189-postgres` to stderr. The helper
+sets `$ErrorActionPreference = 'Stop'`, so that expected absent-container probe
+becomes a terminating error at
+`capture-task-189-evidence.ps1:156` before
+`05-compose-ownership-preflight.json` can be written.
+
+`06-preflight-reproduction.txt` and its exit file capture the same failure with
+exit `1`. Failure diagnostics then recorded empty Task #189 Compose/container
+state, the retained project-labelled volumes from historical attempts, and an
+empty scoped `dim0` worktree report. No application, browser, or provider code
+ran; no provider construction/invocation counter files were produced; and no
+external request or asynchronous service-state assertion occurred. Therefore
+zero provider counters, five-service health, storage persistence, and browser
+network behavior are not claimed.
+
+Two earlier initialization-only directories,
+`run-20260915-035233-657-88f1323a` and
+`run-20260915-035300-424-45522625`, were preserved unchanged while confirming
+that the failure was independent of the invoking PowerShell host. Neither is
+an authoritative acceptance run and neither reached Stage A.
+
+### Attempt acceptance criteria
+
+| # | Criterion | Result | Authoritative evidence |
+| --- | --- | --- | --- |
+| 1 | Pinned SHA, dirty state, Docker versions, exact commands, exits, logs, manifest | **Fail** | `run-provenance.json`, `01`-`04`, `commands.jsonl`, and `06-preflight-reproduction.exit.txt` record provenance and the first failure; no manifest exists because finalization was not reached. |
+| 2 | Backend lint/unit and Web UI check/test/build | **Blocked** | Stage A did not start after preflight exit `1`. |
+| 3 | Exact five-service Compose expansion, internal network, local images, immutable persistence image identities | **Blocked** | Preflight failed before Compose expansion or image build; `90-failure-compose-ps.txt` shows no running project services. |
+| 4 | Persistence health and idempotent schema | **Blocked** | No persistence service was started. |
+| 5 | FastAPI lifespan, initial and post-restart HTTP success, Web UI 2xx, exactly five healthy/running final services | **Blocked** | No application service was started and no asynchronous state was inferred. |
+| 6 | Canonical board/note/link CRUD with deterministic 512-dimensional embedding | **Blocked** | Stage D did not run. |
+| 7 | PostgreSQL/Qdrant/Redis contract survives restart | **Blocked** | No restart or persistence assertion ran. |
+| 8 | Text/spatial/failure vector semantics | **Blocked** | Stage D did not run. |
+| 9 | Bounded construction, zero provider invocations, no application/browser egress | **Blocked** | Provider counter files were not created; no zero-counter claim is made. |
+| 10 | Real canvas interaction, successful backend requests, zero external/provider requests | **Blocked** | Browser observation did not run. |
+| 11 | No generated acceptance artifact in the scoped worktree | **Pass** | `94-failure-git-status.txt` is empty; external evidence remains outside Git and the pre-existing root `debug.log` was neither read nor modified. |
+
+### Required disposition
+
+Correct the preflight so absence of each expected Task #189 container is treated
+as the normal clear state without allowing genuine Docker failures to pass.
+Then rerun the complete Stage A-F sequence in another unique external directory;
+acceptance still requires every criterion above, exported all-zero construction
+and invocation counters, zero external browser requests, and a finalized
+secret-screened manifest.
