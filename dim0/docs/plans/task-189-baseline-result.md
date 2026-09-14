@@ -685,3 +685,74 @@ Stage A-F acceptance result. The next Task #189 acceptance run must diagnose
 the canvas wheel divergence with the required event/state/DOM instrumentation,
 then rerun the complete documented sequence; the network correction itself no
 longer depends on host port publication.
+
+---
+
+## Authoritative complete provider-free baseline — 2026-09-15 05:58 KST
+
+Outcome: **accepted; the complete Initialize, Preflight, Stage A-F, tripwire
+validation, and Finalize sequence passed at the pinned HEAD.**
+
+External evidence:
+`C:\ProgramData\Dim0\validation\task-189\run-20260915-053337-790-ad76dea1`
+
+Evidence run ID: `run-20260915-053337-790-ad76dea1`
+
+Pinned Baley HEAD: `86f8233b81cbd9e7136656a6d26e338fb3052cb2`
+
+Manifest SHA-256:
+`dae5d1346ec3f28c1588d19426b6efd1d9e8da6ee9a083c1acf004e2bc3d390a`
+
+`finalized.json` binds that hash to a helper-sealed 107-file manifest, and
+`secret-screening.json` reports `clear`. All 48 recorded command exit files
+contain `0`; `commands.jsonl` preserves the exact command text, working
+directory, timestamps, durations, bounded output, and exit code for each
+recorded command. The scoped `dim0` worktree was clean before and after the
+run, and all generated runtime evidence remained outside Git.
+
+### Stage summary
+
+| Stage | Result | Authoritative evidence |
+| --- | --- | --- |
+| Initialize and Preflight | **Pass** | `run-provenance.json`, `01`-`05`; pinned SHA, clean scoped state, Docker/Compose versions, owned-or-clear container names, and zero published host ports |
+| A — static/build baseline | **Pass** | `08`-`18`; local images and locked dependencies, Ruff, 708 backend tests, Web UI check, 1,356 Web UI tests, production build, provider-tripwire self-test, and evidence/runtime/browser harness self-tests |
+| B — Compose expansion/images | **Pass** | `20`-`22`; exactly five services, internal default network, no service `ports`, and locally built backend/Web UI images |
+| C — persistence services | **Pass** | `30`-`36`; PostgreSQL/Qdrant/Redis ready and healthy, direct internal probes, and immutable running image IDs/repo digests |
+| D — storage contract | **Pass** | `40-storage-contract.txt`; idempotent schema application, canonical board/note/link CRUD, deterministic 512D vectors, Redis sequence behavior, and vector mutation/failure semantics |
+| E — app, restart, browser, isolation | **Pass** | `50`-`65`; initial and post-restart backend/UI success, persisted data, real Control+wheel zoom `100%` to `110%`, sanitized HAR, zero external/provider browser requests, no host mappings/default route, and exactly five final running services |
+| F — evidence and cleanup | **Pass** | `70`-`75`, `provider-constructions.json`, `provider-invocations.json`, `secret-screening.json`, `manifest.sha256`, `finalized.json`; bounded logs/state, clean scoped Git status, scoped cleanup, all-zero counters, and sealed manifest |
+
+### Acceptance criteria
+
+| # | Criterion | Result | Authoritative evidence |
+| --- | --- | --- | --- |
+| 1 | Pinned SHA, dirty state, Docker versions, exact commands, exits, logs, and secret-screened SHA-256 manifest | **Pass** | `run-provenance.json`, `01`-`04`, all `*.exit.txt`, `commands.jsonl`, `70-compose-logs.txt`, `secret-screening.json`, `manifest.sha256`, and `finalized.json` |
+| 2 | Backend lint/unit and Web UI check/test/production build | **Pass** | `10`-`14`; Ruff passed, 708 backend tests passed, Web UI check passed, 1,356 tests passed, and production build passed |
+| 3 | Exactly five internal-network services, local app images, and immutable PostgreSQL/Qdrant/Redis identities | **Pass** | `20-compose-config.txt`, `21-compose-services.txt`, `22-image-build.txt`, and `36-persistence-image-identities.txt` |
+| 4 | PostgreSQL/Qdrant/Redis readiness and idempotent schema | **Pass** | `31`-`35` and `40-storage-contract.txt`; all stores ready/healthy and schema applied repeatedly |
+| 5 | FastAPI lifespan, initial and post-restart backend/UI success, and five final services running/healthy as applicable | **Pass** | `40-storage-contract.txt`, `50`-`60`, and `65-five-service-final-state.txt`; ping `204`, models `200` with 20 entries, Web UI `200`, and all five services running with all reported health states healthy |
+| 6 | Canonical board/note/link CRUD with deterministic 512-dimensional embeddings | **Pass** | `40-storage-contract.txt` |
+| 7 | PostgreSQL metadata, Qdrant content/vector payloads, and Redis sequence survive restart | **Pass** | `56`-`61`; stores became ready before backend restart and the read-only persisted-record assertion passed |
+| 8 | Text/spatial/failure vector semantics | **Pass** | `40-storage-contract.txt`; text mutations embed, spatial/style-only mutation avoids vector work, and forced embedding failure prevents storage mutation without a zero-vector fallback |
+| 9 | Provider construction/invocation counters all zero and no mandatory application/browser external route | **Pass** | `provider-constructions.json` and `provider-invocations.json` contain the seven required keys, all `0`; `64-runtime-isolation.txt` records no default routes or host mappings |
+| 10 | Real canvas interaction, successful backend calls, sanitized HAR, and zero external/provider browser requests | **Pass** | `63-browser-observation.txt`, `browser-console.json`, and `browser-network.har`; visible zoom changed `100%` to `110%` with `ctrlKey=true`, ping `204`, models `200`/20, and both request counters `0` |
+| 11 | No generated acceptance evidence in Git | **Pass** | `02-git-status-before.txt` and `72-git-status-after.txt` are empty for `dim0`; the root `debug.log` was not read or modified |
+
+### Bounded residual risks
+
+- This is deliberately provider-free acceptance. It does not exercise or
+  characterize real LLM, embedding, search, fetch, OCR, image, or Daytona
+  behavior, credentials, billing, latency, or remote-provider availability.
+- The accepted topology is container-internal only. With no published ports,
+  effective host mappings, or default route, the run does not prove host
+  ingress or end-user host access.
+- Named PostgreSQL, Qdrant, Redis, and backend data volumes remain by design so
+  persistence evidence and prior evidence are preserved. Only the run-unique
+  Stage A volume, disposable observer image, and Task #189 containers/network
+  were removed.
+- The helper seal detects later evidence changes through the manifest but does
+  not make the filesystem immutable. Qdrant is configured by a mutable tag;
+  this run bounds that risk by recording the exact running image ID and repo
+  digest in `36-persistence-image-identities.txt`.
+- The no-host-install statement is limited to the recorded command ledger and
+  scoped Git evidence; it is not a machine-wide forensic inventory.
