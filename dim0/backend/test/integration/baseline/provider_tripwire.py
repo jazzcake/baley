@@ -25,6 +25,23 @@ COUNTER_KEYS = ("llm", "embedding", "search", "fetch", "ocr", "image", "daytona"
 LOCK_TIMEOUT_SECONDS = 5.0
 
 
+class ExpectedProviderTripwireBlockError(AssertionError):
+    """Identify an expected positive-test block without carrying call data."""
+
+    __slots__ = ("boundary",)
+
+    def __init__(self, boundary: str) -> None:
+        """Carry only one fixed-schema provider boundary identifier."""
+        if boundary not in COUNTER_KEYS:
+            raise ValueError("invalid provider boundary")
+        self.boundary = boundary
+        super().__init__(boundary)
+
+    def __str__(self) -> str:
+        """Render a safe diagnostic derived only from the boundary identifier."""
+        return f"expected provider tripwire block: {self.boundary}"
+
+
 def _zero_counters() -> dict[str, int]:
     """Return a new fixed-schema zero counter mapping."""
     return dict.fromkeys(COUNTER_KEYS, 0)
@@ -120,14 +137,14 @@ class ProviderTripwire:
     def construction(self, boundary: str) -> None:
         """Record and reject construction of a network-capable provider client."""
         self.record_construction(boundary)
-        raise AssertionError(f"provider construction blocked by baseline tripwire: {boundary}")
+        raise ExpectedProviderTripwireBlockError(boundary)
 
     def invocation(self, boundary: str) -> None:
         """Record and reject an outbound provider invocation."""
         with self._lock:
             self.invocations[boundary] += 1
             self.write_configured()
-        raise AssertionError(f"provider invocation blocked by baseline tripwire: {boundary}")
+        raise ExpectedProviderTripwireBlockError(boundary)
 
     def assert_clear(self) -> None:
         """Assert the mandatory provider invocation schema remains all-zero."""

@@ -43,14 +43,18 @@ function Assert-FinalizeFails([string]$Directory, [string]$ExpectedMessage) {
 }
 
 # Verify one evidence payload is rejected without ever printing its value.
-function Assert-CredentialPayloadFails([string]$Name, [string]$Content) {
+function Assert-CredentialPayloadFails(
+    [string]$Name,
+    [string]$Content,
+    [string]$ExpectedCategory = 'credential-field'
+) {
     $directory = New-EvidenceFixture $Name
     [IO.File]::WriteAllText(
         (Join-Path $directory '20-browser-check.txt'),
         $Content,
         [Text.UTF8Encoding]::new($false)
     )
-    Assert-FinalizeFails $directory 'credential-field'
+    Assert-FinalizeFails $directory $ExpectedCategory
 }
 
 # Quote a filesystem path for direct invocation in recorded PowerShell command text.
@@ -132,6 +136,28 @@ try {
     }
     Assert-True ($marker.filesystemImmutable -eq $false) 'Finalization incorrectly claims filesystem immutability.'
 
+    $rawTripwireLog = New-EvidenceFixture 'raw-tripwire-pytest-log'
+    $rawTripwireLogPath = Join-Path $rawTripwireLog '15-provider-tripwire-self-test.txt'
+    $rawTripwireOutput = @(
+        'ERROR topix.api.utils.decorators:decorators.py:42 Expected baseline provider block: search',
+        'ERROR topix.api.utils.decorators:decorators.py:42 Expected baseline provider block: fetch',
+        'ERROR topix.api.utils.decorators:decorators.py:42 Expected baseline provider block: daytona',
+        'ERROR topix.api.utils.decorators:decorators.py:42 Expected baseline provider block: ocr',
+        '......                                                                   [100%]',
+        '7 passed in 1.00s'
+    ) -join [Environment]::NewLine
+    [IO.File]::WriteAllText(
+        $rawTripwireLogPath,
+        ($rawTripwireOutput + [Environment]::NewLine),
+        [Text.UTF8Encoding]::new($false)
+    )
+    $rawTripwireHashBefore = (Get-FileHash -LiteralPath $rawTripwireLogPath -Algorithm SHA256).Hash
+    & $Helper -Action Finalize -EvidenceRoot $TestRoot -RunDirectory $rawTripwireLog | Out-Null
+    $rawTripwireHashAfter = (Get-FileHash -LiteralPath $rawTripwireLogPath -Algorithm SHA256).Hash
+    Assert-True ($rawTripwireHashAfter -eq $rawTripwireHashBefore) 'Credential screening rewrote the raw pytest log.'
+    $rawTripwireScreening = Get-Content -Raw -LiteralPath (Join-Path $rawTripwireLog 'secret-screening.json') | ConvertFrom-Json
+    Assert-True ($rawTripwireScreening.result -eq 'clear') 'Raw positive-tripwire pytest log did not pass credential screening.'
+
     $safeTiktokenPin = New-EvidenceFixture 'safe-tiktoken-pin'
     $safeTiktokenLog = "#29 21.24  + tiktoken==0.12.0`r`n  + tiktoken==1.2.3`t  `r`n"
     [IO.File]::WriteAllText(
@@ -162,6 +188,8 @@ try {
     )) {
         Assert-CredentialPayloadFails $adversarial.Name $adversarial.Content
     }
+
+    Assert-CredentialPayloadFails 'provider-key-assignment' 'PROVIDER_KEY=sk-proj-redactedproviderkey' 'provider-key'
 
     $correctedRetry = New-EvidenceFixture 'corrected-retry'
     [IO.File]::WriteAllText((Join-Path $correctedRetry 'baseline.env'), "OPENAI_API_KEY=definitely-not-a-real-credential`n", [Text.UTF8Encoding]::new($false))
