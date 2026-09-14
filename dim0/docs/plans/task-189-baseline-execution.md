@@ -222,12 +222,17 @@ $AppReady = "`$deadline=(Get-Date).AddMinutes(3); `$ready=`$false; do { try { `$
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '53-webui-http' -CommandText 'Invoke-WebRequest http://localhost:15175 -UseBasicParsing | Select-Object StatusCode'
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '54-app-ps-before-restart' -CommandText "$Compose ps"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '55-restart' -CommandText "$Compose restart postgres-test qdrant-test redis-test backend-test"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '56-persistence-after-restart' -CommandText "$StageDContainer sh -lc 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart 2>&1'"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '57-browser-image-build' -CommandText 'docker build -f dim0/build/Dockerfile.task189-browser -t dim0-task189-browser-observer:latest dim0'
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '58-browser-observation' -CommandText "docker run --rm --label com.docker.compose.project=dim0-task189 --network container:dim0-task189-webui --mount `"type=bind,source=$EvidenceRoot,target=/baseline-evidence`" -e TASK189_WEBUI_URL=http://localhost -e TASK189_EVIDENCE_DIR=/baseline-evidence dim0-task189-browser-observer:latest"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '56-persistence-ready-after-restart' -CommandText $PersistenceReady
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '57-persistence-after-restart' -CommandText "$StageDContainer sh -lc 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart 2>&1'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '58-browser-image-build' -CommandText 'docker build -f dim0/build/Dockerfile.task189-browser -t dim0-task189-browser-observer:latest dim0'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '59-browser-observation' -CommandText "docker run --rm --label com.docker.compose.project=dim0-task189 --network container:dim0-task189-webui --mount `"type=bind,source=$EvidenceRoot,target=/baseline-evidence`" -e TASK189_WEBUI_URL=http://localhost -e TASK189_EVIDENCE_DIR=/baseline-evidence dim0-task189-browser-observer:latest"
 ```
 
 Expected results: backend and Web UI return HTTP 2xx; after container restart, the seeded board, note, link, Qdrant payload/vector, and Redis-backed sequence contract remain readable. The persistence assertion must identify the records created before restart rather than creating replacements.
+
+The bounded persistence readiness command is repeated after restart so the
+read-only assertion never races PostgreSQL recovery, Qdrant shard readiness,
+or Redis startup.
 
 The recorded Stage A frontend test mounts the real `HarnessCanvas`, observes its canvas host, and uses its viewport control without opening agent or external-tool controls. For the Stage E browser observation, load the existing board without opening those controls and export sanitized `browser-console.json` and `browser-network.har`; the network export must contain no provider host and both files must contain no authorization, cookie, session, or credential-bearing URL data. Screenshots and other binary artifacts are deliberately unsupported because this helper cannot credential-screen their pixels.
 
