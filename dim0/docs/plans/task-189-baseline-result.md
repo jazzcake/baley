@@ -476,3 +476,70 @@ Then rerun the complete Stage A-F sequence in another unique external directory;
 acceptance still requires every criterion above, exported all-zero construction
 and invocation counters, zero external browser requests, and a finalized
 secret-screened manifest.
+
+---
+
+## Pinned-HEAD rerun attempt — 2026-09-15 04:08 KST
+
+Outcome: **not accepted; stopped at the first Stage A command**
+
+External evidence:
+`C:\ProgramData\Dim0\validation\task-189\run-20260915-040518-873-f3e53a2a`
+
+Evidence run ID: `run-20260915-040518-873-f3e53a2a`
+
+Pinned Baley HEAD: `e964395460ec56f0383f7158d86c21f39453b66e`
+
+Manifest SHA-256: **not created**; provider counter files, tripwire validation,
+secret screening, and finalization were correctly not run after the first
+required Stage A command failed.
+
+`Initialize` recorded the exact pinned SHA, a clean scoped `dim0` status,
+Windows PowerShell `5.1.26100.9444`, Docker/Compose versions, and the generated
+non-secret environment. The corrected mandatory `Preflight` passed and wrote
+`05-compose-ownership-preflight.json` with result `clear` for the five expected
+container names and six reserved host ports.
+
+The first Stage A command, `08-stage-a-images`, invoked the documented exact
+five-service Compose files and attempted to build `backend-test` and
+`webui-test`. The evidence helper reported exit `1` after 185,595 ms and captured
+only `System.Management.Automation.RemoteException: Image
+dim0-task189-webui-test Building` in `08-stage-a-images.txt`; this is the first
+acceptance failure, so dependency synchronization, lint, unit tests, Web UI
+checks/tests/build, Stages B-F, tripwire validation, and finalization were not
+run.
+
+The bounded post-failure diagnostics show no Task #189 Compose services or
+service logs. `92-failure-build-history.txt` independently records the two
+BuildKit operations started with the failed command at `2026-09-14T19:05:39Z`
+and completed with status `Completed`, while `93-failure-built-image-ids.txt`
+records local backend and Web UI image IDs. The first divergence is therefore
+the Windows PowerShell evidence-capture path treating Compose's progress stream
+as a terminating `RemoteException`, not a demonstrated Dockerfile build error;
+this attempt is classified as a **harness/capture failure** and does not infer
+application acceptance from the completed BuildKit records.
+
+### Attempt acceptance criteria
+
+| # | Criterion | Result | Authoritative evidence |
+| --- | --- | --- | --- |
+| 1 | Pinned SHA, dirty state, Docker versions, exact commands, exits, logs, secret-screened manifest | **Fail** | `run-provenance.json`, `01`-`04`, `commands.jsonl`, and `08-stage-a-images.exit.txt` preserve provenance and the first failure; no finalized manifest exists. |
+| 2 | Backend lint/unit and Web UI check/test/build | **Blocked** | Stage A stopped during the initial image-build command, before checks or tests. |
+| 3 | Exact five-service Compose topology, internal network, local app images, immutable persistence image identities | **Blocked** | Local application build records exist, but Stage B topology expansion and Stage C persistence identity capture were not reached. |
+| 4 | Persistence health and idempotent schema | **Blocked** | No persistence service or schema assertion ran. |
+| 5 | FastAPI/Web UI before and after restart with exactly five final services healthy/running | **Blocked** | Stage E did not run; `90-failure-compose-ps.txt` records no project services. |
+| 6 | Canonical board/note/link CRUD with deterministic 512-dimensional embedding | **Blocked** | Stage D did not run. |
+| 7 | PostgreSQL/Qdrant/Redis persistence across restart | **Blocked** | No seed, restart, or persistence assertion ran. |
+| 8 | Text/spatial/failure vector semantics | **Blocked** | Stage D did not run. |
+| 9 | Bounded provider construction, zero provider invocations, zero application/browser external requests | **Blocked** | Counter files were not created and no application/browser assertion ran; no zero-counter claim is made. |
+| 10 | Real canvas interaction with successful backend requests and zero external/provider requests | **Blocked** | Browser image and observation were not reached. |
+| 11 | No generated acceptance artifact in Git | **Pass** | `02-git-status-before.txt` and `94-failure-git-status.txt` are empty for `dim0`; evidence remains external and root `debug.log` was neither read nor modified. |
+
+### Required disposition
+
+Correct the evidence runner's Windows PowerShell handling of Docker Compose
+build progress without weakening genuine non-zero exit detection, in a separate
+harness task. Then rerun the complete Initialize, Preflight, Stage A-F,
+tripwire-validation, and Finalize sequence in another unique external directory;
+none of the blocked criteria in this attempt may be promoted from the completed
+BuildKit records alone.
