@@ -1,10 +1,117 @@
 # Task #189: provider-free Docker baseline result
 
-Date: 2026-09-14 (Asia/Seoul)
+Date: 2026-09-15 (Asia/Seoul)
 
-Outcome: **not accepted; provider-protected application validation blocked, safe infrastructure subset passed**
+Outcome: **not accepted; complete provider-free acceptance passed through cleanup, but fail-closed secret screening rejected the evidence package before sealing**
 
 Execution source: [`task-189-baseline-execution.md`](./task-189-baseline-execution.md)
+
+---
+
+## Fresh authoritative attempt 2026-09-15 06:42 KST — failed at Finalize
+
+Outcome: **not accepted; all 48 recorded acceptance commands passed, but no sealed manifest exists**
+
+External evidence: `C:\ProgramData\Dim0\validation\task-189\run-20260915-064232-285-8e13175b`
+
+Evidence run ID: `run-20260915-064232-285-8e13175b`
+
+Pinned Baley HEAD: `c54dc3ed4ab6dcad5ad2da1384fbd9d530c05f12`
+
+Manifest SHA-256: **not generated**. `Finalize` failed closed while screening
+`08-stage-a-images.txt` as `credential-field`; the helper removed its partial
+finalization artifacts, so `manifest.sha256`, `finalized.json`, and
+`secret-screening.json` are absent. The diagnostic SHA-256 of `commands.jsonl`
+is `0da8a8f89e97af823a16b5d03be699ad8da3a029c483a1c022d57aa8342036c4`;
+it is not a manifest hash.
+
+This is the fresh authoritative result at the pinned correction commit. It
+does not supersede the independently rejected prior sealed run with an accepted
+package: the prior run remains rejected, and this newer run is itself rejected
+because evidence finalization did not complete.
+
+### Result and first failure
+
+Initialize, Preflight, Stages A through F, and `ValidateTripwires` ran in the
+documented order without product or harness changes. The command ledger contains
+exactly 48 records and 48 zero exit codes. Cleanup removed the five Task #189
+containers, its internal network, the run-unique Stage A volume, and the
+disposable browser image; the named application/persistence volumes remain by
+design, and prior unrelated Task #189 evidence and volumes were not altered.
+
+The first failure was the unrecorded helper action `Finalize`. Its credential
+screen matched ordinary locked-package/build-log text in
+`08-stage-a-images.txt`, including `tiktoken`/token-related package-name lines,
+as `credential-field`. Per the execution contract, the run stopped there and
+the external evidence was preserved without editing or a manual manifest.
+
+### Stage summary
+
+| Stage | Result | Authoritative evidence |
+| --- | --- | --- |
+| Initialize and Preflight | **Pass** | `run-provenance.json`, `01`-`05`; exact pinned SHA, clean `dim0` scope, Docker/Compose versions, ownership, and zero host publication |
+| A — static/build baseline | **Pass** | `08`-`18`; backend images/dependencies, Ruff, 708 backend tests, Web UI checks, 1,356 Web UI tests, production build, positive tripwire and all harness self-tests |
+| B — Compose expansion/images | **Pass** | `20`-`22`; exactly the five expected services, internal default network, empty service `ports`, and local image builds |
+| C — persistence services | **Pass** | `30`-`36`; PostgreSQL/Qdrant/Redis ready and healthy with immutable running image IDs and repo digests recorded |
+| D — storage contract | **Pass** | `40-storage-contract.txt`; schema reapplied, canonical CRUD, 512D Qdrant vectors, Redis sequence, and mutation/failure semantics |
+| E — app/restart/browser/isolation | **Pass** | `50`-`65`; initial and post-restart backend/UI success, persisted records, real Control+wheel zoom, sanitized HAR, no host mappings/default routes, and exact five-service final state |
+| F — capture and cleanup | **Pass through ValidateTripwires; fail at Finalize** | `70`-`75` all exit `0`; cleanup and all-zero schema validation passed, then secret screening rejected `08-stage-a-images.txt` before sealing |
+
+### Provider boundary and counter aggregation evidence
+
+`15-provider-tripwire-self-test.txt` records four passing positive tests. They
+drive all seven declared boundaries (`llm`, `embedding`, `search`, `fetch`,
+`ocr`, `image`, and `daytona`), including the live router aliases, search
+dispatch dictionary, prebuilt fetch/image/Daytona seams, and both configured
+and direct/BYOK OCR construction paths. Each probe is blocked before the
+disabled-socket sentinel can observe provider I/O. The same test records
+separate-process restart monotonicity, lossless concurrent merging, strict
+existing-schema rejection, and valid two-process all-zero aggregation.
+
+The run-wide `provider-constructions.json` and `provider-invocations.json`
+retain exactly the seven required keys with integer value `0` for every key.
+They remained schema-valid and all-zero across `56-backend-stop-before-restart`,
+`59-backend-start-after-persistence`, and the fresh one-off process used by
+`61-persistence-after-restart`; the final `ValidateTripwires` action passed.
+This is aggregation evidence, not a per-process snapshot or a reset assertion.
+
+The browser observer reports `providerRequests: 0` and `externalRequests: 0`.
+`70-compose-logs.txt` may show Qdrant attempts to report telemetry to
+`telemetry.qdrant.io`; the internal network blocked them. They are disclosed as
+external-request intent, not successful egress and not a Dim0 provider
+invocation.
+
+### Acceptance criteria
+
+| # | Exact criterion | Result | Authoritative evidence / blocker |
+| --- | --- | --- | --- |
+| 1 | Pinned SHA, dirty state, Docker versions, exact commands/exits/logs, secret screen, and sealed SHA-256 manifest outside Git | **Fail** | Provenance and all 48 zero-exit command records exist externally, but `Finalize` rejected `08-stage-a-images.txt`; no secret-screen result, manifest, final marker, or manifest hash exists. |
+| 2 | Backend lint/unit and Web UI check/test/production build pass | **Pass** | `10`-`14`; Ruff passed, 708 backend tests passed, Web UI check passed, 1,356 tests passed, and the production build passed. |
+| 3 | Exactly five internal-network services, local app images, and immutable persistence identities | **Pass** | `20`-`22`, `36-persistence-image-identities.txt`, `64-runtime-isolation.txt`, and `65-five-service-final-state.txt`. |
+| 4 | PostgreSQL/Qdrant/Redis readiness and idempotent schema application | **Pass** | `31`-`35` and `40-storage-contract.txt`. |
+| 5 | FastAPI lifespan, initial/post-restart backend and UI success, and exactly five final services | **Pass** | `40`, `50`-`60`, and `65`; ping `204`, models `200` with 20 entries, UI `200`, and all five services running with reported health states healthy. |
+| 6 | Canonical board/note/link CRUD with deterministic 512-dimensional embeddings | **Pass** | `40-storage-contract.txt`. |
+| 7 | PostgreSQL metadata, Qdrant content/vector payloads, and Redis sequence persist across restart | **Pass** | `56`-`61`; stores became ready before backend restart and the read-only persisted-record test passed. |
+| 8 | Text mutation embeds, spatial/style-only mutation does not, and fake embedding failure prevents vector mutation | **Pass** | `40-storage-contract.txt`; no zero-vector fallback was written. |
+| 9 | All seven boundaries and construction seams are positively guarded, run-wide counters remain valid/all-zero across restart, and mandatory validation has no external route | **Pass** | `15-provider-tripwire-self-test.txt`, both provider counter JSON files, `56`-`61`, and `64-runtime-isolation.txt`. |
+| 10 | Real canvas interaction, internal backend success, sanitized HAR, zero external/provider browser requests, and no agent/tool flow | **Pass** | `63-browser-observation.txt`, `browser-console.json`, and `browser-network.har`; zoom changed `100%` to `110%` with Control held, HAR has 44 internal entries, and both request counters are zero. |
+| 11 | Scoped Git cleanliness and no generated acceptance evidence in Git | **Pass** | `02-git-status-before.txt` and `72-git-status-after.txt` are empty for `dim0`; the root `debug.log` was neither read nor modified. |
+
+### Residual risks and required next action
+
+- Task #189 remains unaccepted solely because the mandatory secret-screen and
+  seal did not complete; the otherwise passing evidence must not be promoted or
+  manually sealed.
+- A separate harness correction must distinguish ordinary package names such as
+  `tiktoken` in Docker build logs from credential assignments while preserving
+  fail-closed detection. After independent review, the complete sequence must
+  run again in another unique evidence directory.
+- This provider-free run does not characterize real provider credentials,
+  billing, latency, or availability, and the topology proves container-internal
+  behavior rather than host ingress.
+- The helper seal, when a future run succeeds, detects later changes but does
+  not provide filesystem immutability. Mutable Qdrant tag risk is bounded only
+  by the recorded running image ID/digest.
 
 ---
 
