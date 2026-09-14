@@ -48,7 +48,7 @@ export function assertBrowserObservation({ observation, backend, messages, reque
   if (!observation.canvasHostPresent || observation.width <= 0 || observation.height <= 0) {
     throw new Error("canvas host was not rendered with positive dimensions")
   }
-  if (!observation.wheelInteraction || observation.zoomBefore === observation.zoomAfter) {
+  if (!observation.wheelInteraction || !observation.wheelCtrlKey || observation.zoomBefore === observation.zoomAfter) {
     throw new Error("canvas wheel interaction did not change rendered zoom state")
   }
   if (backend.pingStatus < 200 || backend.pingStatus >= 300) {
@@ -69,6 +69,17 @@ export function assertBrowserObservation({ observation, backend, messages, reque
   }
   if (agentControlsOpened) {
     throw new Error("agent controls were opened during the baseline observation")
+  }
+}
+
+/** Issue the canvas zoom gesture while guaranteeing the Control modifier is released. */
+export async function issueCanvasZoom(page, bounds) {
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  await page.keyboard.down("Control")
+  try {
+    await page.mouse.wheel(0, -240)
+  } finally {
+    await page.keyboard.up("Control")
   }
 }
 
@@ -105,8 +116,13 @@ async function run() {
   const zoomBefore = (await zoomControl.textContent())?.trim() ?? ""
   const bounds = await canvas.boundingBox()
   if (!bounds) throw new Error("canvas bounds are unavailable")
-  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
-  await page.mouse.wheel(0, -240)
+  const wheelEventPromise = canvas.evaluate((element) => new Promise((resolve) => {
+    element.addEventListener("wheel", (event) => {
+      resolve({ ctrlKey: event.ctrlKey, deltaX: event.deltaX, deltaY: event.deltaY })
+    }, { capture: true, once: true })
+  }))
+  await issueCanvasZoom(page, bounds)
+  const wheelEvent = await wheelEventPromise
   await page.waitForFunction(
     (before) => document.querySelector('[aria-label="Reset zoom to 100%"]')?.textContent?.trim() !== before,
     zoomBefore,
@@ -118,6 +134,7 @@ async function run() {
     width: Math.round(bounds.width),
     height: Math.round(bounds.height),
     wheelInteraction: true,
+    wheelCtrlKey: wheelEvent.ctrlKey,
     zoomBefore,
     zoomAfter,
   }
