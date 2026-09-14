@@ -70,6 +70,12 @@ async def test_provider_free_board_content_crud_and_persistence(monkeypatch: pyt
             content_store = app.graph_store._content_store
             await content_store.create_collection(force_recreate=True, quantized=False)
 
+            # Task 189 deliberately preserves its named persistence volumes.
+            # Remove only this harness-owned fixed record so a fresh evidence
+            # run can seed the same browser-observable board deterministically.
+            if await app.graph_store.get_graph(BOARD_ID) is not None:
+                await app.graph_store.delete_graph(BOARD_ID, hard_delete=True)
+
             graph = Graph(uid=BOARD_ID, label="Task 189 baseline")
             note_a = Note(id=NOTE_A_ID, graph_uid=BOARD_ID, label=RichText(markdown="Alpha"), content=RichText(markdown="Original text"))
             note_b = Note(id=NOTE_B_ID, graph_uid=BOARD_ID, label=RichText(markdown="Beta"), content=RichText(markdown="Second note"))

@@ -142,8 +142,8 @@ Expected results: PostgreSQL reports accepting connections for database/user `to
 Run the live-storage test against the named Compose services. It must apply the PostgreSQL schema twice, create a Qdrant collection through the existing `GraphStore -> ContentStore` path, and use the deterministic fake embedder.
 
 ```powershell
-$StageDContainer = "docker run --rm --network dim0-task189_default --env-file `"$BaselineEnv`" --mount `"type=bind,source=$EvidenceRoot,target=/baseline-evidence`" -e POSTGRES_HOST=postgres-test -e POSTGRES_PORT=5432 -e QDRANT_HOST=qdrant-test -e QDRANT_PORT=6333 -e REDIS_HOST=redis-test -e REDIS_PORT=6379 -e DIM0_BASELINE_PROVIDER_TRIPWIRE=1 -e DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION=512 -e DIM0_BASELINE_TRIPWIRE_OUTPUT=/baseline-evidence/provider-invocations.json -e DIM0_BASELINE_CONSTRUCTION_OUTPUT=/baseline-evidence/provider-constructions.json -e LITELLM_LOCAL_MODEL_COST_MAP=True dim0-task189-backend-test:latest"
-$StageDTest = "$StageDContainer sh -lc 'uv run pytest -q test/integration/baseline/test_provider_free_baseline.py 2>&1'"
+$StageDContainer = "docker run --rm --network dim0-task189_default --env-file `"$BaselineEnv`" --mount `"type=bind,source=$EvidenceRoot,target=/baseline-evidence`" --mount `"type=volume,source=$StageAVenv,target=/app/.venv`" -e POSTGRES_HOST=postgres-test -e POSTGRES_PORT=5432 -e QDRANT_HOST=qdrant-test -e QDRANT_PORT=6333 -e REDIS_HOST=redis-test -e REDIS_PORT=6379 -e DIM0_BASELINE_PROVIDER_TRIPWIRE=1 -e DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION=512 -e DIM0_BASELINE_TRIPWIRE_OUTPUT=/baseline-evidence/provider-invocations.json -e DIM0_BASELINE_CONSTRUCTION_OUTPUT=/baseline-evidence/provider-constructions.json -e LITELLM_LOCAL_MODEL_COST_MAP=True dim0-task189-backend-test:latest"
+$StageDTest = "$StageDContainer sh -lc 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_free_baseline.py -k provider_free_board_content_crud_and_persistence 2>&1'"
 try {
     & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '40-storage-contract' -CommandText $StageDTest
 }
@@ -176,7 +176,8 @@ catch {
 `docker run` uses the exact `dim0-task189-backend-test:latest` image already
 built in Stage B and joins the Compose project's isolated
 `dim0-task189_default` network. It mounts the unique evidence directory, loads
-the generated non-secret `baseline.env`, and repeats the overlay's
+the generated non-secret `baseline.env`, reuses the locked development
+environment prepared in Stage A, and repeats the overlay's
 provider-tripwire settings and output paths. The
 explicit service-name endpoints preserve the container DSN
 `postgresql://topix@postgres-test:5432/topix` and prevent host environment
@@ -185,7 +186,11 @@ requires the three Stage C services to remain the only persistence services;
 `--rm` removes only the one-off Stage D container. The container shell merges
 pytest's stderr into its stdout so PowerShell records the complete bounded
 stream instead of treating native status output as a terminating error. The
-shell still returns pytest's exit code unchanged.
+shell still returns pytest's exit code unchanged. Stage D selects only the
+pre-restart seed/contract case; Stage E selects the read-only persistence case
+after the required container restart. Before seeding, the fixture deletes only
+its own fixed Task 189 board if a preserved project volume contains an earlier
+attempt, leaving all unrelated data untouched.
 
 The catch inspects the bounded test log and runs diagnostics only if the known
 asyncpg `protocol.pyx` missing-status decode signature recurs. Those non-secret
@@ -214,7 +219,7 @@ The test records:
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '52-webui-http' -CommandText 'Invoke-WebRequest http://localhost:15175 -UseBasicParsing | Select-Object StatusCode'
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '53-app-ps-before-restart' -CommandText "$Compose ps"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '54-restart' -CommandText "$Compose restart postgres-test qdrant-test redis-test backend-test"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '55-persistence-after-restart' -CommandText 'uv run pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart' -WorkingDirectory dim0/backend
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '55-persistence-after-restart' -CommandText "$StageDContainer sh -lc 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart 2>&1'"
 ```
 
 Expected results: backend and Web UI return HTTP 2xx; after container restart, the seeded board, note, link, Qdrant payload/vector, and Redis-backed sequence contract remain readable. The persistence assertion must identify the records created before restart rather than creating replacements.
