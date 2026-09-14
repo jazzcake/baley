@@ -45,7 +45,12 @@ try {
     New-Item -ItemType Directory -Path $TestRoot | Out-Null
 
     $valid = New-EvidenceFixture 'valid'
-    [IO.File]::WriteAllText((Join-Path $valid '10-focused-check.txt'), "passed`n", [Text.UTF8Encoding]::new($false))
+    $benignLog = @(
+        'passed',
+        'HTTPException in reset_password: Password reset is disabled',
+        'HTTPException in refresh_access_token: Refresh token revoked'
+    ) -join [Environment]::NewLine
+    [IO.File]::WriteAllText((Join-Path $valid '10-focused-check.txt'), ($benignLog + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $valid '10-focused-check.exit.txt'), "0`n", [Text.UTF8Encoding]::new($false))
     & $Helper -Action Finalize -EvidenceRoot $TestRoot -RunDirectory $valid | Out-Null
 
@@ -71,6 +76,14 @@ try {
     [IO.File]::WriteAllText((Join-Path $correctedRetry 'baseline.env'), "OPENAI_API_KEY=`n", [Text.UTF8Encoding]::new($false))
     & $Helper -Action Finalize -EvidenceRoot $TestRoot -RunDirectory $correctedRetry | Out-Null
     Assert-True (Test-Path -LiteralPath (Join-Path $correctedRetry 'finalized.json')) 'Corrected finalization retry did not succeed.'
+
+    $structuredCredential = New-EvidenceFixture 'structured-credential'
+    [IO.File]::WriteAllText((Join-Path $structuredCredential 'browser-console.json'), '{"client_secret":"definitely-not-a-real-credential"}', [Text.UTF8Encoding]::new($false))
+    Assert-FinalizeFails $structuredCredential 'credential-field'
+
+    $commandCredential = New-EvidenceFixture 'command-credential'
+    [IO.File]::WriteAllText((Join-Path $commandCredential '20-browser-check.txt'), 'docker run -e OPENAI_API_KEY=definitely-not-a-real-credential', [Text.UTF8Encoding]::new($false))
+    Assert-FinalizeFails $commandCredential 'credential-field'
 
     $unsupported = New-EvidenceFixture 'unsupported'
     [IO.File]::WriteAllBytes((Join-Path $unsupported 'screen.png'), [byte[]](1, 2, 3))
