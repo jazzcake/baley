@@ -65,6 +65,7 @@ function Add-CommandRecord([string]$Directory, [hashtable]$Record) {
     [IO.File]::AppendAllText($recordPath, $line, [Text.UTF8Encoding]::new($false))
 }
 
+# Capture combined command output and fail from the command's real exit state.
 function Invoke-RecordedCommand {
     param(
         [Parameter(Mandatory = $true)] [string]$Directory,
@@ -85,17 +86,33 @@ function Invoke-RecordedCommand {
 
     $started = [DateTimeOffset]::Now
     $previous = Get-Location
+    $previousErrorActionPreference = $ErrorActionPreference
     $global:LASTEXITCODE = 0
     try {
         Set-Location -LiteralPath $Cwd
-        $lines = @(& ([scriptblock]::Create($Text)) 2>&1 | ForEach-Object { $_.ToString() })
+        # Windows PowerShell 5.1 represents redirected native stderr as
+        # NativeCommandError records. Capture those records as output and use
+        # LASTEXITCODE, rather than ErrorActionPreference, to decide success.
+        $ErrorActionPreference = 'Continue'
+        $records = @(& ([scriptblock]::Create($Text)) 2>&1)
+        $lines = @($records | ForEach-Object { $_.ToString() })
         $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+        $powerShellErrors = @($records | Where-Object {
+            $_ -is [System.Management.Automation.ErrorRecord] -and
+            $_.FullyQualifiedErrorId -notlike 'NativeCommandError*'
+        })
+        if ($exitCode -eq 0 -and $powerShellErrors.Count) { $exitCode = 1 }
     }
     catch {
         $lines = @($_.Exception.ToString())
-        $exitCode = 1
+        $exitCode = if ($null -ne $LASTEXITCODE -and [int]$LASTEXITCODE -ne 0) {
+            [int]$LASTEXITCODE
+        } else {
+            1
+        }
     }
     finally {
+        $ErrorActionPreference = $previousErrorActionPreference
         Set-Location $previous
     }
     $ended = [DateTimeOffset]::Now

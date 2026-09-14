@@ -3,6 +3,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $Helper = (Resolve-Path (Join-Path $PSScriptRoot 'capture-task-189-evidence.ps1')).Path
+$RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $TempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $TestRoot = Join-Path $TempRoot ("dim0-task189-evidence-test-" + [Guid]::NewGuid().ToString('N'))
 
@@ -41,8 +42,55 @@ function Assert-FinalizeFails([string]$Directory, [string]$ExpectedMessage) {
     }
 }
 
+# Quote a filesystem path for direct invocation in recorded PowerShell command text.
+function Get-InvocationCommand([string]$Path) {
+    return "& '$($Path.Replace("'", "''"))'"
+}
+
 try {
     New-Item -ItemType Directory -Path $TestRoot | Out-Null
+
+    $successScript = Join-Path $TestRoot 'native-stderr-success.cmd'
+    [IO.File]::WriteAllText(
+        $successScript,
+        "@echo off`r`necho stdout-before`r`n1>&2 echo stderr-progress`r`necho stdout-after`r`nexit /b 0`r`n",
+        [Text.ASCIIEncoding]::new()
+    )
+    $success = New-EvidenceFixture 'native-stderr-success'
+    $successCommand = Get-InvocationCommand $successScript
+    & $Helper -Action Run -EvidenceRoot $TestRoot -RunDirectory $success -Name '10-native-stderr-success' -CommandText $successCommand | Out-Null
+    $successLog = Get-Content -Raw -LiteralPath (Join-Path $success '10-native-stderr-success.txt')
+    $expectedSuccessLog = "stdout-before`r`nstderr-progress`r`nstdout-after`r`n"
+    Assert-True ($successLog -eq $expectedSuccessLog) "Successful native combined output changed: $successLog"
+    Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $success '10-native-stderr-success.exit.txt')) -eq "0`n") 'Successful native stderr command did not record exit 0.'
+    $successRecord = Get-Content -Raw -LiteralPath (Join-Path $success 'commands.jsonl') | ConvertFrom-Json
+    Assert-True ($successRecord.command -eq $successCommand) 'Successful native command provenance changed.'
+    Assert-True ($successRecord.workingDirectory -eq $RepositoryRoot) 'Successful native command working-directory provenance changed.'
+
+    $failureScript = Join-Path $TestRoot 'native-stderr-failure.cmd'
+    [IO.File]::WriteAllText(
+        $failureScript,
+        "@echo off`r`necho stdout-failure`r`n1>&2 echo stderr-failure`r`nexit /b 23`r`n",
+        [Text.ASCIIEncoding]::new()
+    )
+    $failure = New-EvidenceFixture 'native-stderr-failure'
+    $failureCommand = Get-InvocationCommand $failureScript
+    $failed = $false
+    try {
+        & $Helper -Action Run -EvidenceRoot $TestRoot -RunDirectory $failure -Name '11-native-stderr-failure' -CommandText $failureCommand | Out-Null
+    }
+    catch {
+        $failed = $true
+        Assert-True ($_.Exception.Message.Contains("failed with exit code 23")) "Unexpected native failure: $($_.Exception.Message)"
+    }
+    Assert-True $failed 'Native stderr command with exit 23 did not fail fast.'
+    $failureLog = Get-Content -Raw -LiteralPath (Join-Path $failure '11-native-stderr-failure.txt')
+    $expectedFailureLog = "stdout-failure`r`nstderr-failure`r`n"
+    Assert-True ($failureLog -eq $expectedFailureLog) "Failing native combined output changed: $failureLog"
+    Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $failure '11-native-stderr-failure.exit.txt')) -eq "23`n") 'Failing native stderr command did not record exit 23.'
+    $failureRecord = Get-Content -Raw -LiteralPath (Join-Path $failure 'commands.jsonl') | ConvertFrom-Json
+    Assert-True ($failureRecord.exitCode -eq 23) 'Failing native command record lost the actual exit code.'
+    Assert-True ($failureRecord.command -eq $failureCommand) 'Failing native command provenance changed.'
 
     $valid = New-EvidenceFixture 'valid'
     $benignLog = @(
@@ -106,7 +154,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $session 'browser-console.json'), '{"sessionId":"browser-session-value"}', [Text.UTF8Encoding]::new($false))
     Assert-FinalizeFails $session 'session-field'
 
-    Write-Output 'Task 189 evidence finalization self-tests passed.'
+    Write-Output 'Task 189 evidence capture and finalization self-tests passed.'
 }
 finally {
     $resolvedTestRoot = [IO.Path]::GetFullPath($TestRoot)
