@@ -1,0 +1,7 @@
+FROM dim0-task189-webui-test:latest
+
+RUN npx playwright install --with-deps chromium
+
+COPY webui/scripts/task189-browser-observation.mjs /app/scripts/task189-browser-observation.mjs
+
+ENTRYPOINT ["node", "/app/scripts/task189-browser-observation.mjs"]

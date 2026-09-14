@@ -34,6 +34,7 @@ WP0 must provide these test-only assets before the acceptance run:
 - `backend/test/integration/baseline/provider_free_pytest.py`: prevents the backend unit suite from consulting Doppler by returning an empty configuration before application modules are collected; it is used only in the network-isolated Stage A container.
 - `webui/src/features/agent/engine/__tests__/provider-free-baseline.test.tsx`: mounts the real `HarnessCanvas` application boundary and asserts that page loading plus a basic non-agent viewport interaction construct no BYOK/provider LLM client instances.
 - `build/docker-compose.baseline.yml`: a test-only overlay that adds provider-tripwire configuration without adding a provider service or weakening the upstream PostgreSQL/Qdrant/Redis topology.
+- `build/Dockerfile.task189-browser` and `webui/scripts/task189-browser-observation.mjs`: a disposable Docker-only Chromium observer that creates and opens a local board, records a non-agent canvas interaction, removes credential-bearing HAR fields, and fails on any provider host.
 
 The tripwire output schema is fixed:
 
@@ -220,6 +221,8 @@ The test records:
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '53-app-ps-before-restart' -CommandText "$Compose ps"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '54-restart' -CommandText "$Compose restart postgres-test qdrant-test redis-test backend-test"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '55-persistence-after-restart' -CommandText "$StageDContainer sh -lc 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_free_baseline.py -k persisted_after_restart 2>&1'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '56-browser-image-build' -CommandText 'docker build -f dim0/build/Dockerfile.task189-browser -t dim0-task189-browser-observer:latest dim0'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '57-browser-observation' -CommandText "docker run --rm --label com.docker.compose.project=dim0-task189 --network container:dim0-task189-webui --mount `"type=bind,source=$EvidenceRoot,target=/baseline-evidence`" -e TASK189_WEBUI_URL=http://localhost -e TASK189_EVIDENCE_DIR=/baseline-evidence dim0-task189-browser-observer:latest"
 ```
 
 Expected results: backend and Web UI return HTTP 2xx; after container restart, the seeded board, note, link, Qdrant payload/vector, and Redis-backed sequence contract remain readable. The persistence assertion must identify the records created before restart rather than creating replacements.
@@ -236,6 +239,7 @@ Before cleanup, record bounded logs, container/volume names, tripwire counters, 
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '62-git-status-after' -CommandText 'git status --short -- dim0'
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '63-compose-down' -CommandText "$Compose down --remove-orphans"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '64-stage-a-volume-cleanup' -CommandText "docker volume rm $StageAVenv"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '65-browser-image-cleanup' -CommandText 'docker image rm dim0-task189-browser-observer:latest'
 & $Harness -Action ValidateTripwires -RunDirectory $EvidenceRoot
 & $Harness -Action Finalize -RunDirectory $EvidenceRoot
 Remove-Item Env:POSTGRES_HOST,Env:POSTGRES_PORT,Env:QDRANT_HOST,Env:QDRANT_PORT,Env:REDIS_HOST,Env:REDIS_PORT,Env:DIM0_BASELINE_PROVIDER_TRIPWIRE,Env:DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION -ErrorAction SilentlyContinue
