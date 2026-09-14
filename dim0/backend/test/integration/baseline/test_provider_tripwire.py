@@ -25,8 +25,8 @@ async def test_every_current_llm_and_embedding_seam_fails_closed(
     from topix.agents import run as agent_run
     from topix.agents import tool_handler
     from topix.agents.websearch import handler as websearch_handler
-    from topix.config import config as config_module
     from topix.config import catalog
+    from topix.config import config as config_module
     from topix.datatypes.stage import StageEnum
     from topix.nlp.embed import OpenAIEmbedder
 
