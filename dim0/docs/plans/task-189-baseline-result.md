@@ -325,3 +325,84 @@ Diagnose the Python 3.13/asyncpg schema-execution failure in a separate harness/
 ### Historical retry blocker and next action
 
 Correct the unmatched quote in the committed `setup-mini-app-compiler` recipe in a separate product/harness change, then rerun the complete Stage A–F sequence from a new unique evidence directory. Acceptance still requires the network-disabled positive tripwire self-test, all five isolated services, live canonical CRUD/restart semantics, real non-agent UI/canvas interaction, zero provider invocation counters, secret screening, and a finalized manifest.
+
+---
+
+## Authoritative provider-free baseline — 2026-09-15 03:14 KST
+
+Outcome: **accepted; all eleven mandatory criteria passed**
+
+External evidence: `C:\ProgramData\Dim0\validation\task-189\run-20260915-025900-783-70e2c872`
+
+Evidence run ID: `run-20260915-025900-783-70e2c872`
+
+Pinned Baley HEAD: `da2ee2cf4302ffa89cd0ee73063b92f68d74d5f7`
+
+Manifest SHA-256: `b95e3d4d83b1828eac458276386fc4e34f5045be0d2fcc9dd223d6c11762a085`
+
+The complete Stage A–F sequence ran from the beginning in this one fresh
+directory. All 39 recorded commands exited `0`; `finalized.json` binds 89
+allowlisted files to the manifest hash above, and `secret-screening.json`
+reports `clear`. Earlier failed and diagnostic runs remain preserved and are
+not presented as acceptance evidence.
+
+### Authoritative results
+
+- Stage A passed Ruff, 708 backend tests, Web UI type/lint checks, 1,356 Web UI
+  tests in 142 files, the production Web UI build, the positive provider
+  tripwire test, and the evidence-finalization self-tests. The acceptance
+  checks ran in locked Docker images with provider credentials blank and
+  Docker network mode `none`; only the separately recorded locked dependency
+  synchronization used Docker network access.
+- Stage B expanded to exactly `postgres-test`, `qdrant-test`, `redis-test`,
+  `backend-test`, and `webui-test`, with no provider/Codex service, and both
+  application images built successfully.
+- Stage C recorded PostgreSQL accepting connections, Qdrant `all shards are
+  ready`, Redis `PONG`, and healthy/running persistence containers.
+- Stage D passed the locked-image canonical storage contract: idempotent schema
+  application, board/note/link CRUD, deterministic 512-dimensional embedding,
+  Qdrant payload/vector writes, payload-only spatial/style mutation, forced
+  embedding failure without storage mutation or zero-vector fallback, and the
+  Redis sequence contract.
+- Stage E recorded FastAPI HTTP `204` and Web UI HTTP `200`. After restarting
+  PostgreSQL, Qdrant, Redis, and the backend, bounded readiness passed and the
+  exact pre-restart PostgreSQL/Qdrant/Redis records remained readable.
+- The Docker-only Chromium observation opened the local board, found the
+  1280×720 canvas host, performed a wheel interaction, made zero provider
+  requests, and did not open agent/external-tool controls. Its sanitized
+  `browser-console.json` and `browser-network.har` passed credential screening.
+- Both `provider-invocations.json` and `provider-constructions.json` contain the
+  exact seven-key schema with every value `0`. Stage F captured bounded logs
+  and final state, removed only the `dim0-task189` containers/network, the
+  run-unique Stage A venv volume, and the disposable browser image, and left
+  persistent project volumes available for rerun/investigation as specified.
+- `62-git-status-after.txt` is empty. No generated environment, log, browser,
+  database, Qdrant, or Redis artifact entered the repository, and the
+  pre-existing root `debug.log` remained untouched and untracked.
+
+### Acceptance criteria
+
+| # | Criterion | Result | Authoritative evidence |
+| --- | --- | --- | --- |
+| 1 | Pinned SHA, dirty state, Docker versions, exact commands, exits, logs, manifest | **Pass** | `run-provenance.json`, `01`–`04`, `commands.jsonl`, `manifest.sha256`, `finalized.json`; 39/39 exits are `0` |
+| 2 | Backend lint/unit and Web UI check/test/build | **Pass** | `10`–`16`; 708 backend tests and 1,356 Web UI tests passed |
+| 3 | Exact five-service Compose expansion and local images | **Pass** | `20-compose-config.txt`, `21-compose-services.txt`, `22-image-build.txt` |
+| 4 | Persistence health and idempotent schema | **Pass** | `31`–`35`, `40-storage-contract.txt` |
+| 5 | FastAPI lifespan, ping, and Web UI HTTP 2xx | **Pass** | `40-storage-contract.txt`, `51`–`53`; HTTP 204/200 |
+| 6 | Canonical board/note/link CRUD with fake 512-dimensional embedder | **Pass** | `40-storage-contract.txt` |
+| 7 | PostgreSQL/Qdrant/Redis application contract survives restart | **Pass** | `55`–`57` |
+| 8 | Text/spatial/failure vector semantics | **Pass** | `40-storage-contract.txt` |
+| 9 | Bounded construction and zero provider invocation | **Pass** | `15-provider-tripwire-self-test.txt`, `provider-constructions.json`, `provider-invocations.json` |
+| 10 | Sanitized browser evidence with no provider or agent flow | **Pass** | `59-browser-observation.txt`, `browser-console.json`, `browser-network.har` |
+| 11 | No generated acceptance artifact in the worktree | **Pass** | `62-git-status-after.txt`, `secret-screening.json`; `debug.log` untouched |
+
+### Harness-only corrections preceding the accepted run
+
+The accepted run includes only test harness, evidence, and execution-plan
+corrections; product runtime behavior was not changed. The rollback-sized
+commits are `a6a7d53`, `8cf954d`, `8e47e0c`, `0a70774`, `36f0297`, `8067858`,
+`d7310e4`, and `da2ee2c`. They respectively moved Stage A into locked Docker
+images, added bounded readiness, made the fixed storage fixture rerunnable,
+added Docker-only canvas observation, waited for applications, waited for
+persistence after restart, removed credential-field false positives, and kept
+passing-test fake tokens out of credential-screened evidence.
