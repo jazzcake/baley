@@ -96,7 +96,7 @@ $WebUiStageA = 'docker run --rm --label com.docker.compose.project=dim0-task189 
 $StageADeps = "docker volume create --label com.docker.compose.project=dim0-task189 $StageAVenv; if (`$LASTEXITCODE -ne 0) { throw 'Stage A venv volume creation failed.' }; docker run --rm --label com.docker.compose.project=dim0-task189 --network bridge --mount `"type=volume,source=$StageAVenv,target=/app/.venv`" $BlankProviderEnv dim0-task189-backend-test:latest sh -lc 'uv sync --frozen'"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '09-stage-a-backend-deps' -CommandText $StageADeps
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '10-lint-backend' -CommandText "$BackendStageA 'uv run --offline --frozen ruff check topix test/unit'"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '11-test-backend' -CommandText "$BackendStageA 'uv run --offline --frozen pytest -p test.integration.baseline.provider_free_pytest test/unit'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '11-test-backend' -CommandText "$BackendStageA 'uv run --offline --frozen pytest -o log_cli=false -p test.integration.baseline.provider_free_pytest test/unit'"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '12-lint-ui' -CommandText "$WebUiStageA 'npm run check-all'"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '13-test-ui' -CommandText "$WebUiStageA 'npm run test:run'"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '14-webui-build' -CommandText "$WebUiStageA 'npm run build'"
@@ -109,6 +109,9 @@ Expected result: each exit file contains `0`; backend unit tests, the positive p
 The Stage A pytest bootstrap replaces only the imported Doppler configuration
 loader with a deterministic empty configuration before test collection. Docker
 network mode `none` remains the enforcement boundary for all test commands.
+Pytest live logging is disabled for the passing unit suite so test-owned fake
+token values are not exported into the credential-screened evidence; failure
+tracebacks and the complete test result remain recorded.
 The Web UI image currently uses Node 25 although the package supports Node 20
 and 22; the run-local `--localstorage-file` option restores Node's complete
 Web Storage implementation for the jsdom suite without changing application

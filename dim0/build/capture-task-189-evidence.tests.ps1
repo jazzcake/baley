@@ -48,7 +48,8 @@ try {
     $benignLog = @(
         'passed',
         'HTTPException in reset_password: Password reset is disabled',
-        'HTTPException in refresh_access_token: Refresh token revoked'
+        'HTTPException in refresh_access_token: Refresh token revoked',
+        'docker run -e DOPPLER_TOKEN= -e OPENAI_API_KEY= -e SAFE_FLAG=1 image'
     ) -join [Environment]::NewLine
     [IO.File]::WriteAllText((Join-Path $valid '10-focused-check.txt'), ($benignLog + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $valid '10-focused-check.exit.txt'), "0`n", [Text.UTF8Encoding]::new($false))

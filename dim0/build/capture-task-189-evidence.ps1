@@ -241,7 +241,7 @@ function Assert-NoCredentials([string]$Directory) {
         @{ category = 'bearer-credential'; pattern = '(?i)\bbearer\s+[a-z0-9._~+/=-]{12,}' },
         @{ category = 'provider-key'; pattern = '(?i)\bsk-(?:proj-|or-v1-)?[a-z0-9_-]{12,}' },
         @{ category = 'credential-field'; pattern = '(?im)(?:^|[,{][^\S\r\n]*)["'']?[a-z0-9_]*(?:api[_-]?key|token|password|secret)["'']?[^\S\r\n]*[:=][^\S\r\n]*["'']?(?![^\S\r\n]*(?:\r?\n|$|["''][^\S\r\n]*(?:\r?\n|$)|null\b))[^\s,"'']+' },
-        @{ category = 'credential-field'; pattern = '(?im)(?:^|[^\S\r\n])[a-z0-9_-]*(?:api[_-]?key|token|password|secret)[^\S\r\n]*=[^\S\r\n]*["'']?(?![^\S\r\n]*(?:\r?\n|$|["''][^\S\r\n]*(?:\r?\n|$)|null\b))[^\s,"'']+' },
+        @{ category = 'credential-field'; pattern = '(?im)(?:^|[^\S\r\n])[a-z0-9_-]*(?:api[_-]?key|token|password|secret)[^\S\r\n]*=[^\S\r\n]*["'']?(?![^\S\r\n]*(?:\r?\n|$|["''][^\S\r\n]*(?:\r?\n|$)|null\b|(?:-e|--env)\b))[^\s,"'']+' },
         @{ category = 'credential-field'; pattern = '(?im)(?:^|[^\S\r\n])--?[a-z0-9_-]*(?:api[_-]?key|token|password|secret)[^\S\r\n]+["'']?(?![^\S\r\n]*(?:\r?\n|$|["''][^\S\r\n]*(?:\r?\n|$)|null\b))[^\s,"'']+' },
         @{ category = 'url-userinfo'; pattern = '(?i)\bhttps?://[^\s/@:]+:[^\s/@]+@' },
         @{ category = 'url-sensitive-query'; pattern = '(?i)[?&](?:api[_-]?key|token|access[_-]?token|auth|password|secret|session(?:[_-]?id)?)=[^&\s"''<>]+' },
