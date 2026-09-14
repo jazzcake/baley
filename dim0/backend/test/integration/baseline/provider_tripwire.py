@@ -8,15 +8,94 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import importlib
 import json
 import os
+import threading
+import time
+import uuid
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 COUNTER_KEYS = ("llm", "embedding", "search", "fetch", "ocr", "image", "daytona")
+LOCK_TIMEOUT_SECONDS = 5.0
+
+
+def _zero_counters() -> dict[str, int]:
+    """Return a new fixed-schema zero counter mapping."""
+    return dict.fromkeys(COUNTER_KEYS, 0)
+
+
+def _validate_counters(value: Any, source: str) -> dict[str, int]:
+    """Validate a persisted or in-memory counter snapshot strictly."""
+    if not isinstance(value, dict) or set(value) != set(COUNTER_KEYS):
+        raise ValueError(f"invalid provider counter schema in {source}")
+    if any(isinstance(value[key], bool) or not isinstance(value[key], int) or value[key] < 0 for key in COUNTER_KEYS):
+        raise ValueError(f"invalid provider counter value in {source}")
+    return {key: value[key] for key in COUNTER_KEYS}
+
+
+@contextlib.contextmanager
+def _bounded_file_lock(path: str, timeout: float = LOCK_TIMEOUT_SECONDS):
+    """Acquire a cross-process advisory lock with a finite wait."""
+    lock_path = f"{path}.lock"
+    Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
+    handle = open(lock_path, "a+b")
+    try:
+        if handle.seek(0, os.SEEK_END) == 0:
+            handle.write(b"lock\n")
+            handle.flush()
+        handle.seek(0)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out acquiring provider counter lock: {lock_path}") from exc
+                time.sleep(0.01)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def _atomic_json_write(path: str, value: dict[str, int]) -> None:
+    """Atomically replace a JSON counter file on its own filesystem."""
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as output:
+            json.dump(value, output, indent=2, sort_keys=True)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, destination)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
 
 
 class ProviderTripwire:
@@ -24,36 +103,64 @@ class ProviderTripwire:
 
     def __init__(self) -> None:
         """Initialize zeroed construction and invocation counters."""
-        self.constructions = dict.fromkeys(COUNTER_KEYS, 0)
-        self.invocations = dict.fromkeys(COUNTER_KEYS, 0)
+        self.constructions = _zero_counters()
+        self.invocations = _zero_counters()
+        self._persisted: dict[str, dict[str, dict[str, int]]] = {
+            "constructions": {},
+            "invocations": {},
+        }
+        self._lock = threading.RLock()
+
+    def record_construction(self, boundary: str) -> None:
+        """Record a blocked call site's provider-client construction attempt."""
+        with self._lock:
+            self.constructions[boundary] += 1
+            self.write_configured()
 
     def construction(self, boundary: str) -> None:
         """Record and reject construction of a network-capable provider client."""
-        self.constructions[boundary] += 1
-        self.write_configured()
+        self.record_construction(boundary)
         raise AssertionError(f"provider construction blocked by baseline tripwire: {boundary}")
 
     def invocation(self, boundary: str) -> None:
         """Record and reject an outbound provider invocation."""
-        self.invocations[boundary] += 1
-        self.write_configured()
+        with self._lock:
+            self.invocations[boundary] += 1
+            self.write_configured()
         raise AssertionError(f"provider invocation blocked by baseline tripwire: {boundary}")
 
     def assert_clear(self) -> None:
         """Assert the mandatory provider invocation schema remains all-zero."""
-        assert self.invocations == dict.fromkeys(COUNTER_KEYS, 0)
+        assert self.invocations == _zero_counters()
+
+    def _merge_write(self, path: str, kind: str, current: dict[str, int]) -> None:
+        """Merge this process's new deltas into the durable run-wide total."""
+        normalized = os.path.abspath(path)
+        validated_current = _validate_counters(current, f"in-memory {kind}")
+        previous = self._persisted[kind].get(normalized, _zero_counters())
+        delta = {key: validated_current[key] - previous[key] for key in COUNTER_KEYS}
+        if any(value < 0 for value in delta.values()):
+            raise ValueError(f"provider {kind} counters cannot decrease within a process")
+
+        with _bounded_file_lock(normalized):
+            if os.path.exists(normalized):
+                with open(normalized, encoding="utf-8") as existing_file:
+                    existing = _validate_counters(json.load(existing_file), normalized)
+            else:
+                existing = _zero_counters()
+            merged = {key: existing[key] + delta[key] for key in COUNTER_KEYS}
+            _atomic_json_write(normalized, merged)
+        self._persisted[kind][normalized] = validated_current.copy()
 
     def write(self, path: str) -> None:
-        """Write the fixed-schema invocation counters as JSON."""
-        with open(path, "w", encoding="utf-8") as output:
-            json.dump(self.invocations, output, indent=2, sort_keys=True)
-            output.write("\n")
+        """Monotonically merge invocation counters into the run-wide JSON."""
+        with self._lock:
+            self._merge_write(path, "invocations", self.invocations)
 
     def write_constructions(self, path: str) -> None:
-        """Write separately recorded provider-client construction counters."""
-        with open(path, "w", encoding="utf-8") as output:
-            json.dump(self.constructions, output, indent=2, sort_keys=True)
-            output.write("\n")
+        """Monotonically merge construction counters into the run-wide JSON."""
+        with self._lock:
+            self._merge_write(path, "constructions", self.constructions)
 
     def write_configured(self) -> None:
         """Persist counters when the Compose harness configured output paths."""
@@ -89,9 +196,32 @@ class DeterministicFakeEmbedder:
 class _ProviderFreeParser:
     """Stand in for Mistral OCR without constructing its network client."""
 
+    def __init__(self, tripwire: ProviderTripwire) -> None:
+        self._tripwire = tripwire
+
+    def get_num_pages(self, filepath: str) -> int:
+        """Keep the local page gate deterministic without parsing test bytes."""
+        del filepath
+        return 1
+
     async def parse(self, filepath: str, max_pages: int = 200) -> list[dict[str, int | str]]:
         del filepath, max_pages
-        raise AssertionError("OCR is outside the provider-free baseline")
+        self._tripwire.invocation("ocr")
+
+
+def _ocr_parser_type(tripwire: ProviderTripwire) -> type[_ProviderFreeParser]:
+    """Create a parser replacement covering configured and direct/BYOK paths."""
+    class _TripwireMistralParser(_ProviderFreeParser):
+        def __init__(self, api_key: str | None = None) -> None:
+            del api_key
+            tripwire.record_construction("ocr")
+            super().__init__(tripwire)
+
+        @classmethod
+        def from_config(cls):
+            return cls()
+
+    return _TripwireMistralParser
 
 
 class _ProviderFreeNewsfeedPipeline:
@@ -105,6 +235,7 @@ def install_provider_tripwire(  # noqa: C901
     tripwire: ProviderTripwire,
     embedder: DeterministicFakeEmbedder,
     set_attribute: Callable[[Any, str, Any], None] = setattr,
+    set_item: Callable[[Any, Any, Any], None] | None = None,
 ) -> None:
     """Install test doubles at existing provider seams before app lifespan."""
     if os.getenv("DIM0_BASELINE_PROVIDER_TRIPWIRE") != "1":
@@ -129,6 +260,7 @@ def install_provider_tripwire(  # noqa: C901
     from topix.agents.websearch import handler as websearch_handler
     from topix.agents.websearch import tools as web_tools
     from topix.api.router import ai as ai_router
+    from topix.api.router import boards as boards_router
     from topix.config import config as config_module
     from topix.nlp import embed as embed_module
     from topix.nlp import parser as parser_module
@@ -137,6 +269,17 @@ def install_provider_tripwire(  # noqa: C901
     from topix.store.qdrant import store as qdrant_store
 
     qdrant_client_type = qdrant_store.AsyncQdrantClient
+    set_item = set_item or (lambda target, key, value: target.__setitem__(key, value))
+
+    def forbidden_boundary_async(boundary: str):
+        """Create a fail-closed call-site replacement for one provider boundary."""
+        async def forbidden(*args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            tripwire.record_construction(boundary)
+            tripwire.invocation(boundary)
+
+        forbidden._dim0_provider_boundary = boundary  # type: ignore[attr-defined]
+        return forbidden
 
     async def forbidden_llm_async(*args: Any, **kwargs: Any) -> Any:
         """Count and reject an asynchronous LLM invocation."""
@@ -156,21 +299,9 @@ def install_provider_tripwire(  # noqa: C901
         del args, kwargs
         tripwire.invocation("embedding")
 
-    async def forbidden_search(*args: Any, **kwargs: Any) -> Any:
+    def forbidden_daytona_construction(*args: Any, **kwargs: Any) -> Any:
         del args, kwargs
-        tripwire.invocation("search")
-
-    async def forbidden_fetch(*args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
-        tripwire.invocation("fetch")
-
-    async def forbidden_image(*args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
-        tripwire.invocation("image")
-
-    async def forbidden_daytona(*args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
-        tripwire.invocation("daytona")
+        tripwire.construction("daytona")
 
     def forbidden_embedding_construction(*args: Any, **kwargs: Any) -> Any:
         """Count and reject an embedding-client construction."""
@@ -233,18 +364,51 @@ def install_provider_tripwire(  # noqa: C901
         if hasattr(sdk_module, "AsyncOpenAI"):
             set_attribute(sdk_module, "AsyncOpenAI", forbidden_llm_client_construction)
 
-    set_attribute(parser_module.MistralParser, "from_config", classmethod(lambda cls: _ProviderFreeParser()))
+    blocked_ocr_parser = _ocr_parser_type(tripwire)
+    # Application startup needs a local parser-shaped object, but every later
+    # parse still counts and blocks. The /ai/parse alias uses the stricter type
+    # below so both configured and direct/BYOK construction are observable.
+    class _StartupParserFactory:
+        @classmethod
+        def from_config(cls):
+            del cls
+            return _ProviderFreeParser(tripwire)
+
+    set_attribute(parser_module, "MistralParser", blocked_ocr_parser)
+    set_attribute(ai_router, "MistralParser", blocked_ocr_parser)
+    set_attribute(parsing, "MistralParser", _StartupParserFactory)
     set_attribute(parsing, "DocumentMindmapAgent", lambda: object())
     set_attribute(newsfeed_config.NewsfeedPipelineConfig, "from_yaml", classmethod(lambda cls, *args, **kwargs: object()))
     set_attribute(subscription.NewsfeedPipeline, "from_config", classmethod(lambda cls, *args, **kwargs: _ProviderFreeNewsfeedPipeline()))
 
+    # Patch source modules, modules that captured imports, and router dispatch
+    # dictionaries. Each current HTTP call site must point at the blocker, not
+    # merely at a source-module name that was copied during import.
+    search_blocker = forbidden_boundary_async("search")
     for name in ("search_perplexity", "search_tavily", "search_linkup", "search_exa"):
-        set_attribute(web_tools, name, forbidden_search)
-    set_attribute(web_tools, "fetch_content", forbidden_fetch)
-    set_attribute(web_fetch, "fetch_url", forbidden_fetch)
-    set_attribute(image_gen, "generate_image", forbidden_image)
+        set_attribute(web_tools, name, search_blocker)
+        set_attribute(websearch_handler, name, search_blocker)
+        set_attribute(ai_router, name, search_blocker)
+        set_item(ai_router._SEARCH_FNS, name.removeprefix("search_"), search_blocker)
+
+    fetch_blocker = forbidden_boundary_async("fetch")
+    set_attribute(web_tools, "fetch_content", fetch_blocker)
+    set_attribute(web_fetch, "fetch_content", fetch_blocker)
+    set_attribute(web_fetch, "fetch_url", fetch_blocker)
+    set_attribute(ai_router, "fetch_content", fetch_blocker)
+    set_attribute(web_fetch.fetch_url_content_tool, "on_invoke_tool", fetch_blocker)
+
+    image_blocker = forbidden_boundary_async("image")
+    set_attribute(image_gen, "generate_image", image_blocker)
+    set_attribute(image_gen.generate_image_tool, "on_invoke_tool", image_blocker)
+
+    daytona_blocker = forbidden_boundary_async("daytona")
+    set_attribute(daytona_code, "AsyncDaytona", forbidden_daytona_construction)
     for name in ("execute_code", "execute_python_code", "run_code"):
-        set_attribute(daytona_code, name, forbidden_daytona)
+        set_attribute(daytona_code, name, daytona_blocker)
+    set_attribute(ai_router, "execute_code", daytona_blocker)
+    set_attribute(boards_router, "execute_code", daytona_blocker)
+    set_attribute(daytona_code.run_code_tool, "on_invoke_tool", daytona_blocker)
 
     # Keep the imported package referenced so import-time wiring cannot be
     # optimized away by a refactor without this harness noticing at collection.

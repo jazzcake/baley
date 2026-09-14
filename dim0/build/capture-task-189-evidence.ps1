@@ -21,7 +21,8 @@ $CounterKeys = @('llm', 'embedding', 'search', 'fetch', 'ocr', 'image', 'daytona
 $SafeArtifactAllowlist = @(
     'run-provenance.json', 'baseline.env', 'commands.jsonl',
     '05-compose-ownership-preflight.json', 'provider-invocations.json',
-    'provider-constructions.json', 'browser-console.json', 'browser-network.har',
+    'provider-constructions.json', 'provider-invocations.json.lock',
+    'provider-constructions.json.lock', 'browser-console.json', 'browser-network.har',
     'finalization-policy.json', 'integrity-metadata.json', 'secret-screening.json',
     'NN-lowercase-kebab-case.txt', 'NN-lowercase-kebab-case.exit.txt'
 )
@@ -180,6 +181,14 @@ function Assert-TripwireFiles([string]$Directory) {
         if ($actualKeys -ne $expectedKeys) {
             throw "Unexpected tripwire schema in $file"
         }
+        $integerTypes = @([byte], [sbyte], [int16], [uint16], [int32], [uint32], [int64], [uint64])
+        foreach ($property in $properties) {
+            $value = $property.Value
+            if ($value -is [bool] -or $null -eq $value -or
+                -not ($integerTypes -contains $value.GetType()) -or $value -lt 0) {
+                throw "Tripwire values must be non-negative integers in $file"
+            }
+        }
         if (@($properties.Value | Where-Object { $_ -ne 0 }).Count) {
             throw "Provider tripwire is non-zero in $file; the baseline is invalid."
         }
@@ -196,6 +205,9 @@ function Get-SafeArtifactKind([string]$FileName) {
     if ($FileName -in $structured) { return 'structured-text' }
     if ($FileName -eq 'commands.jsonl') { return 'json-lines' }
     if ($FileName -eq 'baseline.env') { return 'plain-text' }
+    if ($FileName -in @('provider-invocations.json.lock', 'provider-constructions.json.lock')) {
+        return 'plain-text'
+    }
     if ($FileName -match '^\d{2}-[a-z0-9][a-z0-9-]*(?:\.exit)?\.txt$') { return 'plain-text' }
     return $null
 }

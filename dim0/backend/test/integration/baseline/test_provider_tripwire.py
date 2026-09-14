@@ -3,20 +3,36 @@
 from __future__ import annotations
 
 import importlib
+import json
+import os
+import socket
+import subprocess
+import sys
+
+from pathlib import Path
+from typing import Any
 
 import pytest
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from .provider_tripwire import DeterministicFakeEmbedder, ProviderTripwire, install_provider_tripwire
 
 
 @pytest.mark.asyncio
-async def test_every_current_llm_and_embedding_seam_fails_closed(
+async def test_every_current_provider_boundary_fails_closed_before_network(  # noqa: C901
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Deliberately cross every current seam and require a counted failure."""
+    """Drive all seven live boundaries and require counted fail-closed results."""
     monkeypatch.setenv("DIM0_BASELINE_PROVIDER_TRIPWIRE", "1")
     tripwire = ProviderTripwire()
-    install_provider_tripwire(tripwire, DeterministicFakeEmbedder(), monkeypatch.setattr)
+    install_provider_tripwire(
+        tripwire,
+        DeterministicFakeEmbedder(),
+        monkeypatch.setattr,
+        monkeypatch.setitem,
+    )
 
     import agents
     import litellm
@@ -24,7 +40,13 @@ async def test_every_current_llm_and_embedding_seam_fails_closed(
     from topix.agents import base as agent_base
     from topix.agents import run as agent_run
     from topix.agents import tool_handler
+    from topix.agents.assistant import code as daytona_code
+    from topix.agents.image import gen as image_gen
+    from topix.agents.websearch import fetch as web_fetch
     from topix.agents.websearch import handler as websearch_handler
+    from topix.api.router import ai as ai_router
+    from topix.api.router import boards as boards_router
+    from topix.api.utils.security import get_current_user_uid
     from topix.config import catalog
     from topix.config import config as config_module
     from topix.datatypes.stage import StageEnum
@@ -125,3 +147,193 @@ async def test_every_current_llm_and_embedding_seam_fails_closed(
     with pytest.raises(AssertionError, match="provider invocation blocked.*embedding"):
         await provider_embedder._embed_batch(["never sent"])
     assert tripwire.invocations["embedding"] == embedding_invocation_before + 1
+
+    # Any accidental escape past a patched boundary would hit this low-level
+    # sentinel. The Docker acceptance command also runs this file with
+    # --network none, so the proof has both process- and namespace-level guards.
+    network_attempts: list[tuple[Any, ...]] = []
+
+    def disabled_connect(_socket: socket.socket, *args: Any, **kwargs: Any) -> None:
+        network_attempts.append(args)
+        del kwargs
+        raise AssertionError("network I/O reached before provider tripwire")
+
+    monkeypatch.setattr(socket.socket, "connect", disabled_connect)
+
+    app = FastAPI()
+    app.include_router(ai_router.router)
+
+    async def no_meter() -> None:
+        return None
+
+    async def user_id() -> str:
+        return "tripwire-user"
+
+    app.dependency_overrides[ai_router.meter_run] = no_meter
+    app.dependency_overrides[ai_router.meter_run_managed] = no_meter
+    app.dependency_overrides[get_current_user_uid] = user_id
+
+    with TestClient(app) as client:
+        search_before = tripwire.invocations["search"]
+        for engine in ai_router._SEARCH_FNS:
+            response = client.post("/ai/search", json={"query": "never sent", "engine": engine})
+            assert response.status_code == 500
+        assert tripwire.invocations["search"] == search_before + len(ai_router._SEARCH_FNS)
+
+        fetch_before = tripwire.invocations["fetch"]
+        response = client.post("/ai/fetch", json={"url": "https://provider.invalid/never"})
+        assert response.status_code == 500
+        assert tripwire.invocations["fetch"] == fetch_before + 1
+
+        daytona_before = tripwire.invocations["daytona"]
+        response = client.post("/ai/code", json={"code": "print('never run')"})
+        assert response.status_code == 500
+        assert tripwire.invocations["daytona"] == daytona_before + 1
+
+        ocr_before = tripwire.invocations["ocr"]
+        construction_before = tripwire.constructions["ocr"]
+        for headers in ({}, {"X-Provider-Key": "not-a-secret"}):
+            response = client.post(
+                "/ai/parse",
+                files={"file": ("probe.pdf", b"%PDF-1.4 probe", "application/pdf")},
+                headers=headers,
+            )
+            assert response.status_code == 500
+        assert tripwire.constructions["ocr"] == construction_before + 2
+        assert tripwire.invocations["ocr"] == ocr_before + 2
+
+    # Captured module aliases and prebuilt FunctionTool objects are runtime
+    # call sites too. Positively invoke them instead of checking source names.
+    for boundary, candidate, args in (
+        ("fetch", web_fetch.fetch_url_content_tool.on_invoke_tool, (None, "{}")),
+        ("image", image_gen.generate_image_tool.on_invoke_tool, (None, "{}")),
+        ("daytona", daytona_code.run_code_tool.on_invoke_tool, (None, "{}")),
+    ):
+        before = tripwire.invocations[boundary]
+        with pytest.raises(AssertionError, match=f"provider invocation blocked.*{boundary}"):
+            await candidate(*args)
+        assert tripwire.invocations[boundary] == before + 1
+
+    assert boards_router.execute_code is daytona_code.execute_code
+    assert ai_router.execute_code is daytona_code.execute_code
+    assert ai_router.fetch_content is web_fetch.fetch_content
+    assert all(fn is ai_router.search_perplexity for fn in ai_router._SEARCH_FNS.values())
+
+    # Direct SDK/client constructors are independently guarded where the
+    # application has an explicit construction seam.
+    daytona_construction_before = tripwire.constructions["daytona"]
+    with pytest.raises(AssertionError, match="provider construction blocked.*daytona"):
+        daytona_code.AsyncDaytona()
+    assert tripwire.constructions["daytona"] == daytona_construction_before + 1
+
+    assert all(value > 0 for value in tripwire.constructions.values())
+    assert all(value > 0 for value in tripwire.invocations.values())
+    assert network_attempts == []
+
+
+def _run_counter_process(directory: Path, source: str) -> subprocess.CompletedProcess[str]:
+    """Run one isolated counter writer process against shared evidence files."""
+    environment = os.environ.copy()
+    environment.update({
+        "DIM0_BASELINE_TRIPWIRE_OUTPUT": str(directory / "provider-invocations.json"),
+        "DIM0_BASELINE_CONSTRUCTION_OUTPUT": str(directory / "provider-constructions.json"),
+    })
+    backend_root = Path(__file__).resolve().parents[3]
+    return subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=backend_root,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+def _read_counters(path: Path) -> dict[str, int]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_restart_aggregation_preserves_nonzero_and_two_process_zero(tmp_path: Path) -> None:
+    """A later process cannot erase prior counts; two zero writers stay zero."""
+    nonzero = tmp_path / "nonzero"
+    nonzero.mkdir()
+    _run_counter_process(
+        nonzero,
+        """\
+import contextlib
+from test.integration.baseline.provider_tripwire import ProviderTripwire
+tripwire = ProviderTripwire()
+tripwire.record_construction("llm")
+with contextlib.suppress(AssertionError):
+    tripwire.invocation("llm")
+""",
+    )
+    _run_counter_process(
+        nonzero,
+        """\
+from test.integration.baseline.provider_tripwire import ProviderTripwire
+ProviderTripwire().write_configured()
+""",
+    )
+    assert _read_counters(nonzero / "provider-constructions.json")["llm"] == 1
+    assert _read_counters(nonzero / "provider-invocations.json")["llm"] == 1
+
+    all_zero = tmp_path / "all-zero"
+    all_zero.mkdir()
+    zero_source = """\
+from test.integration.baseline.provider_tripwire import ProviderTripwire
+ProviderTripwire().write_configured()
+"""
+    _run_counter_process(all_zero, zero_source)
+    _run_counter_process(all_zero, zero_source)
+    expected = dict.fromkeys(("llm", "embedding", "search", "fetch", "ocr", "image", "daytona"), 0)
+    assert _read_counters(all_zero / "provider-constructions.json") == expected
+    assert _read_counters(all_zero / "provider-invocations.json") == expected
+
+
+def test_concurrent_process_counter_merges_are_lossless(tmp_path: Path) -> None:
+    """Concurrent writers serialize through the bounded cross-process lock."""
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    environment = os.environ.copy()
+    environment.update({
+        "DIM0_BASELINE_TRIPWIRE_OUTPUT": str(shared / "provider-invocations.json"),
+        "DIM0_BASELINE_CONSTRUCTION_OUTPUT": str(shared / "provider-constructions.json"),
+    })
+    backend_root = Path(__file__).resolve().parents[3]
+    processes = []
+    for boundary in ("search", "fetch"):
+        source = f"""\
+import contextlib
+from test.integration.baseline.provider_tripwire import ProviderTripwire
+tripwire = ProviderTripwire()
+for _ in range(5):
+    tripwire.record_construction("{boundary}")
+    with contextlib.suppress(AssertionError):
+        tripwire.invocation("{boundary}")
+"""
+        processes.append(subprocess.Popen(
+            [sys.executable, "-c", source],
+            cwd=backend_root,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ))
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=15)
+        assert process.returncode == 0, (stdout, stderr)
+
+    constructions = _read_counters(shared / "provider-constructions.json")
+    invocations = _read_counters(shared / "provider-invocations.json")
+    assert (constructions["search"], constructions["fetch"]) == (5, 5)
+    assert (invocations["search"], invocations["fetch"]) == (5, 5)
+
+
+def test_counter_merge_rejects_invalid_existing_schema(tmp_path: Path) -> None:
+    """Malformed prior evidence fails closed instead of being reset."""
+    output = tmp_path / "provider-invocations.json"
+    output.write_text('{"llm": "zero"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid provider counter schema"):
+        ProviderTripwire().write(str(output))

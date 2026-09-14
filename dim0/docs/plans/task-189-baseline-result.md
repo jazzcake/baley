@@ -756,3 +756,24 @@ run, and all generated runtime evidence remained outside Git.
   digest in `36-persistence-image-identities.txt`.
 - The no-host-install statement is limited to the recorded command ledger and
   scoped Git evidence; it is not a machine-wide forensic inventory.
+
+---
+
+## Post-review F1/F2 correction disposition — 2026-09-15 KST
+
+The authoritative independent review in
+`task-189-authoritative-review.md` rejects the sealed run above because its
+provider tripwire did not cover every live call site and its fixed counter files
+could be reset by a backend restart. The F1/F2 implementation correction now
+covers all seven declared boundaries, captured router/tool aliases, the search
+dispatch dictionary, both configured and direct/BYOK OCR paths, and run-wide
+monotonic counter aggregation across processes. Focused network-disabled
+tripwire and harness tests are correction evidence only; they do not retroactively
+repair or reclassify the prior sealed package.
+
+Task #189 therefore remains **rejected pending a fresh unique, complete,
+helper-sealed Stage A-F run** at the correction commit. The prior Compose logs'
+Qdrant calls to `https://telemetry.qdrant.io/` remain accurately classified as
+blocked telemetry attempts: they show external-request intent, not successful
+egress and not a Dim0 provider invocation. No new full A-F run was performed as
+part of this implementation correction.

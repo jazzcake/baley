@@ -31,7 +31,7 @@ Hard constraints:
 WP0 must provide these test-only assets before the acceptance run:
 
 - `backend/test/integration/baseline/test_provider_free_baseline.py`: exercises FastAPI lifespan plus board/note/link storage with live PostgreSQL, Qdrant, and Redis and a deterministic 512-dimensional fake embedder.
-- `backend/test/integration/baseline/provider_tripwire.py`: replaces LLM, embedding, search, fetch, OCR, image, and Daytona network clients, and replaces the test-profile Doppler loader with an empty local configuration; it records provider construction and invocation separately and fails on any outbound provider invocation.
+- `backend/test/integration/baseline/provider_tripwire.py`: replaces the live LLM, embedding, search, fetch, OCR, image, and Daytona call sites, including captured router/tool aliases, the search dispatch dictionary, and configured plus direct/BYOK OCR construction; it replaces the test-profile Doppler loader with an empty local configuration, records provider construction and invocation separately, and fails before any outbound provider invocation.
 - `backend/test/integration/baseline/provider_free_pytest.py`: prevents the backend unit suite from consulting Doppler by returning an empty configuration before application modules are collected; it is used only in the network-isolated Stage A container.
 - `webui/src/features/agent/engine/__tests__/provider-free-baseline.test.tsx`: mounts the real `HarnessCanvas` application boundary and asserts that page loading plus a basic non-agent viewport interaction construct no BYOK/provider LLM client instances.
 - `build/docker-compose.baseline.yml`: a test-only overlay that adds provider-tripwire configuration and makes the Compose default network internal without adding a provider service or weakening the upstream PostgreSQL/Qdrant/Redis topology.
@@ -53,7 +53,16 @@ The tripwire output schema is fixed:
 }
 ```
 
-The harness may construct an embedding client only inside the isolated construction test. Every network invocation counter must remain zero throughout mandatory baseline execution.
+These two JSON files are run-wide aggregates, not per-process snapshots. Each
+backend process merges only its new local deltas under a bounded advisory lock
+and atomically replaces the aggregate; a restart therefore cannot reduce or
+erase an earlier count. The fixed `provider-invocations.json.lock` and
+`provider-constructions.json.lock` files are allowlisted text artifacts used
+only for cross-process serialization. Existing and in-memory aggregates must
+have exactly the seven keys above with non-negative integer values or the
+writer and evidence validator fail closed.
+
+The harness may construct an embedding client only inside the isolated construction test. Every network invocation counter must remain zero throughout mandatory baseline execution. Two all-zero backend processes must still produce the same all-zero aggregate; any earlier nonzero process makes the entire run permanently nonzero and invalid.
 
 ## 3. Evidence layout
 
@@ -111,7 +120,7 @@ $StageADeps = "docker volume create --label com.docker.compose.project=dim0-task
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '18-browser-harness-self-test' -CommandText "$WebUiStageA 'node --test scripts/task189-localize-dotlottie.test.mjs scripts/task189-browser-observation.test.mjs'"
 ```
 
-Expected result: each exit file contains `0`; backend unit tests, the positive provider-tripwire self-test, evidence/runtime/browser harness self-tests, frontend type/lint/tests, and the production Web UI build pass. The focused tripwire self-test must prove that supported provider boundaries increment their counters and fail before outbound I/O; it does not make a real provider call. Image-build and dependency-install network access is environment setup, not a provider call, and remains separate from the egress-contained mandatory checks.
+Expected result: each exit file contains `0`; backend unit tests, the positive provider-tripwire self-test, evidence/runtime/browser harness self-tests, frontend type/lint/tests, and the production Web UI build pass. The focused tripwire self-test must drive all seven boundaries, the router aliases and search dictionary used at runtime, prebuilt fetch/image/Daytona tool objects, and both configured and direct/BYOK OCR construction paths; every probe must increment its construction/invocation evidence and fail before the test's disabled socket sentinel observes network I/O. It also starts separate writer processes to prove restart monotonicity, concurrent lossless merging, strict schema rejection, and valid two-process all-zero aggregation. It does not make a real provider call. Image-build and dependency-install network access is environment setup, not a provider call, and remains separate from the egress-contained mandatory checks.
 
 The Stage A pytest bootstrap replaces only the imported Doppler configuration
 loader with a deterministic empty configuration before test collection. Docker

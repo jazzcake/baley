@@ -93,6 +93,8 @@ try {
     Assert-True ($failureRecord.command -eq $failureCommand) 'Failing native command provenance changed.'
 
     $valid = New-EvidenceFixture 'valid'
+    [IO.File]::WriteAllText((Join-Path $valid 'provider-invocations.json.lock'), "lock`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $valid 'provider-constructions.json.lock'), "lock`n", [Text.UTF8Encoding]::new($false))
     $benignLog = @(
         'passed',
         'HTTPException in reset_password: Password reset is disabled',
@@ -141,6 +143,18 @@ try {
     $malformed = New-EvidenceFixture 'malformed'
     [IO.File]::WriteAllText((Join-Path $malformed 'browser-console.json'), '{not-json}', [Text.UTF8Encoding]::new($false))
     Assert-FinalizeFails $malformed 'Unsupported encoding or malformed structured evidence artifact'
+
+    foreach ($invalidCase in @(
+        @{ Name = 'counter-string'; Value = '"0"' },
+        @{ Name = 'counter-negative'; Value = '-1' },
+        @{ Name = 'counter-fraction'; Value = '0.5' },
+        @{ Name = 'counter-boolean'; Value = 'false' }
+    )) {
+        $invalidCounter = New-EvidenceFixture $invalidCase.Name
+        $counterJson = '{"llm":' + $invalidCase.Value + ',"embedding":0,"search":0,"fetch":0,"ocr":0,"image":0,"daytona":0}'
+        [IO.File]::WriteAllText((Join-Path $invalidCounter 'provider-invocations.json'), $counterJson, [Text.UTF8Encoding]::new($false))
+        Assert-FinalizeFails $invalidCounter 'Tripwire values must be non-negative integers'
+    }
 
     $credentialUrl = New-EvidenceFixture 'credential-url'
     [IO.File]::WriteAllText((Join-Path $credentialUrl '20-browser-check.txt'), "https://user:password@example.test/`n", [Text.UTF8Encoding]::new($false))
