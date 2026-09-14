@@ -127,10 +127,12 @@ Expected services are exactly `postgres-test`, `qdrant-test`, `redis-test`, `bac
 
 ```powershell
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '30-persistence-up' -CommandText "$Compose up -d postgres-test qdrant-test redis-test"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '31-persistence-ps' -CommandText "$Compose ps"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '32-postgres-health' -CommandText "$Compose exec -T postgres-test pg_isready -U topix -d topix"
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '33-qdrant-health' -CommandText 'Invoke-RestMethod http://localhost:16335/readyz | ConvertTo-Json -Compress'
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '34-redis-health' -CommandText "$Compose exec -T redis-test redis-cli ping"
+$PersistenceReady = "`$deadline=(Get-Date).AddMinutes(3); `$ready=`$false; do { docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file `"$BaselineEnv`" --profile test exec -T postgres-test pg_isready -U topix -d topix; `$pg=`$LASTEXITCODE; docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file `"$BaselineEnv`" --profile test exec -T redis-test redis-cli ping; `$redis=`$LASTEXITCODE; `$qdrant=`$false; try { `$null=Invoke-RestMethod http://localhost:16335/readyz; `$qdrant=`$true } catch {}; if (`$pg -eq 0 -and `$redis -eq 0 -and `$qdrant) { `$ready=`$true; break }; Start-Sleep -Seconds 2 } while ((Get-Date) -lt `$deadline); if (-not `$ready) { throw 'Persistence readiness deadline exceeded.' }; Write-Output 'PostgreSQL, Qdrant, and Redis are ready.'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '31-persistence-ready-wait' -CommandText $PersistenceReady
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '32-persistence-ps' -CommandText "$Compose ps"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '33-postgres-health' -CommandText "$Compose exec -T postgres-test pg_isready -U topix -d topix"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '34-qdrant-health' -CommandText 'Invoke-RestMethod http://localhost:16335/readyz | ConvertTo-Json -Compress'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '35-redis-health' -CommandText "$Compose exec -T redis-test redis-cli ping"
 ```
 
 Expected results: PostgreSQL reports accepting connections for database/user `topix`; Qdrant `/readyz` succeeds; Redis prints `PONG`; all three containers are running and PostgreSQL/Redis are healthy. Capture `docker compose ... logs --no-color --tail 200` if any check fails.
