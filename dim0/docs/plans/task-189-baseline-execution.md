@@ -31,6 +31,7 @@ WP0 must provide these test-only assets before the acceptance run:
 
 - `backend/test/integration/baseline/test_provider_free_baseline.py`: exercises FastAPI lifespan plus board/note/link storage with live PostgreSQL, Qdrant, and Redis and a deterministic 512-dimensional fake embedder.
 - `backend/test/integration/baseline/provider_tripwire.py`: replaces LLM, embedding, search, fetch, OCR, image, and Daytona network clients; it records construction and invocation separately and fails on any outbound invocation.
+- `backend/test/integration/baseline/provider_free_pytest.py`: prevents the backend unit suite from consulting Doppler by returning an empty configuration before application modules are collected; it is used only in the network-isolated Stage A container.
 - `webui/src/features/agent/engine/__tests__/provider-free-baseline.test.tsx`: mounts the real `HarnessCanvas` application boundary and asserts that page loading plus a basic non-agent viewport interaction construct no BYOK/provider LLM client instances.
 - `build/docker-compose.baseline.yml`: a test-only overlay that adds provider-tripwire configuration without adding a provider service or weakening the upstream PostgreSQL/Qdrant/Redis topology.
 
@@ -60,6 +61,7 @@ $Init = & $Harness -Action Initialize | ConvertFrom-Json
 $EvidenceRoot = $Init.runDirectory
 $BaselineEnv = $Init.baselineEnv
 $Manifest = Join-Path $EvidenceRoot 'manifest.sha256'
+$Compose = "docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file `"$BaselineEnv`" --profile test"
 & $Harness -Action Preflight -RunDirectory $EvidenceRoot
 ```
 
@@ -75,24 +77,45 @@ For every command, use the helper's `Run` action with a unique `NN-lowercase-keb
 
 ## 4. Stage A — static and build baseline
 
-Run repository checks before starting services:
+Run repository checks before starting services. The Windows host does not need
+GNU Make or project package installation: the exact commands behind the Make
+targets run inside the locked backend and Web UI images. The first two commands
+build those images from the current checkout, then install the backend's locked
+development dependencies into a run-unique, project-labelled Docker volume.
+That dependency fetch is recorded separately and is the only Stage A command
+with container network access. Every acceptance check runs with Docker network
+mode `none`, blank provider credentials, and the provider tripwire enabled.
 
 ```powershell
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '10-lint-backend' -CommandText 'make lint-backend' -WorkingDirectory dim0
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '11-test-backend' -CommandText 'make test-backend' -WorkingDirectory dim0
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '12-lint-ui' -CommandText 'make lint-ui' -WorkingDirectory dim0
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '13-test-ui' -CommandText 'make test-ui' -WorkingDirectory dim0
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '14-webui-build' -CommandText 'npm --prefix webui run build' -WorkingDirectory dim0
-& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '15-provider-tripwire-self-test' -CommandText 'uv run pytest -q test/integration/baseline/test_provider_tripwire.py' -WorkingDirectory dim0/backend
+$StageAVenv = "dim0-task189_stage_a_$((Split-Path $EvidenceRoot -Leaf) -replace '[^a-zA-Z0-9_.-]', '-')"
+$BlankProviderEnv = '-e DOPPLER_TOKEN= -e OPENAI_API_KEY= -e ANTHROPIC_API_KEY= -e OPENROUTER_API_KEY= -e MISTRAL_API_KEY= -e PERPLEXITY_API_KEY= -e TAVILY_API_KEY= -e LINKUP_API_KEY= -e EXA_API_KEY= -e DAYTONA_API_KEY= -e OPENAI_AGENTS_DISABLE_TRACING=1 -e OPENAI_AGENTS_DONT_LOG_MODEL_DATA=1 -e OPENAI_AGENTS_DONT_LOG_TOOL_DATA=1 -e LITELLM_LOCAL_MODEL_COST_MAP=True -e DIM0_BASELINE_PROVIDER_TRIPWIRE=1'
+$BackendStageA = "docker run --rm --label com.docker.compose.project=dim0-task189 --network none --mount `"type=volume,source=$StageAVenv,target=/app/.venv`" $BlankProviderEnv dim0-task189-backend-test:latest sh -lc"
+$WebUiStageA = 'docker run --rm --label com.docker.compose.project=dim0-task189 --network none -e DIM0_BASELINE_PROVIDER_TRIPWIRE=1 -e "NODE_OPTIONS=--max_old_space_size=4096 --localstorage-file=/tmp/task189-localstorage" --entrypoint sh dim0-task189-webui-test:latest -lc'
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '08-stage-a-images' -CommandText "$Compose build backend-test webui-test"
+$StageADeps = "docker volume create --label com.docker.compose.project=dim0-task189 $StageAVenv; if (`$LASTEXITCODE -ne 0) { throw 'Stage A venv volume creation failed.' }; docker run --rm --label com.docker.compose.project=dim0-task189 --network bridge --mount `"type=volume,source=$StageAVenv,target=/app/.venv`" $BlankProviderEnv dim0-task189-backend-test:latest sh -lc 'uv sync --frozen'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '09-stage-a-backend-deps' -CommandText $StageADeps
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '10-lint-backend' -CommandText "$BackendStageA 'uv run --offline --frozen ruff check topix test/unit'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '11-test-backend' -CommandText "$BackendStageA 'uv run --offline --frozen pytest -p test.integration.baseline.provider_free_pytest test/unit'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '12-lint-ui' -CommandText "$WebUiStageA 'npm run check-all'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '13-test-ui' -CommandText "$WebUiStageA 'npm run test:run'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '14-webui-build' -CommandText "$WebUiStageA 'npm run build'"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '15-provider-tripwire-self-test' -CommandText "$BackendStageA 'uv run --offline --frozen pytest -q test/integration/baseline/test_provider_tripwire.py'"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '16-evidence-finalization-self-test' -CommandText 'powershell -NoProfile -File build/capture-task-189-evidence.tests.ps1' -WorkingDirectory dim0
 ```
 
 Expected result: each exit file contains `0`; backend unit tests, the positive provider-tripwire self-test, evidence finalization self-tests, frontend type/lint/tests, and the production Web UI build pass. The focused tripwire self-test must prove that supported provider boundaries increment their counters and fail before outbound I/O; it does not make a real provider call. A dependency-install network fetch is environment setup, not a provider call, but it must be recorded separately from the acceptance run.
 
+The Stage A pytest bootstrap replaces only the imported Doppler configuration
+loader with a deterministic empty configuration before test collection. Docker
+network mode `none` remains the enforcement boundary for all test commands.
+The Web UI image currently uses Node 25 although the package supports Node 20
+and 22; the run-local `--localstorage-file` option restores Node's complete
+Web Storage implementation for the jsdom suite without changing application
+code or persisting browser state outside the disposable container.
+
 ## 5. Stage B — Compose expansion and images
 
 ```powershell
-$Compose = "docker compose -p dim0-task189 -f dim0/build/docker-compose.yml -f dim0/build/docker-compose.baseline.yml --env-file `"$BaselineEnv`" --profile test"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '20-compose-config' -CommandText "$Compose config"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '21-compose-services' -CommandText "$Compose config --services"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '22-image-build' -CommandText "$Compose build backend-test webui-test"
@@ -205,6 +228,7 @@ Before cleanup, record bounded logs, container/volume names, tripwire counters, 
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '61-compose-ps-final' -CommandText "$Compose ps --all"
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '62-git-status-after' -CommandText 'git status --short -- dim0'
 & $Harness -Action Run -RunDirectory $EvidenceRoot -Name '63-compose-down' -CommandText "$Compose down --remove-orphans"
+& $Harness -Action Run -RunDirectory $EvidenceRoot -Name '64-stage-a-volume-cleanup' -CommandText "docker volume rm $StageAVenv"
 & $Harness -Action ValidateTripwires -RunDirectory $EvidenceRoot
 & $Harness -Action Finalize -RunDirectory $EvidenceRoot
 Remove-Item Env:POSTGRES_HOST,Env:POSTGRES_PORT,Env:QDRANT_HOST,Env:QDRANT_PORT,Env:REDIS_HOST,Env:REDIS_PORT,Env:DIM0_BASELINE_PROVIDER_TRIPWIRE,Env:DIM0_BASELINE_FAKE_EMBEDDING_DIMENSION -ErrorAction SilentlyContinue
