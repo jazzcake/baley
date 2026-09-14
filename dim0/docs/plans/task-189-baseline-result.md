@@ -2,9 +2,124 @@
 
 Date: 2026-09-15 (Asia/Seoul)
 
-Outcome: **not accepted; complete provider-free acceptance passed through cleanup, but fail-closed secret screening rejected the evidence package before sealing**
+Outcome: **not accepted; the newest complete provider-free acceptance passed through cleanup, but fail-closed secret screening rejected the positive tripwire log before sealing**
 
 Execution source: [`task-189-baseline-execution.md`](./task-189-baseline-execution.md)
+
+---
+
+## Fresh authoritative attempt 2026-09-15 07:20 KST — failed at Finalize
+
+Outcome: **not accepted; all 48 recorded acceptance commands passed, but no
+sealed manifest exists**
+
+External evidence:
+`C:\ProgramData\Dim0\validation\task-189\run-20260915-072020-758-8d8b938b`
+
+Evidence run ID: `run-20260915-072020-758-8d8b938b`
+
+Pinned Baley HEAD: `5cd85bed4f7b253dad53bd39703558e622601171`
+
+Manifest SHA-256: **not generated**. `Finalize` failed closed while screening
+`15-provider-tripwire-self-test.txt` as `credential-field`; the helper removed
+its partial finalization artifacts, so `manifest.sha256`, `finalized.json`, and
+`secret-screening.json` are absent. The diagnostic SHA-256 of `commands.jsonl`
+is `ce3c961d62a7ab07aea54685c4eb973362f548a492e9b97d6b502899bca91d92`;
+it is not a manifest hash.
+
+This is the newest authoritative attempt at the requested pinned correction
+commit. It does not supersede an earlier rejected or unsealed run with an
+accepted package: Task #189 remains rejected pending a fresh complete run that
+successfully reaches the helper-sealed manifest.
+
+### Result and first failure
+
+`Initialize`, `Preflight`, Stages A through F, and `ValidateTripwires` ran in
+the documented order without product or harness changes. `commands.jsonl`
+contains exactly 48 records, every recorded command exited `0`, and all 48
+`*.exit.txt` files contain `0`. Cleanup removed the five Task #189 containers,
+the internal network, the run-unique Stage A volume, and the disposable browser
+image; the named application and persistence volumes remain by design.
+
+The first failure was the unrecorded helper action `Finalize`. The corrected
+narrow tiktoken exception behaved as intended: screening accepted the ordinary
+locked-package/build-log line in `08-stage-a-images.txt` and continued through
+the earlier artifacts. It then matched the positive tripwire traceback source
+fragment `, api_key=x_provider_key)` in
+`15-provider-tripwire-self-test.txt`. That fragment is a Python identifier, not
+a credential value, but the strict scanner correctly failed closed under its
+current rule. The preserved evidence was not edited or manually sealed.
+
+### Stage summary
+
+| Stage | Result | Authoritative evidence |
+| --- | --- | --- |
+| Initialize and Preflight | **Pass** | `run-provenance.json`, `01`-`05`; exact pinned SHA, clean `dim0` scope, Docker/Compose versions, owned-or-clear names, and zero host publication |
+| A — static/build baseline | **Pass** | `08`-`18`; local images and locked dependencies, Ruff, 708 backend tests, Web UI check, 1,356 Web UI tests, production build, four positive tripwire tests, and all harness self-tests |
+| B — Compose expansion/images | **Pass** | `20`-`22`; exactly five services, only the internal default network, no service `ports`, and locally built app images |
+| C — persistence services | **Pass** | `30`-`36`; PostgreSQL/Qdrant/Redis ready and healthy with exact running image IDs and repo digests |
+| D — storage contract | **Pass** | `40-storage-contract.txt`; idempotent schema, canonical board/note/link CRUD, deterministic 512D vectors, Redis sequence, and vector mutation/failure semantics |
+| E — app/restart/browser/isolation | **Pass** | `50`-`65`; initial and post-restart API/UI success, persisted records, real Control+wheel zoom, sanitized HAR, no host mappings/default routes, and exact five-service final state |
+| F — capture and cleanup | **Pass through ValidateTripwires; fail at Finalize** | `70`-`75` all exit `0`; cleanup and all-zero schema validation passed, then strict screening rejected `15-provider-tripwire-self-test.txt` before sealing |
+
+### Provider boundaries, aggregation, and egress
+
+`15-provider-tripwire-self-test.txt` records four passing positive tests. They
+drive all seven declared boundaries (`llm`, `embedding`, `search`, `fetch`,
+`ocr`, `image`, and `daytona`), including captured runtime router/tool aliases,
+the search dispatch dictionary, prebuilt fetch/image/Daytona seams, and both
+configured and direct/BYOK OCR construction paths. Every probe is blocked
+before the disabled-socket sentinel can observe provider I/O.
+
+The same tests pass separate-process restart monotonicity, concurrent lossless
+merging, strict existing-schema rejection, and valid two-process all-zero
+aggregation. The final `provider-constructions.json` and
+`provider-invocations.json` retain exactly the seven required keys with integer
+value `0` for every key across the backend stop/start and the post-restart
+one-off process; `ValidateTripwires` passed.
+
+The expanded and live topology contains exactly `postgres-test`,
+`qdrant-test`, `redis-test`, `backend-test`, and `webui-test` on the sole
+`internal: true` network. `64-runtime-isolation.txt` records no configured or
+effective host mappings and no default route in any service. The browser
+observer records real Control+wheel zoom from `100%` to `110%`, ping `204`,
+models `200` with 20 entries, and both `providerRequests: 0` and
+`externalRequests: 0` in the sanitized HAR/result. `70-compose-logs.txt`
+discloses two blocked Qdrant telemetry attempts to
+`https://telemetry.qdrant.io/`; they are external-request intent, not successful
+egress and not a Dim0 provider invocation.
+
+### Acceptance criteria
+
+| # | Exact criterion | Result | Authoritative evidence / blocker |
+| --- | --- | --- | --- |
+| 1 | Pinned SHA, dirty state, Docker versions, exact commands/exits/logs, strict secret screen, and helper-sealed SHA-256 manifest outside Git | **Fail** | Provenance and all 48 zero-exit command records exist externally, and the narrow tiktoken package-pin case no longer triggers, but `Finalize` rejects the synthetic `api_key=x_provider_key` traceback; no clear screening result, manifest, marker, or manifest hash exists. |
+| 2 | Backend lint/unit and Web UI check/test/production build pass | **Pass** | `10`-`14`; Ruff passed, 708 backend tests passed, Web UI check passed, 1,356 tests passed, and the production build passed. |
+| 3 | Exactly five internal-network services, local app images, and immutable persistence identities | **Pass** | `20`-`22`, `36-persistence-image-identities.txt`, `64-runtime-isolation.txt`, and `65-five-service-final-state.txt`. |
+| 4 | PostgreSQL/Qdrant/Redis readiness and idempotent schema application | **Pass** | `31`-`35` and `40-storage-contract.txt`. |
+| 5 | FastAPI lifespan, initial/post-restart backend and UI success, and exactly five final services | **Pass** | `40`, `50`-`60`, and `65`; ping `204`, models `200` with 20 entries, UI `200`, and all five services running with reported health states healthy. |
+| 6 | Canonical board/note/link CRUD with deterministic 512-dimensional embeddings | **Pass** | `40-storage-contract.txt`. |
+| 7 | PostgreSQL metadata, Qdrant content/vector payloads, and Redis sequence persist across restart | **Pass** | `56`-`61`; stores became ready before backend restart and the read-only persisted-record test passed. |
+| 8 | Text mutation embeds, spatial/style-only mutation does not, and fake embedding failure prevents vector mutation | **Pass** | `40-storage-contract.txt`; no zero-vector fallback was written. |
+| 9 | All seven boundaries and construction seams are positively guarded, run-wide counters remain valid/all-zero across restart, and mandatory validation has no external route | **Pass** | `15-provider-tripwire-self-test.txt`, both provider counter JSON files, `56`-`61`, and `64-runtime-isolation.txt`. |
+| 10 | Real canvas interaction, internal backend success, sanitized HAR, zero external/provider browser requests, and no agent/tool flow | **Pass** | `63-browser-observation.txt`, `browser-console.json`, and `browser-network.har`; zoom changed `100%` to `110%` with Control held and both request counters are zero. |
+| 11 | Scoped Git cleanliness and no generated acceptance evidence in Git | **Pass** | `02-git-status-before.txt` and `72-git-status-after.txt` are empty for `dim0`; the root `debug.log` was neither read nor modified. |
+
+### Preservation and residual risks
+
+- A bounded read-only verification of the immediately preceding failed run's
+  `commands.jsonl` reproduced its documented SHA-256
+  `0da8a8f89e97af823a16b5d03be699ad8da3a029c483a1c022d57aa8342036c4`;
+  that prior evidence was not altered.
+- This attempt remains unaccepted solely because strict screening and sealing
+  did not complete. A separate reviewed harness correction must distinguish a
+  traceback identifier such as `api_key=x_provider_key` from credential
+  assignments without weakening actual secret detection, followed by a wholly
+  fresh `Initialize` through `Finalize` run.
+- This provider-free run does not characterize real provider credentials,
+  billing, latency, or availability, and it proves container-internal behavior
+  rather than host ingress. The helper seal, when a future run succeeds, detects
+  later changes but does not make the filesystem immutable.
 
 ---
 
