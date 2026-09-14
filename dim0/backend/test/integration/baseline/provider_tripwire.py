@@ -129,6 +129,7 @@ def install_provider_tripwire(  # noqa: C901
     from topix.agents.websearch import handler as websearch_handler
     from topix.agents.websearch import tools as web_tools
     from topix.api.router import ai as ai_router
+    from topix.config import config as config_module
     from topix.nlp import embed as embed_module
     from topix.nlp import parser as parser_module
     from topix.nlp.pipeline import parsing
@@ -187,6 +188,11 @@ def install_provider_tripwire(  # noqa: C901
         return qdrant_client_type(*args, **kwargs)
 
     set_attribute(openai, "AsyncOpenAI", forbidden_embedding_construction)
+    # The baseline carries its complete non-secret configuration in /.env.
+    # Do not let the test-profile startup consult Doppler before the provider
+    # tripwires can observe the application. This is deliberately test-only
+    # and leaves every LLM/embedding tripwire intact.
+    set_attribute(config_module, "load_secrets", lambda *_args, **_kwargs: "{}")
     set_attribute(qdrant_store, "AsyncQdrantClient", baseline_qdrant_client)
     set_attribute(embed_module, "AsyncOpenAI", forbidden_embedding_construction)
     set_attribute(embed_module.OpenAIEmbedder, "from_config", classmethod(lambda cls: embedder))

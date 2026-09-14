@@ -56,10 +56,20 @@ services:
     container_name: dim0-task189-webui
     environment:
       DIM0_BASELINE_PROVIDER_TRIPWIRE: "1"
+      # The disposable browser observer shares this internal Compose network,
+      # so its browser can reach the real backend without using a host gateway.
+      API_ORIGIN: http://backend-test:8082
     # Windows Git checkouts may present this script with CRLF. Normalize only
     # the disposable container copy before execution; product sources and the
     # host checkout remain untouched.
-    command: ["/bin/sh", "-c", "sed -i 's/\\r$//' /docker-entrypoint.sh && exec /docker-entrypoint.sh"]
+    command: ["/bin/sh", "-c", "node /app/scripts/task189-localize-dotlottie.mjs && sed -i 's/\\r$//' /docker-entrypoint.sh && exec /docker-entrypoint.sh"]
     ports: !override
       - "127.0.0.1:${BASELINE_APP_PORT:-15175}:80"
       - "127.0.0.1:${BASELINE_MINI_APP_PORT:-15182}:5001"
+
+networks:
+  default:
+    # Mandatory provider-free application and browser checks can reach only
+    # the five baseline services. Published loopback ports remain available
+    # to the host-side readiness probes.
+    internal: true
