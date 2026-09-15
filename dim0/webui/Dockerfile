@@ -7,6 +7,7 @@ ENV NODE_OPTIONS=--max_old_space_size=4096
 
 # Install deps first for caching
 COPY webui/package.json webui/package-lock.json* ./
+COPY webui/scripts/apply-canvas-harness-downstream-patches.mjs ./scripts/
 RUN npm ci
 
 # Copy source and build BOTH bundles:

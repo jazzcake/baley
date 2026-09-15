@@ -197,6 +197,61 @@ in this file. Link their documented location and integrity hash instead.
 - **Non-Git steps/evidence:** Rebuild and recreate only the Web UI container to
   update the live Tailscale endpoint; no persistence service or mapping changes.
 
+### BD-005 — Cardinal connector handles
+
+- **Introduced:** 2026-09-15
+- **Disposition:** **Carry**, unless canvas-harness adds configurable selection
+  chrome and drag-to-connect handles with the same interaction contract.
+- **Task/commit:** `feat(webui): add cardinal connector handles`
+- **Symptom/requirement:** A selected node showed eight square resize handles.
+  The four side-midpoint squares were unnecessary; the desired chrome keeps
+  square resize handles only at the corners and uses outward purple triangles
+  at north/east/south/west to start a connector directly from that boundary.
+- **First divergence:** `@canvas-harness/core` 0.1.27 hard-coded all eight
+  entries in `RESIZE_HANDLES`, while `drawResizeHandles` independently iterated
+  every key returned by `handleWorldPositions`. The React interaction layer had
+  no consumer hook for custom handles, so a Dim0 overlay alone could initiate
+  an edge but could not remove the library's rendered or hit-tested midpoint
+  resize squares.
+- **Change:** A fail-fast postinstall patch restricts the dependency's resize
+  render and hit-test lists to `nw/ne/se/sw`. A Canvas child overlay renders
+  rotation-aware `n/e/s/w` triangles and captures their pointer gesture. After
+  4 px of movement it selects the Connector tool, writes the standard
+  `creating-edge` draft, and commits one edge using the existing Arrow-tool
+  style and scope factories. The source uses the exact node-local side midpoint
+  so rotated nodes remain correctly attached.
+- **Instrumentation:** Development builds log
+  `[baley.dim0:cardinal-connector]` at pointer-down, drag-start, commit, and
+  cancel with the event/source/target decision, application tool, canvas
+  selection, library interaction state, and rendered handle DOM state.
+- **Affected paths:**
+  `webui/src/features/board/harness/canvas/cardinal-connector*.{ts,tsx}`,
+  `harness-canvas.tsx`,
+  `webui/scripts/apply-canvas-harness-downstream-patches.mjs`, `package.json`,
+  and `webui/Dockerfile`.
+- **Rebase notes:** Keep the dependency pinned at a build compatible with the
+  exact compiled seams. The postinstall script intentionally fails unless each
+  original seam occurs exactly once. On a canvas-harness upgrade, first check
+  for a public custom-handle API; otherwise update both the ESM and CJS seam
+  strings and reconfirm `RESIZE_HANDLES === ["nw","ne","se","sw"]` plus the
+  renderer loop. Do not restore the removed white masking rectangle in the
+  React overlay; it leaves a visible square around the triangle.
+- **Focused verification:** Eight geometry/target tests pass. Docker Chromium
+  must show exactly four DOM triangle handles in `n/e/s/w` order, only four
+  corner squares in the screenshot, Connector `aria-pressed=true` after drag
+  begins, and one persisted `edge.add` whose east source equals `(node.w,
+  node.h / 2)`. Provider requests and browser errors must both remain zero.
+- **Broad verification:** Run `npm run check-all`, the focused Vitest file, and
+  the production Docker build so postinstall executes before TypeScript/Vite.
+- **Non-Git steps/evidence:** Final observation:
+  `C:\ProgramData\Dim0\validation\ui-modifications\bd-005-cardinal-connectors-20260915-141515`;
+  `observation.json` SHA-256
+  `16e6a67f7c6f793b7801648027227e97d3163a89b629fb768706d17091a532d3`.
+  Live image digest:
+  `sha256:2a20b6cbefb69561e6bc44f446bb562318863b654434f43698be05028c3251e6`.
+  Recreate only `dim0-task189-webui`; keep the existing Tailnet mappings and
+  persistence services unchanged.
+
 ## Operational-only history
 
 ### OPS-001 — Tailnet-only live evaluation endpoint

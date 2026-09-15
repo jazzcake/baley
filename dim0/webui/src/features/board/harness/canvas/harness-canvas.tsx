@@ -81,6 +81,7 @@ import { useViewportPersistence } from "./use-viewport-persistence"
 import { useTrackBoardCameraMotion } from "./board-camera-motion"
 import { useSidebarContentsSync } from "./use-sidebar-contents-sync"
 import { HarnessWrapRefProvider } from "./wrap-ref-provider"
+import { CardinalConnectorHandles } from "./cardinal-connector-handles"
 
 
 /**
@@ -440,6 +441,7 @@ export function HarnessCanvas({ local = false }: { local?: boolean } = {}) {
             ready={ready}
             viewMode={viewMode}
             canCollab={!local}
+            canEdit={canEdit}
             arrowDefaults={arrowDefaults}
             onCreateDrag={handleCreateDrag}
             onDoubleClick={handleDoubleClick}
@@ -459,6 +461,7 @@ type InnerProps = {
   ready: boolean
   viewMode: "board" | "files" | "list"
   canCollab: boolean
+  canEdit: boolean
   arrowDefaults: ArrowToolDefaults
   onCreateDrag: ReturnType<typeof useCreateHandlers>["handleCreateDrag"]
   onDoubleClick: (e: CanvasPointerEvent) => void
@@ -472,6 +475,7 @@ function HarnessCanvasInner({
   ready,
   viewMode,
   canCollab,
+  canEdit,
   arrowDefaults,
   onCreateDrag,
   onDoubleClick,
@@ -505,7 +509,15 @@ function HarnessCanvasInner({
             onCreateDrag={onCreateDrag}
             onDoubleClick={onDoubleClick}
             onRenderer={onRenderer}
-          />
+          >
+            {!presenting && (
+              <CardinalConnectorHandles
+                canEdit={canEdit}
+                color={theme.selectionColor}
+                defaults={arrowDefaults}
+              />
+            )}
+          </Canvas>
           {/*
             Paper grain over the canvas surface: sits above the drawn
             scene (z-index 1) but below all chrome (z-50+), pointer-events

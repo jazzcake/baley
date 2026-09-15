@@ -4,6 +4,7 @@
   "version": "0.3.94",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/apply-canvas-harness-downstream-patches.mjs",
     "dev": "dotenv -e ../${npm_config_envfile:-.env} -- vite",
     "dev:mini-app": "dotenv -e ../${npm_config_envfile:-.env} -- vite --config vite.mini-app.config.ts",
     "dev:tauri": "dotenv -e ../${npm_config_envfile:-.env} -- vite --port 1420 --strictPort",
