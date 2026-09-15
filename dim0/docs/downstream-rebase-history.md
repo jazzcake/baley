@@ -157,6 +157,46 @@ in this file. Link their documented location and integrity hash instead.
   checking the existing Tailscale Serve URL; the Serve mapping itself does not
   change.
 
+### BD-004 — Sheet body selection before inline editing
+
+- **Introduced:** 2026-09-15
+- **Disposition:** **Carry**, unless upstream implements the same explicit
+  select-then-edit interaction contract for custom Sheet nodes.
+- **Task/commit:** `fix(webui): select sheet body before editing`
+- **Symptom/requirement:** Clicking a Sheet's text body did not select the node;
+  users had to click its title area. The desired contract is one body click to
+  select, another single click to do nothing, and a double-click on a selected
+  body to enter inline editing.
+- **First divergence:** `useStopCanvasGesture(bodyRef)` correctly stopped the
+  native `pointerdown` before canvas-harness could capture an interactive TipTap
+  surface, but `SheetView`'s subsequent React `click` handler only stopped
+  propagation and never copied the intended selection into the canvas store.
+  The library selection state therefore remained unchanged while the rendered
+  Sheet body consumed the event.
+- **Change:** Resolve Sheet body input through an explicit `select | edit | none`
+  state decision. An unselected body selects its node, a selected body's single
+  click is inert, and only a selected editable body double-click enters TipTap.
+  Double-clicks during editing remain inert at the wrapper so native text word
+  selection is preserved.
+- **Instrumentation:** Development builds log `[baley.dim0:sheet-interaction]`
+  with the user event, resolved action, edit permission/state, canvas selection,
+  library interaction mode, active element, and rendered `data-sheet-*` state.
+- **Affected paths:**
+  `webui/src/features/board/harness/node-types/sheet/{view,interaction}.ts`
+  and `interaction.test.ts`.
+- **Rebase notes:** Preserve the native pointerdown stop; removing it lets the
+  canvas capture gestures before TipTap receives them. Reconcile only the React
+  click action after checking whether upstream's custom-node event boundary now
+  performs selection itself.
+- **Focused verification:** Six state-decision tests must pass. A real Chromium
+  observation must create a local Note and show rendered state transitions
+  `false/false -> true/false -> true/false -> true/true` for initial state,
+  first click, selected single click, and selected double-click respectively;
+  the final state must contain an editable TipTap surface and no page error.
+- **Broad verification:** Run Web UI type-check, ESLint, and production build.
+- **Non-Git steps/evidence:** Rebuild and recreate only the Web UI container to
+  update the live Tailscale endpoint; no persistence service or mapping changes.
+
 ## Operational-only history
 
 ### OPS-001 — Tailnet-only live evaluation endpoint

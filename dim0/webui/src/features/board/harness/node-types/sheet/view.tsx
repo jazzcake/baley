@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react"
 import { NotepadIcon } from "@phosphor-icons/react"
 import type { Editor } from "@tiptap/react"
 import { type NodeId } from "@canvas-harness/core"
-import { useCanvasStore, useNode } from "@canvas-harness/react"
+import { useCanvasStore, useNode, useSelection } from "@canvas-harness/react"
 import { removeNodeSubtree } from "@/features/board/harness/graph/subtree"
 import { IconPropertyView } from "@/components/icons/icon-property-view"
 import { useTheme } from "@/components/theme-provider"
@@ -20,6 +20,7 @@ import {
 } from "../../shared-views"
 import { useBoardAppStore } from "../../store/board-app-store"
 import { SheetColorPicker } from "./sheet-color-picker"
+import { resolveSheetBodyAction, type SheetBodyAction, type SheetBodyEvent } from "./interaction"
 import { SheetEditorToolbar } from "./sheet-toolbar"
 import { SheetInlineEditor } from "./sheet-inline-editor"
 
@@ -32,6 +33,40 @@ const useSheetMount = createDeferredMount({ cap: 12 })
 
 export type SheetViewProps = {
   id: NodeId
+}
+
+
+type SheetInteractionTrace = {
+  event: SheetBodyEvent
+  action: SheetBodyAction
+  nodeId: NodeId
+  canEdit: boolean
+  editing: boolean
+  selectionBefore: readonly string[]
+  interactionMode: string
+  rendered: {
+    selected: string | undefined
+    editing: string | undefined
+    role: string | null
+    activeElement: string | null
+  }
+}
+
+
+/** Emit development-only evidence at the sheet DOM/canvas-store boundary. */
+const traceSheetInteraction = (
+  element: HTMLDivElement,
+  trace: SheetInteractionTrace,
+): void => {
+  if (!import.meta.env.DEV) return
+  console.debug("[baley.dim0:sheet-interaction]", {
+    ...trace,
+    rendered: {
+      ...trace.rendered,
+      selected: element.dataset.sheetSelected,
+      editing: element.dataset.sheetEditing,
+    },
+  })
 }
 
 
@@ -64,6 +99,7 @@ const formatStampDate = (iso: string): string => {
 export function SheetView({ id }: SheetViewProps) {
   const node = useNode(id)
   const store = useCanvasStore()
+  const selection = useSelection()
   const { resolvedTheme } = useTheme()
   const openNodeSurface = useBoardAppStore((s) => s.openNodeSurface)
   const canEdit = useBoardAppStore((s) => s.canEdit)
@@ -148,6 +184,43 @@ export function SheetView({ id }: SheetViewProps) {
     if (canEdit) setEditing(true)
   }
 
+  const applyBodyInteraction = (
+    event: React.MouseEvent<HTMLDivElement>,
+    eventType: SheetBodyEvent,
+  ): void => {
+    event.stopPropagation()
+    const selectionBefore = store.getSelection()
+    const selected = selectionBefore.includes(id)
+    const action = resolveSheetBodyAction({
+      event: eventType,
+      selected,
+      editing,
+      canEdit,
+    })
+
+    if (action === "select") store.setSelection([id])
+    if (action === "edit") {
+      setCaretCoords({ x: event.clientX, y: event.clientY })
+      enterEdit()
+    }
+
+    traceSheetInteraction(event.currentTarget, {
+      event: eventType,
+      action,
+      nodeId: id,
+      canEdit,
+      editing,
+      selectionBefore: selectionBefore.map(String),
+      interactionMode: store.getInteractionState().mode,
+      rendered: {
+        selected: event.currentTarget.dataset.sheetSelected,
+        editing: event.currentTarget.dataset.sheetEditing,
+        role: event.currentTarget.getAttribute("role"),
+        activeElement: document.activeElement?.tagName ?? null,
+      },
+    })
+  }
+
   return (
     <div
       ref={wrapRef}
@@ -157,22 +230,10 @@ export function SheetView({ id }: SheetViewProps) {
         ref={bodyRef}
         role={!editing && canEdit ? "button" : undefined}
         tabIndex={!editing && canEdit ? 0 : undefined}
-        onClick={(e) => {
-          // Swallow the click so it doesn't deselect / reach the canvas; a
-          // single click no longer opens the modal (double-click edits; the
-          // expand traffic-light still opens the full-screen surface).
-          e.stopPropagation()
-        }}
-        onDoubleClick={(e) => {
-          e.stopPropagation()
-          // Select the node (show handles) alongside entering edit — the
-          // body swallows pointerdown, so the lib's gesture never selects it.
-          store.setSelection([id])
-          // Remember where the user clicked so the editor can place the caret
-          // there instead of jumping to the end.
-          setCaretCoords({ x: e.clientX, y: e.clientY })
-          enterEdit()
-        }}
+        data-sheet-selected={selection.includes(id) ? "true" : "false"}
+        data-sheet-editing={editing ? "true" : "false"}
+        onClick={(event) => applyBodyInteraction(event, "click")}
+        onDoubleClick={(event) => applyBodyInteraction(event, "double-click")}
         onKeyDown={(e) => {
           if (editing) return
           if (!canEdit) return
