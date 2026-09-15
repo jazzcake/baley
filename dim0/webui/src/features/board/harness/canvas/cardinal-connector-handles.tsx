@@ -20,7 +20,9 @@ import {
 import { useBoardAppStore } from "../store/board-app-store"
 import {
   CARDINAL_CONNECTOR_SIDES,
+  CARDINAL_CONNECTOR_OUTWARD_OFFSET_PX,
   cardinalConnectorAngle,
+  cardinalConnectorScreenOffset,
   cardinalConnectorSource,
   connectorEndFromWorldPoint,
   type CardinalConnectorSide,
@@ -234,6 +236,7 @@ export function CardinalConnectorHandles({
     <>
       {CARDINAL_CONNECTOR_SIDES.map((side) => {
         const screen = worldToScreen(positions[side], camera)
+        const outward = cardinalConnectorScreenOffset(side, node.angle)
         const triangleAngle = cardinalConnectorAngle(side) + (node.angle * 180) / Math.PI
         return (
           <button
@@ -241,11 +244,12 @@ export function CardinalConnectorHandles({
             type="button"
             aria-label={`Create connector from ${side} side`}
             data-cardinal-connector-handle={side}
+            data-outward-offset-px={CARDINAL_CONNECTOR_OUTWARD_OFFSET_PX}
             data-node-id={node.id}
             className="absolute m-0 border-0 bg-transparent p-0"
             style={{
-              left: screen.x,
-              top: screen.y,
+              left: screen.x + outward.x,
+              top: screen.y + outward.y,
               width: HANDLE_HIT_SIZE_PX,
               height: HANDLE_HIT_SIZE_PX,
               transform: "translate(-50%, -50%)",

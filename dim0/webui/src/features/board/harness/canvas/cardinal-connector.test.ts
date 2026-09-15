@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest"
 import { asClientId, asNodeId, createCanvasStore, type Node } from "@canvas-harness/core"
 import {
   CARDINAL_CONNECTOR_SIDES,
+  CARDINAL_CONNECTOR_OUTWARD_OFFSET_PX,
   cardinalConnectorAngle,
+  cardinalConnectorScreenOffset,
   cardinalConnectorSource,
   connectorEndFromWorldPoint,
 } from "./cardinal-connector"
@@ -40,6 +42,21 @@ describe("cardinal connector handles", () => {
 
   it("rotates each triangle toward its side", () => {
     expect(CARDINAL_CONNECTOR_SIDES.map(cardinalConnectorAngle)).toEqual([0, 90, 180, -90])
+  })
+
+  it("moves cardinal triangles six screen pixels outside the selection line", () => {
+    expect(CARDINAL_CONNECTOR_OUTWARD_OFFSET_PX).toBe(6)
+    expect(cardinalConnectorScreenOffset("n", 0)).toEqual({ x: 0, y: -6 })
+    expect(cardinalConnectorScreenOffset("e", 0).x).toBeCloseTo(6)
+    expect(cardinalConnectorScreenOffset("e", 0).y).toBeCloseTo(0)
+    expect(cardinalConnectorScreenOffset("s", 0).y).toBeCloseTo(6)
+    expect(cardinalConnectorScreenOffset("w", 0).x).toBeCloseTo(-6)
+  })
+
+  it("rotates the outward offset with the node", () => {
+    const offset = cardinalConnectorScreenOffset("n", Math.PI / 2)
+    expect(offset.x).toBeCloseTo(6)
+    expect(offset.y).toBeCloseTo(0)
   })
 
   it("attaches a target hit to its nearest node boundary", () => {

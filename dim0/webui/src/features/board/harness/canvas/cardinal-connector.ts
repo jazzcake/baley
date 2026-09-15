@@ -13,6 +13,13 @@ export const CARDINAL_CONNECTOR_SIDES = ["n", "e", "s", "w"] as const
 
 export type CardinalConnectorSide = (typeof CARDINAL_CONNECTOR_SIDES)[number]
 
+/**
+ * The triangle extends four pixels inward from its center. Moving its center
+ * six pixels outward clears the 1.5px selection stroke and leaves about 1px
+ * of visible air between the two shapes.
+ */
+export const CARDINAL_CONNECTOR_OUTWARD_OFFSET_PX = 6
+
 
 /**
  * Return the node-local anchor for a cardinal connector handle.
@@ -65,4 +72,20 @@ export const cardinalConnectorAngle = (side: CardinalConnectorSide): number => {
     w: -90,
   }
   return angles[side]
+}
+
+
+/**
+ * Constant-screen-pixel outward offset for a side triangle. Applying the node
+ * angle rotates the offset with the selection outline.
+ */
+export const cardinalConnectorScreenOffset = (
+  side: CardinalConnectorSide,
+  nodeAngle: number,
+): Vec2 => {
+  const angle = (cardinalConnectorAngle(side) * Math.PI) / 180 + nodeAngle
+  return {
+    x: Math.sin(angle) * CARDINAL_CONNECTOR_OUTWARD_OFFSET_PX,
+    y: -Math.cos(angle) * CARDINAL_CONNECTOR_OUTWARD_OFFSET_PX,
+  }
 }

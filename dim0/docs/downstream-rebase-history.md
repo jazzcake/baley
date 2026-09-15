@@ -202,7 +202,8 @@ in this file. Link their documented location and integrity hash instead.
 - **Introduced:** 2026-09-15
 - **Disposition:** **Carry**, unless canvas-harness adds configurable selection
   chrome and drag-to-connect handles with the same interaction contract.
-- **Task/commit:** `feat(webui): add cardinal connector handles`
+- **Task/commit:** `feat(webui): add cardinal connector handles`, followed by
+  `fix(webui): offset connector handles from selection`.
 - **Symptom/requirement:** A selected node showed eight square resize handles.
   The four side-midpoint squares were unnecessary; the desired chrome keeps
   square resize handles only at the corners and uses outward purple triangles
@@ -219,7 +220,9 @@ in this file. Link their documented location and integrity hash instead.
   4 px of movement it selects the Connector tool, writes the standard
   `creating-edge` draft, and commits one edge using the existing Arrow-tool
   style and scope factories. The source uses the exact node-local side midpoint
-  so rotated nodes remain correctly attached.
+  so rotated nodes remain correctly attached. Each visual triangle is shifted
+  six constant screen pixels along the rotated outward normal: its four-pixel
+  inward extent clears half of the 1.5px outline and leaves about a 1px gap.
 - **Instrumentation:** Development builds log
   `[baley.dim0:cardinal-connector]` at pointer-down, drag-start, commit, and
   cancel with the event/source/target decision, application tool, canvas
@@ -236,21 +239,25 @@ in this file. Link their documented location and integrity hash instead.
   strings and reconfirm `RESIZE_HANDLES === ["nw","ne","se","sw"]` plus the
   renderer loop. Do not restore the removed white masking rectangle in the
   React overlay; it leaves a visible square around the triangle.
-- **Focused verification:** Eight geometry/target tests pass. Docker Chromium
+- **Focused verification:** Ten geometry/target/offset tests pass. Docker Chromium
   must show exactly four DOM triangle handles in `n/e/s/w` order, only four
   corner squares in the screenshot, Connector `aria-pressed=true` after drag
-  begins, and one persisted `edge.add` whose east source equals `(node.w,
-  node.h / 2)`. Provider requests and browser errors must both remain zero.
+  begins, cardinal screen offsets of `(0,-6)/(6,0)/(0,6)/(-6,0)`, and one
+  persisted `edge.add` whose east source equals `(node.w, node.h / 2)`.
+  Provider requests and browser errors must both remain zero.
 - **Broad verification:** Run `npm run check-all`, the focused Vitest file, and
   the production Docker build so postinstall executes before TypeScript/Vite.
 - **Non-Git steps/evidence:** Final observation:
-  `C:\ProgramData\Dim0\validation\ui-modifications\bd-005-cardinal-connectors-20260915-141515`;
+  `C:\ProgramData\Dim0\validation\ui-modifications\bd-005-cardinal-offset-20260915-153014`;
   `observation.json` SHA-256
-  `16e6a67f7c6f793b7801648027227e97d3163a89b629fb768706d17091a532d3`.
+  `1e364351c70a2877ed2b1add778a6351d472f97bcbf75838028c16281f9c50bd`.
   Live image digest:
-  `sha256:2a20b6cbefb69561e6bc44f446bb562318863b654434f43698be05028c3251e6`.
+  `sha256:63b3e175847663d8c73707f9053a4f0ab8e5a7f0fd5f57cc24a908b89b61ebf0`.
   Recreate only `dim0-task189-webui`; keep the existing Tailnet mappings and
   persistence services unchanged.
+- **Later disposition (2026-09-15):** Moved the triangles outside the selection
+  outline after live visual review showed that centering them on the boundary
+  made the triangle and line read as one overlapping shape.
 
 ## Operational-only history
 
