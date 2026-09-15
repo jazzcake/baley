@@ -22,6 +22,15 @@ Conventions live with the code they govern (loaded on demand when you work in th
 - In-flight work & known follow-ups → `docs/roadmap.md`
 - Durable decisions (MUST/why, one per file) → `docs/adr/` (index in `docs/adr/README.md`)
 
+## Downstream change ledger
+- For every accepted logical change under `dim0/` that may need to survive an
+  upstream refresh, append or update its stable `BD-*` entry in
+  `docs/downstream-rebase-history.md` as part of the work.
+- Record the symptom or requirement, first divergence, affected seams, rebase
+  disposition, focused verification, and any non-Git operational step.
+- Do not rewrite historical evidence. Append a dated later disposition when an
+  upstream implementation supersedes a downstream patch.
+
 ## Core Features
 - `webui` has two core domains:
   - `agent/`: chat input flow, streaming lifecycle, tool-call rendering, assistant UX. Two runtimes (browser engine + legacy server path).
