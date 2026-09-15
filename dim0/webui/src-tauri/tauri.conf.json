@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Dim0",
+  "productName": "Baley.Dim0",
   "identifier": "com.topix.app",
   "build": {
     "frontendDist": "../dist",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "Dim0",
+        "title": "Baley.Dim0",
         "width": 1440,
         "height": 900,
         "minWidth": 900,

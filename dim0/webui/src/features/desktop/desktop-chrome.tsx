@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
 export const DesktopBrand = () => (
   <div className="pointer-events-none flex select-none items-center gap-1.5">
     <img src="/dim0.svg" alt="" className="size-5 shrink-0" />
-    <span className="text-sm font-semibold text-foreground">Dim0</span>
+    <span className="text-sm font-semibold text-foreground">Baley.Dim0</span>
   </div>
 )
 

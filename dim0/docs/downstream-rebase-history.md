@@ -127,6 +127,36 @@ in this file. Link their documented location and integrity hash instead.
 - **Boundary:** This establishes provider-free operation, not real-provider
   behavior or a permanently published host endpoint.
 
+### BD-003 — Baley.Dim0 product title
+
+- **Introduced:** 2026-09-15
+- **Disposition:** **Carry**; this is the fork's intentional user-facing
+  identity and is not expected from upstream.
+- **Task/commit:** `feat(webui): brand product as baley.dim0`
+- **Symptom/requirement:** The imported application presented itself as `Dim0`,
+  while this private MIT-licensed fork is operated as `Baley.Dim0`.
+- **First divergence:** Static Web/PWA/Tauri title and wordmark values still
+  contained the upstream product name; no React state or controller divergence
+  was involved.
+- **Change:** Replace formal user-facing app titles and wordmarks with
+  `Baley.Dim0`. Keep internal package names, APIs, storage identifiers, Docker
+  resources, executable identifiers, and upstream attribution unchanged.
+- **Affected paths:** `webui/index.html`, `webui/vite.config.ts`, the sidebar
+  and desktop chrome components, the PWA install screen, Tauri configuration,
+  and generated desktop OAuth result pages plus their generator.
+- **Rebase notes:** Upstream commonly edits PWA and Tauri metadata during
+  releases. After resolving those files, search formal title/wordmark surfaces
+  for an exact standalone `Dim0`; do not mechanically rename domain types or
+  historical/upstream documentation.
+- **Focused verification:** Run Web UI type-check and production build; inspect
+  the built `index.html` and generated manifest for `Baley.Dim0`, then confirm
+  the browser tab and sidebar wordmark in the live Web UI.
+- **Broad verification:** Run the provider-free Docker baseline when this is
+  replayed as part of a full upstream refresh.
+- **Non-Git steps/evidence:** Rebuild and recreate the Web UI container before
+  checking the existing Tailscale Serve URL; the Serve mapping itself does not
+  change.
+
 ## Operational-only history
 
 ### OPS-001 — Tailnet-only live evaluation endpoint

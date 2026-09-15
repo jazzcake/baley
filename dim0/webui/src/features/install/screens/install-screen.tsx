@@ -105,9 +105,9 @@ export function InstallScreen() {
     <div className="absolute inset-0 overflow-y-auto scrollbar-thin">
       <div className="mx-auto w-full max-w-5xl px-6 py-20 space-y-8">
         <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Install Dim0</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Install Baley.Dim0</h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            Add Dim0 to your home screen to use it like an app on mobile.
+            Add Baley.Dim0 to your home screen to use it like an app on mobile.
           </p>
         </div>
 

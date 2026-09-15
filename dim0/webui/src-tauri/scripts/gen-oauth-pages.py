@@ -102,7 +102,7 @@ def page(*, title: str, icon_var: str, icon_fg: str, svg: str, heading: str, sub
 <div class="icon">{svg}</div>
 <h1>{heading}</h1>
 <p>{subtext}</p>
-<div class="brand">Dim0</div>
+<div class="brand">Baley.Dim0</div>
 </main>
 </body>
 </html>
@@ -111,23 +111,23 @@ def page(*, title: str, icon_var: str, icon_fg: str, svg: str, heading: str, sub
 
 OUT_DIR.joinpath("oauth-success.html").write_text(
     page(
-        title="Signed in — Dim0",
+        title="Signed in — Baley.Dim0",
         icon_var="var(--primary)",
         icon_fg="var(--primary-fg)",
         svg=CHECK_SVG,
         heading="You’re signed in",
-        subtext="You can close this tab and return to Dim0.",
+        subtext="You can close this tab and return to Baley.Dim0.",
     ),
     encoding="utf-8",
 )
 OUT_DIR.joinpath("oauth-error.html").write_text(
     page(
-        title="Sign-in failed — Dim0",
+        title="Sign-in failed — Baley.Dim0",
         icon_var="var(--destructive)",
         icon_fg="var(--destructive-fg)",
         svg=CROSS_SVG,
         heading="Sign-in failed",
-        subtext="You can close this tab and try signing in again from Dim0.",
+        subtext="You can close this tab and try signing in again from Baley.Dim0.",
     ),
     encoding="utf-8",
 )
