@@ -937,7 +937,7 @@ executed_command_id UNIQUE
 - 서버는 mutation transaction 안에서 grant 소비, command별 attestation audit와 실행 command를 1:1로 기록한다. session 또는 membership 철회는 미사용 grant를 revoke한다.
 - 같은 idempotency key와 request fingerprint의 재시도는 같은 결과를 반환할 수 있지만, grant를 다른 command·action·entity·revision에 재사용할 수 없다.
 - decision evidence 하나는 exact Task command 하나에만 소비된다. `all_awaiting_confirmation` scope도 batch mutation이 아니며 다음 Task는 revision 변화 뒤 다시 preview하고 새 target-bound decision ID를 사용한다.
-- 쉼표로 구분된 복합 결정문은 모든 `#<id>`가 뒤따르는 명시적 action에 배정될 때만 exact-Task `task` scope에서 사용할 수 있다. 서버는 confirm group의 target만 `task.confirm`, discard/delete group의 target만 `task.discard` evidence로 인정하며, 미배정·중복·알 수 없는 action은 fail closed한다.
+- 사용자의 진술은 자연어 그대로 보존하는 불투명 감사 증거다. Agent가 현재 대화와 확정된 작업 문맥에서 명시적인 confirm/discard 의도와 대상을 해석해 `scope`, `action`, `taskId`로 선언하고, 서버는 원문을 다시 문법 분석하지 않은 채 이 typed 선언을 command target, revision, hash와 결속한다. 쉼표, 조사, 어순이나 특정 명령문 형식을 사용자에게 요구하지 않는다.
 - grant ID는 secret이 아니고 Viewer는 plaintext secret, custom header, 환경 변수나 copy/paste token을 만들거나 노출하지 않는다.
 - enforced transport는 legacy `humanApprovalAttestation`, `approvedByActorId`, statement/conversation body authority를 거부한다.
 
@@ -958,7 +958,7 @@ Gate ready
 
 `task.get`, `gate.status`, `workspace.get`과 `decision.list`는 대상 action, 대상 ID, expected Workspace revision, 관련 criteria/condition snapshot hash와 warning을 반환한다. Viewer는 각각 “완료확인 대기”, “Gate 통과 승인 대기”, “Workspace 종료 가능”으로 표시한다.
 
-Operator는 사람 전용 action을 추론하지 않는다. 사람이 현재 대화에서 exact Task 확인·폐기 또는 모든 awaiting confirmation을 명시하면 Agent는 outcome/evidence를 확인하고 fresh preview 뒤 typed conversational evidence로 `task.confirm` 또는 `task.discard`를 MCP 실행한다. 두 Task 결정 모두 Viewer grant나 별도 UI를 요구하지 않는다. Viewer Task Inspector는 read-first inspection만 제공한다. 모호한 긍정, 침묵, implemented 상태 자체는 authority가 아니다.
+Operator는 모호한 긍정, 침묵이나 implemented 상태만으로 사람 전용 outcome을 만들지 않는다. 사람이 현재 대화에서 confirm 또는 discard 의도를 명시하면 Agent는 자유로운 자연어와 확정된 작업 문맥에서 대상을 해석하고, outcome/evidence를 확인한 뒤 fresh preview와 typed conversational evidence로 `task.confirm` 또는 `task.discard`를 MCP 실행한다. 사용자가 Task ID나 내부 scope 문법을 다시 작성할 필요는 없다. 두 Task 결정 모두 Viewer grant나 별도 UI를 요구하지 않는다. Viewer Task Inspector는 read-first inspection만 제공한다.
 
 명시적 `all_awaiting_confirmation` 결정은 여러 eligible Task를 순차 처리할 수 있지만 atomic batch mutation은 아니다. 각 `task.confirm`은 MCP에서 현재 revision을 fresh preview하고 exact target과 command hash에 결속된 새 single-use decision ID를 사용한다. 앞 command가 revision을 바꾸면 다음 command는 다시 preview한다.
 

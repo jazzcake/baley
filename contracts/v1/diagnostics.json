@@ -52,8 +52,7 @@
         "action",
         "task_id",
         "workspace_revision",
-        "command_hash",
-        "statement_scope"
+        "command_hash"
       ]
     }
   },
