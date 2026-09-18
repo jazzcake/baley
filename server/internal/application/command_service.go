@@ -1939,9 +1939,16 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		result.Errors = append(result.Errors, Diagnostic{Code: code, EntityID: plan.EntityID})
 	}
 	if executing && requiresHumanApproval && request.Envelope.DecisionEvidence != nil {
-		if request.Name != "task.confirm" || !validConversationalDecision(*request.Envelope.DecisionEvidence, typed, result) {
+		reason := "command"
+		if request.Name == "task.confirm" {
+			reason = conversationalDecisionMismatchReason(*request.Envelope.DecisionEvidence, typed, result)
+		}
+		if reason != "" {
 			result.Errors = removeDiagnostic(result.Errors, domain.CodeHumanApprovalRequired)
-			result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeDecisionEvidenceMismatch, EntityID: plan.EntityID})
+			result.Errors = append(result.Errors, Diagnostic{
+				Code: domain.CodeDecisionEvidenceMismatch, EntityID: plan.EntityID,
+				Details: map[string]any{"reason": reason},
+			})
 		}
 	} else if executing && requiresHumanApproval && request.Envelope.ApprovalGrantID == "" {
 		att := request.Envelope.HumanApprovalAttestation
@@ -1956,9 +1963,17 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 	}
 	sort.Slice(result.Errors, func(i, j int) bool { return result.Errors[i].Code < result.Errors[j].Code })
 	if executing && len(result.Errors) > 0 {
-		return result, plan, &CommandError{Code: result.Errors[0].Code, Message: "command evaluation failed: " + result.Errors[0].Code}
+		return result, plan, &CommandError{Code: result.Errors[0].Code, Message: commandEvaluationErrorMessage(result.Errors[0])}
 	}
 	return result, plan, nil
+}
+
+func commandEvaluationErrorMessage(diagnostic Diagnostic) string {
+	message := "command evaluation failed: " + diagnostic.Code
+	if reason, ok := diagnostic.Details["reason"].(string); ok && reason != "" {
+		message += " (" + reason + ")"
+	}
+	return message
 }
 
 func decisionEvidenceFingerprint(evidence *ConversationalDecisionEvidence) string {
@@ -1970,16 +1985,42 @@ func decisionEvidenceFingerprint(evidence *ConversationalDecisionEvidence) strin
 	return hex.EncodeToString(digest[:])
 }
 
-func validConversationalDecision(evidence ConversationalDecisionEvidence, typed any, result PreviewResult) bool {
+func conversationalDecisionMismatchReason(evidence ConversationalDecisionEvidence, typed any, result PreviewResult) string {
 	args, ok := typed.(taskConfirmArgs)
-	if !ok || !validUUIDText(evidence.DecisionID) || strings.TrimSpace(evidence.Source) != "conversation" ||
-		strings.TrimSpace(evidence.ConversationRef) == "" || strings.TrimSpace(evidence.Statement) == "" ||
-		(evidence.Scope != "task" && evidence.Scope != "all_awaiting_confirmation") || evidence.Action != "task.confirm" ||
-		evidence.TaskID != args.TaskID || evidence.WorkspaceRevision != result.ExpectedWorkspaceRevision || evidence.CommandHash != result.CommandHash ||
-		!statementSupportsConversationalDecision(evidence.Statement, evidence.Scope, evidence.TaskID) {
-		return false
+	if !ok {
+		return "command"
 	}
-	return true
+	if !validUUIDText(evidence.DecisionID) {
+		return "decision_id"
+	}
+	if evidence.Source != "conversation" {
+		return "source"
+	}
+	if strings.TrimSpace(evidence.ConversationRef) == "" {
+		return "conversation_ref"
+	}
+	if strings.TrimSpace(evidence.Statement) == "" {
+		return "statement"
+	}
+	if evidence.Scope != "task" && evidence.Scope != "all_awaiting_confirmation" {
+		return "scope"
+	}
+	if evidence.Action != "task.confirm" {
+		return "action"
+	}
+	if evidence.TaskID != args.TaskID {
+		return "task_id"
+	}
+	if evidence.WorkspaceRevision != result.ExpectedWorkspaceRevision {
+		return "workspace_revision"
+	}
+	if evidence.CommandHash != result.CommandHash {
+		return "command_hash"
+	}
+	if !statementSupportsConversationalDecision(evidence.Statement, evidence.Scope, evidence.TaskID) {
+		return "statement_scope"
+	}
+	return ""
 }
 
 func statementSupportsConversationalDecision(statement, scope string, taskID int) bool {
@@ -2005,11 +2046,62 @@ func statementSupportsConversationalDecision(statement, scope string, taskID int
 		return false
 	}
 	target := regexp.QuoteMeta(strconv.Itoa(taskID))
-	return matchesDecisionGrammar(normalized,
+	if matchesDecisionGrammar(normalized,
 		`(?:confirm|complete) (?:task )?#?`+target,
 		`#?`+target+`(?:번)?(?: 작업)?(?:을|를)? (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
 		`작업 #?`+target+`(?:번)?(?:을|를)? (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
-	)
+	) {
+		return true
+	}
+	decisions, ok := parseCompoundTaskDecisions(normalized)
+	return ok && decisions[taskID] == "task.confirm"
+}
+
+func parseCompoundTaskDecisions(statement string) (map[int]string, bool) {
+	if !strings.ContainsAny(statement, ",，") {
+		return nil, false
+	}
+	parts := regexp.MustCompile(`[,，]`).Split(statement, -1)
+	clausePattern := regexp.MustCompile(`^#([1-9][0-9]*)(?:번)?(?:도)?(?:\s+(confirm|complete|확인|완료|discard|폐기))?$`)
+	pending := []int{}
+	decisions := map[int]string{}
+	for _, rawPart := range parts {
+		matches := clausePattern.FindStringSubmatch(strings.TrimSpace(rawPart))
+		if matches == nil {
+			return nil, false
+		}
+		taskID, err := strconv.Atoi(matches[1])
+		if err != nil {
+			return nil, false
+		}
+		pending = append(pending, taskID)
+		if matches[2] == "" {
+			continue
+		}
+		action := compoundDecisionAction(matches[2])
+		for _, pendingTaskID := range pending {
+			if _, exists := decisions[pendingTaskID]; exists {
+				return nil, false
+			}
+			decisions[pendingTaskID] = action
+		}
+		pending = nil
+	}
+	if len(pending) != 0 || len(decisions) < 2 {
+		return nil, false
+	}
+	return decisions, true
+}
+
+func compoundDecisionAction(value string) string {
+	switch value {
+	case "confirm", "complete", "확인", "완료":
+		return "task.confirm"
+	case "discard", "폐기":
+		return "task.discard"
+	default:
+		return ""
+	}
 }
 
 func matchesDecisionGrammar(statement string, patterns ...string) bool {

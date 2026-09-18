@@ -53,7 +53,7 @@ Operator가 정상 workflow에서 수행:
 
 Run 상태 갱신과 Record 등록을 매번 사람에게 확인하지 않는다. manual correction은 예외이며 사유와 Event를 요구한다.
 
-Agent credential에는 인간 승인 capability를 부여하지 않는다. ordinary `task.confirm`은 사용자가 현재 대화에서 명시한 결정을 typed `decisionEvidence`로 전달한다. 서버는 MCP gateway에 링크된 Account와 human Actor를 credential에서 파생하고 현재 membership과 `task:approve`를 재검증한다. evidence는 decision ID, source, conversation reference, statement hash, scope, action, Task target, Workspace revision, canonical command hash, idempotency key hash, gateway와 실행 Agent에 결속되어 성공 transaction에서 한 번만 소비된다. body의 임의 `approvedByActorId`는 계속 거부한다. 다른 사람 전용 경계와 호환 경로에는 기존 browser-session grant를 유지한다.
+Agent credential에는 인간 승인 capability를 부여하지 않는다. ordinary `task.confirm`은 사용자가 현재 대화에서 명시한 결정을 typed `decisionEvidence`로 전달한다. 서버는 MCP gateway에 링크된 Account와 human Actor를 credential에서 파생하고 현재 membership과 `task:approve`를 재검증한다. evidence는 target별로 생성한 unique UUID decision ID, source, opaque conversation reference, statement hash, scope, action, Task target, Workspace revision, canonical command hash, idempotency key hash, gateway와 실행 Agent에 결속되어 성공 transaction에서 한 번만 소비된다. decision ID는 외부 provider의 thread/turn/message ID가 아니며, conversation reference는 비어 있지 않은 감사 참조일 뿐 Baley가 외부 대화 provider와 대조해 인증하지 않는다. body의 임의 `approvedByActorId`는 계속 거부한다. 다른 사람 전용 경계와 호환 경로에는 기존 browser-session grant를 유지한다.
 
 ## 3. Skill, MCP와 로컬 filesystem
 
@@ -128,6 +128,8 @@ Gate 조건 또는 Gate entry Task를 자동 변경하지 않는다.
 Query는 action, target, expected Workspace revision과 condition snapshot hash를 반환한다. `task.confirm`은 PM이 대화에서 `confirm #178` 또는 `complete all awaiting confirmation`처럼 명시한 결정을 Agent가 fresh preview 뒤 MCP로 실행하는 흐름이 기본이다. exact Task scope는 한 target을, all-awaiting scope는 당시 eligible Task 집합을 의도하지만 서버 mutation은 항상 Task별이다. 각 command는 현재 revision과 새 decision ID를 사용한다. Viewer Task Inspector는 결과와 evidence를 읽는 surface이며 TaskConfirmation mutation UI를 제공하지 않는다.
 
 여러 Task를 명시적으로 모두 확인하라는 결정도 원자 batch가 아니다. 각 implemented Task를 fresh-read/fresh-preview하고, 동일한 conversation reference와 statement를 보존하되 target별 새 evidence ID로 순차 실행한다. 앞 command의 revision 변화 뒤에는 다음 Task를 다시 preview한다.
+
+한 문장에서 일부 Task는 확인하고 다른 Task는 폐기하는 쉼표 구분 결정을 명시할 수 있다. 각 쉼표 group은 `#<id>` 목록의 마지막에 `confirm|complete|확인|완료|discard|폐기` action을 붙여 모든 ID의 action을 닫아야 한다. 이 문장으로 `task.confirm`을 실행할 때 scope는 `task`이며, 서버는 현재 target이 confirm group에 정확히 포함되는지 확인한다. `all_awaiting_confirmation`은 번호별 선택 문장에 사용하지 않는다.
 
 주 Task 구현이 다른 Task에도 영향을 주면 LLM이 관련 열린 Task를 분류한다. 이미 `implemented`여도 assessment와 commit·test/build·독립 리뷰 증거가 acceptance를 실제로 충족하는지 다시 확인한 뒤 공동 확인 대상에 넣는다. 부족하면 Agent가 `task.rework`로 되돌린다. 같은 증거가 `pending` 또는 `in_progress` Task의 범위를 완전히 충족하면 공유 증거 assessment를 남기고 정상 workflow로 먼저 `implemented` 보고한 뒤 공동 확인한다. 실제 구현이 아니라 필요성이 사라진 Task는 완료가 아니라 `task.discard`로 제안하고, 대체된 경우 사유에 `superseded by #<id>`를 기록한다. 부분 충족 또는 불확실한 Task는 열린 상태를 유지하며, 이미 confirmed/discarded인 terminal Task에 새 일이 생기면 follow-up Task를 생성한다. 사람 승인은 이 분류나 상태 머신을 우회하지 않는다.
 

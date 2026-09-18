@@ -16,6 +16,13 @@ func TestStatementSupportsConversationalDecision(t *testing.T) {
 		{"Korean number confirm request", "110번 확인해 주세요", "task", 110, true},
 		{"Korean hash number complete request", "#110 완료해주세요!", "task", 110, true},
 		{"Korean object complete request", "작업 #110을 완료해 주십시오", "task", 110, true},
+		{"compound mixed decision confirms first Task", "#61, #62 confirm, #63 폐기, #64, #65도 폐기", "task", 61, true},
+		{"compound mixed decision confirms second Task", "#61, #62 confirm, #63 폐기, #64, #65도 폐기", "task", 62, true},
+		{"compound mixed decision does not confirm discarded Task", "#61, #62 confirm, #63 폐기, #64, #65도 폐기", "task", 63, false},
+		{"compound mixed decision is not all-awaiting scope", "#61, #62 confirm, #63 폐기, #64, #65도 폐기", "all_awaiting_confirmation", 61, false},
+		{"compound decision rejects unassigned trailing Task", "#61, #62 confirm, #63", "task", 61, false},
+		{"compound decision rejects conflicting duplicate Task", "#61 confirm, #61 폐기", "task", 61, false},
+		{"compound decision rejects unknown action", "#61, #62 ship", "task", 61, false},
 		{"complete all awaiting", "complete all awaiting confirmation", "all_awaiting_confirmation", 110, true},
 		{"confirm all awaiting tasks", "confirm all tasks awaiting confirmation!", "all_awaiting_confirmation", 110, true},
 		{"Korean all awaiting completion", "확인 대기 중인 모든 작업을 완료해 주세요", "all_awaiting_confirmation", 110, true},
@@ -62,5 +69,60 @@ func TestStatementSupportsConversationalDecision(t *testing.T) {
 				t.Fatalf("statementSupportsConversationalDecision(%q, %q, %d)=%v want %v", tt.statement, tt.scope, tt.taskID, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestConversationalDecisionMismatchReason(t *testing.T) {
+	base := func() ConversationalDecisionEvidence {
+		return ConversationalDecisionEvidence{
+			DecisionID: "01a0b2d7-2da5-7b82-a829-7767b8b9df88", Source: "conversation",
+			ConversationRef: "01a0b21e-94a2-7d73-a017-d359706eb1e0",
+			Statement:       "#61, #62 confirm, #63 폐기, #64, #65도 폐기",
+			Scope:           "task", Action: "task.confirm", TaskID: 61,
+			WorkspaceRevision: 1017, CommandHash: "sha256:fresh",
+		}
+	}
+	typed := taskConfirmArgs{TaskID: 61}
+	preview := PreviewResult{ExpectedWorkspaceRevision: 1017, CommandHash: "sha256:fresh"}
+
+	if reason := conversationalDecisionMismatchReason(base(), typed, preview); reason != "" {
+		t.Fatalf("valid compound decision reason=%q", reason)
+	}
+	tests := []struct {
+		name, want string
+		change     func(*ConversationalDecisionEvidence)
+	}{
+		{"message identifier is not a decision UUID", "decision_id", func(value *ConversationalDecisionEvidence) {
+			value.DecisionID = "msg_01a0b2d7-2e0e-73f0-b843-c36681df7dda"
+		}},
+		{"conversation reference is required but opaque", "conversation_ref", func(value *ConversationalDecisionEvidence) {
+			value.ConversationRef = " "
+		}},
+		{"all scope cannot describe selected Tasks", "statement_scope", func(value *ConversationalDecisionEvidence) {
+			value.Scope = "all_awaiting_confirmation"
+		}},
+		{"evidence target must match command target", "task_id", func(value *ConversationalDecisionEvidence) {
+			value.TaskID = 62
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value := base()
+			tt.change(&value)
+			if reason := conversationalDecisionMismatchReason(value, typed, preview); reason != tt.want {
+				t.Fatalf("reason=%q want %q", reason, tt.want)
+			}
+		})
+	}
+}
+
+func TestCommandEvaluationErrorMessageIncludesDecisionMismatchReason(t *testing.T) {
+	diagnostic := Diagnostic{
+		Code:    "decision_evidence_mismatch",
+		Details: map[string]any{"reason": "statement_scope"},
+	}
+	want := "command evaluation failed: decision_evidence_mismatch (statement_scope)"
+	if got := commandEvaluationErrorMessage(diagnostic); got != want {
+		t.Fatalf("message=%q want %q", got, want)
 	}
 }

@@ -931,12 +931,13 @@ executed_command_id UNIQUE
 
 - 승인 진술은 action, 대상 entity, canonical command payload hash와 Workspace revision에 결속된다. Gate 통과처럼 조건 snapshot이 있는 action은 snapshot hash에도 결속된다.
 - `task_confirm/task_discard`는 Task ID, `lane_close_out/lane_discard`는 Lane ID, `gate_attach_task/gate_pass`는 Gate ID, `gate_pass_task/gate_revoke_task_pass`는 `gate_tasks.id`, `workspace_close`는 Workspace ID를 대상으로 사용한다.
-- ordinary `task.confirm`은 공통 mutation envelope에 `decisionEvidence`를 포함한다. required field는 unique decision ID, source=`conversation`, conversation reference, verbatim statement, scope, action, Task public ID, Workspace revision, canonical command hash다.
+- ordinary `task.confirm`은 공통 mutation envelope에 `decisionEvidence`를 포함한다. required field는 target별 caller-generated unique UUID decision ID, source=`conversation`, opaque non-secret conversation reference, verbatim statement, scope, action, Task public ID, Workspace revision, canonical command hash다. decision ID는 외부 provider의 thread/turn/message ID가 아니며 conversation reference는 외부 provider와 대조하는 인증값이 아니다.
 - 서버는 authenticated MCP gateway registration에서 linked Account와 human Actor를 파생하고 실행 transaction에서 Account 상태, membership과 `task:approve` capability를 다시 확인한다. caller는 approver Actor ID를 제공하지 않는다.
 - grant는 Workspace/account/actor/session/action/entity/revision/command hash/decision snapshot/warnings/proceed reason/expiry에 결속된 5분 single-use reference이며 CSRF, membership, capability와 Owner-only close 검사를 거친다.
 - 서버는 mutation transaction 안에서 grant 소비, command별 attestation audit와 실행 command를 1:1로 기록한다. session 또는 membership 철회는 미사용 grant를 revoke한다.
 - 같은 idempotency key와 request fingerprint의 재시도는 같은 결과를 반환할 수 있지만, grant를 다른 command·action·entity·revision에 재사용할 수 없다.
 - decision evidence 하나는 exact Task command 하나에만 소비된다. `all_awaiting_confirmation` scope도 batch mutation이 아니며 다음 Task는 revision 변화 뒤 다시 preview하고 새 target-bound decision ID를 사용한다.
+- 쉼표로 구분된 복합 결정문은 모든 `#<id>`가 뒤따르는 명시적 action에 배정될 때만 exact-Task `task` scope에서 사용할 수 있다. 서버는 confirm group에 포함된 target만 `task.confirm` evidence로 인정하며, discard group이나 미배정·중복·알 수 없는 action은 fail closed한다.
 - grant ID는 secret이 아니고 Viewer는 plaintext secret, custom header, 환경 변수나 copy/paste token을 만들거나 노출하지 않는다.
 - enforced transport는 legacy `humanApprovalAttestation`, `approvedByActorId`, statement/conversation body authority를 거부한다.
 

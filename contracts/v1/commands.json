@@ -124,6 +124,9 @@
     ],
     "source": "conversation",
     "scopes": ["task", "all_awaiting_confirmation"],
+    "decisionIdSemantics": "caller-generated unique UUID for one target-bound command; it is not a provider thread, turn, or message identifier",
+    "conversationRefSemantics": "stable non-secret opaque audit reference; Baley requires it but does not authenticate it against an external conversation provider",
+    "statementMatching": "closed exact-Task, all-awaiting, or comma-delimited compound Task/action grammar; compound statements use task scope and must explicitly assign every listed Task",
     "actorDerivation": "active_human_member_linked_to_authenticated_mcp_gateway",
     "boundFields": [
       "decisionId", "workspaceId", "action", "taskId", "workspaceRevision", "commandHash",

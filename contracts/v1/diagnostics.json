@@ -40,6 +40,23 @@
     "invalid_backlog_filter",
     "lane_has_active_backlog"
   ],
+  "errorDetails": {
+    "decision_evidence_mismatch": {
+      "reason": [
+        "command",
+        "decision_id",
+        "source",
+        "conversation_ref",
+        "statement",
+        "scope",
+        "action",
+        "task_id",
+        "workspace_revision",
+        "command_hash",
+        "statement_scope"
+      ]
+    }
+  },
   "warnings": [
     "missing_detailed_plan_record",
     "missing_independent_review_record",
