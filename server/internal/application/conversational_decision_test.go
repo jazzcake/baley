@@ -85,7 +85,7 @@ func TestConversationalDecisionMismatchReason(t *testing.T) {
 	typed := taskConfirmArgs{TaskID: 61}
 	preview := PreviewResult{ExpectedWorkspaceRevision: 1017, CommandHash: "sha256:fresh"}
 
-	if reason := conversationalDecisionMismatchReason(base(), typed, preview); reason != "" {
+	if reason := conversationalDecisionMismatchReason("task.confirm", base(), typed, preview); reason != "" {
 		t.Fatalf("valid compound decision reason=%q", reason)
 	}
 	tests := []struct {
@@ -109,10 +109,64 @@ func TestConversationalDecisionMismatchReason(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			value := base()
 			tt.change(&value)
-			if reason := conversationalDecisionMismatchReason(value, typed, preview); reason != tt.want {
+			if reason := conversationalDecisionMismatchReason("task.confirm", value, typed, preview); reason != tt.want {
 				t.Fatalf("reason=%q want %q", reason, tt.want)
 			}
 		})
+	}
+}
+
+func TestStatementSupportsConversationalTaskDiscard(t *testing.T) {
+	tests := []struct {
+		name, statement string
+		taskID          int
+		want            bool
+	}{
+		{"English discard", "discard task #63", 63, true},
+		{"English delete", "delete #63", 63, true},
+		{"Korean discard", "#63 폐기", 63, true},
+		{"Korean delete together", "Task #63을 삭제합시다", 63, true},
+		{"Korean delete request", "63번 작업을 삭제해 주세요", 63, true},
+		{"compound discard first", "#61, #62 confirm, #63 폐기, #64, #65도 삭제", 63, true},
+		{"compound discard inherited", "#61, #62 confirm, #63 폐기, #64, #65도 삭제", 64, true},
+		{"compound discard last", "#61, #62 confirm, #63 폐기, #64, #65도 삭제", 65, true},
+		{"confirm target is not discard", "#61, #62 confirm, #63 폐기", 61, false},
+		{"wrong target", "#64 삭제", 63, false},
+		{"explicit contextual delete", "삭제합시다", 63, true},
+		{"explicit contextual discard", "폐기해 주세요", 63, true},
+		{"vague affirmation", "좋아요", 63, false},
+		{"question", "#63 삭제할까요?", 63, false},
+		{"negation", "#63 삭제하지 마", 63, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := statementSupportsConversationalTaskAction(tt.statement, "task", "task.discard", tt.taskID); got != tt.want {
+				t.Fatalf("discard statement=%q task=%d got=%v want=%v", tt.statement, tt.taskID, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConversationalDiscardMismatchReason(t *testing.T) {
+	evidence := ConversationalDecisionEvidence{
+		DecisionID: "33333333-3333-4333-8333-333333333333", Source: "conversation",
+		ConversationRef: "turn:discard-63", Statement: "#63 삭제합시다",
+		Scope: "task", Action: "task.discard", TaskID: 63,
+		WorkspaceRevision: 1034, CommandHash: "sha256:discard",
+	}
+	typed := taskMutationArgs{TaskID: 63, Reason: "사용자가 명시적으로 삭제를 결정함"}
+	preview := PreviewResult{ExpectedWorkspaceRevision: 1034, CommandHash: "sha256:discard"}
+	if reason := conversationalDecisionMismatchReason("task.discard", evidence, typed, preview); reason != "" {
+		t.Fatalf("valid discard reason=%q", reason)
+	}
+	evidence.Action = "task.confirm"
+	if reason := conversationalDecisionMismatchReason("task.discard", evidence, typed, preview); reason != "action" {
+		t.Fatalf("cross-action reason=%q want action", reason)
+	}
+	evidence.Action = "task.discard"
+	evidence.Scope = "all_awaiting_confirmation"
+	if reason := conversationalDecisionMismatchReason("task.discard", evidence, typed, preview); reason != "scope" {
+		t.Fatalf("discard all-awaiting reason=%q want scope", reason)
 	}
 }
 

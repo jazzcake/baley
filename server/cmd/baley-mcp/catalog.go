@@ -15,9 +15,9 @@ const (
 	mcpImplementationVersion = "0.2.0"
 	mcpToolCatalogVersion    = "1.4.0"
 	mcpCompactToolCount      = 15
-	mcpCompactSchemaBytes    = 5306
+	mcpCompactSchemaBytes    = 5322
 	mcpFullToolCount         = 89
-	mcpFullSchemaBytes       = 50602
+	mcpFullSchemaBytes       = 50492
 
 	mcpToolProfileCompact mcpToolProfile = "compact"
 	mcpToolProfileFull    mcpToolProfile = "full"
@@ -190,7 +190,7 @@ func addCommandBridgeTools(server *mcp.Server, c *client) {
 	mcp.AddTool(server, commandBridgeTool("baley_command_execute", "Execute one routine Operator command after preview; human-approval commands are rejected", bridgeExecuteOperator), func(ctx context.Context, req *mcp.CallToolRequest, in commandBridgeInput) (*mcp.CallToolResult, any, error) {
 		return c.commandBridge(ctx, in, bridgeExecuteOperator)
 	})
-	mcp.AddTool(server, commandBridgeTool("baley_command_execute_with_approval", "Execute a human-only command; task.confirm accepts exact linked-account conversation evidence while other boundaries retain browser grants", bridgeExecuteDecision), func(ctx context.Context, req *mcp.CallToolRequest, in commandBridgeInput) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, commandBridgeTool("baley_command_execute_with_approval", "Execute a human-only command; task.confirm and task.discard accept exact linked-account conversation evidence while other boundaries retain browser grants", bridgeExecuteDecision), func(ctx context.Context, req *mcp.CallToolRequest, in commandBridgeInput) (*mcp.CallToolResult, any, error) {
 		return c.commandBridge(ctx, in, bridgeExecuteDecision)
 	})
 }
@@ -229,7 +229,7 @@ func commandBridgeSchema(mode bridgeMode) json.RawMessage {
 			"conversationRef":{"type":"string","minLength":1},
 			"statement":{"type":"string","minLength":1},
 			"scope":{"enum":["task","all_awaiting_confirmation"]},
-			"action":{"const":"task.confirm"},
+			"action":{"enum":["task.confirm","task.discard"]},
 			"taskId":{"type":"integer","minimum":1},
 			"workspaceRevision":{"type":"integer","minimum":1},
 			"commandHash":{"type":"string","minLength":1}
@@ -298,12 +298,12 @@ func (c *client) commandBridge(ctx context.Context, in commandBridgeInput, mode 
 		if descriptor.Classification == commandClassOperator {
 			return nil, nil, fmt.Errorf("command %q is classified operator; use baley_command_execute", in.Command)
 		}
-		if in.Command == "task.confirm" {
+		if supportsConversationalTaskDecision(in.Command) {
 			if value, ok := in.Envelope["decisionEvidence"].(map[string]any); !ok || len(value) == 0 {
-				return nil, nil, errors.New("task.confirm requires explicit decisionEvidence from the current conversation")
+				return nil, nil, fmt.Errorf("%s requires explicit decisionEvidence from the current conversation", in.Command)
 			}
 			if _, present := in.Envelope["approvalGrantId"]; present {
-				return nil, nil, errors.New("ordinary task.confirm must use decisionEvidence, not a browser approval grant")
+				return nil, nil, fmt.Errorf("%s must use decisionEvidence, not a browser approval grant", in.Command)
 			}
 		} else if descriptor.Classification == commandClassHuman {
 			if value, ok := in.Envelope["approvalGrantId"].(string); !ok || strings.TrimSpace(value) == "" {
@@ -314,6 +314,10 @@ func (c *client) commandBridge(ctx context.Context, in commandBridgeInput, mode 
 		return nil, nil, errors.New("unsupported command bridge mode")
 	}
 	return c.call(ctx, http.MethodPost, "/v1/commands/execute", command(in.Command, in.Arguments, in.Envelope))
+}
+
+func supportsConversationalTaskDecision(name string) bool {
+	return name == "task.confirm" || name == "task.discard"
 }
 
 func (c *client) diagnosticsForProfile(profile mcpToolProfile) (*mcp.CallToolResult, any, error) {

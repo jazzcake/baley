@@ -19,11 +19,11 @@ import (
 
 const (
 	legacyCatalogToolCount    = 78
-	legacyCatalogSchemaBytes  = 43289
+	legacyCatalogSchemaBytes  = 43163
 	compactCatalogToolCount   = 15
-	compactCatalogSchemaBytes = 5306
+	compactCatalogSchemaBytes = 5322
 	fullCatalogToolCount      = 89
-	fullCatalogSchemaBytes    = 50602
+	fullCatalogSchemaBytes    = 50492
 )
 
 var expectedCompactToolNames = []string{
@@ -263,6 +263,7 @@ func TestCommandCatalogAndProfileDiagnosticsAreExplicit(t *testing.T) {
 	assertCommandClassification(t, commands, "task.update", string(commandClassOperator), "baley_command_execute", "none")
 	assertCommandClassification(t, commands, "commit.verify_remote", string(commandClassOperator), "baley_command_execute", "none")
 	assertCommandClassification(t, commands, "task.confirm", string(commandClassHuman), "baley_command_execute_with_approval", "always")
+	assertCommandClassification(t, commands, "task.discard", string(commandClassHuman), "baley_command_execute_with_approval", "always")
 	assertCommandClassification(t, commands, "gate.attach_task", string(commandClassConditional), "baley_command_execute_with_approval", "when_from_phase_active")
 }
 
@@ -291,6 +292,8 @@ func TestGenericCommandBridgeRejectsUnknownMalformedAndMisclassifiedCalls(t *tes
 		{name: "human command on operator bridge", tool: "baley_command_execute", command: "task.confirm", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1}, envelope: envelope},
 		{name: "operator command on human bridge", tool: "baley_command_execute_with_approval", command: "task.update", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1}, envelope: envelope},
 		{name: "missing decision evidence", tool: "baley_command_execute_with_approval", command: "task.confirm", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1}, envelope: envelope},
+		{name: "discard missing decision evidence", tool: "baley_command_execute_with_approval", command: "task.discard", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1, "reason": "obsolete"}, envelope: envelope},
+		{name: "discard browser grant rejected", tool: "baley_command_execute_with_approval", command: "task.discard", arguments: map[string]any{"workspaceId": "workspace", "taskId": 1, "reason": "obsolete"}, envelope: map[string]any{"idempotencyKey": "test", "expectedWorkspaceRevision": 1, "executedByActorId": "agent", "approvalGrantId": "grant"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -333,7 +336,8 @@ func TestGenericCommandBridgeForwardsOnlyToFixedCommandEndpoints(t *testing.T) {
 		{"baley_command_preview", "task.update", "/v1/commands/preview", map[string]any{"idempotencyKey": "preview", "executedByActorId": "agent"}},
 		{"baley_command_execute", "task.update", "/v1/commands/execute", map[string]any{"idempotencyKey": "execute", "expectedWorkspaceRevision": 2, "executedByActorId": "agent"}},
 		{"baley_command_execute_with_approval", "task.confirm", "/v1/commands/execute", map[string]any{"idempotencyKey": "human", "expectedWorkspaceRevision": 3, "executedByActorId": "agent", "decisionEvidence": map[string]any{"decisionId": "11111111-1111-4111-8111-111111111111", "source": "conversation", "conversationRef": "turn:1", "statement": "confirm #7", "scope": "task", "action": "task.confirm", "taskId": 7, "workspaceRevision": 3, "commandHash": "sha256:test"}}},
-		{"baley_command_execute_with_approval", "gate.attach_task", "/v1/commands/execute", map[string]any{"idempotencyKey": "conditional", "expectedWorkspaceRevision": 4, "executedByActorId": "agent"}},
+		{"baley_command_execute_with_approval", "task.discard", "/v1/commands/execute", map[string]any{"idempotencyKey": "discard", "expectedWorkspaceRevision": 4, "executedByActorId": "agent", "decisionEvidence": map[string]any{"decisionId": "22222222-2222-4222-8222-222222222222", "source": "conversation", "conversationRef": "turn:2", "statement": "#7 삭제합시다", "scope": "task", "action": "task.discard", "taskId": 7, "workspaceRevision": 4, "commandHash": "sha256:discard"}}},
+		{"baley_command_execute_with_approval", "gate.attach_task", "/v1/commands/execute", map[string]any{"idempotencyKey": "conditional", "expectedWorkspaceRevision": 5, "executedByActorId": "agent"}},
 	}
 	for _, call := range calls {
 		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: call.tool, Arguments: map[string]any{

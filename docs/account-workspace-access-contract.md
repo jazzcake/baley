@@ -64,7 +64,7 @@ bundles. Agents can only hold an active `operator` membership.
 - Agent scopes are a subset of the Operator bundle and can never include approval or
   administration capabilities.
 - An Agent bearer never nominates or impersonates a human approver. For ordinary
-  `task.confirm`, the server derives the initiating human from the authenticated
+  `task.confirm` and `task.discard`, the server derives the initiating human from the authenticated
   MCP gateway's linked Account, revalidates current membership and `task:approve`,
   and records the Agent separately as executor.
 - Explicit current-conversation Task decisions use typed, single-use evidence bound
@@ -99,7 +99,7 @@ bundles. Agents can only hold an active `operator` membership.
   Workspace are distinct operations.
 - A Workspace Owner cannot disable or reset an Account that has another active
   Workspace membership; Account authority never crosses a tenant boundary.
-- The Viewer is read-first and exposes no Task-confirmation mutation control. An
+- The Viewer is read-first and exposes no Task confirmation or discard mutation control. An
   explicit conversational Task decision is fresh-previewed and executed by the Agent
   through MCP with linked-account evidence; no command JSON or browser click is needed.
   Dedicated Viewer/browser grant surfaces remain only for other human-only commands

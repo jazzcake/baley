@@ -28,6 +28,9 @@ func TestMigration28ConversationalDecisionEvidenceUpDown(t *testing.T) {
 	if err = postgres.Migrate(url, migrations, "down"); err != nil {
 		t.Fatal(err)
 	}
+	if err = postgres.Migrate(url, migrations, "down"); err != nil {
+		t.Fatal(err)
+	}
 	assertMigration28Schema(t, ctx, repo, true, 28)
 	if err = postgres.Migrate(url, migrations, "down"); err != nil {
 		t.Fatal(err)

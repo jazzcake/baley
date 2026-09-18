@@ -29,12 +29,13 @@ func TestMigration29MakesEventsAppendOnlyAndRollsBack(t *testing.T) {
 	if err = postgres.Migrate(url, migrations, "down"); err != nil {
 		t.Fatal(err)
 	}
+	if err = postgres.Migrate(url, migrations, "down"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = repo.Pool.Exec(ctx, "DELETE FROM events WHERE id IN ('migration29-event','migration29-insert'); DELETE FROM commands WHERE id='migration29-command'"); err != nil {
 		t.Fatal(err)
 	}
-	if err = postgres.Migrate(url, migrations, "up"); err != nil {
-		t.Fatal(err)
-	}
+	migrateUpTo(t, url, migrations, 29)
 	if err = repo.SeedDemo(ctx); err != nil {
 		t.Fatal(err)
 	}

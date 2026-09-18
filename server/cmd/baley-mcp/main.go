@@ -431,7 +431,7 @@ type executeEnvelope struct {
 	InitiatedByActorID        string                 `json:"initiatedByActorId,omitempty"`
 	AcknowledgedWarningCodes  []string               `json:"acknowledgedWarningCodes,omitempty"`
 	ProceedReason             string                 `json:"proceedReason,omitempty"`
-	ApprovalGrantID           string                 `json:"approvalGrantId"`
+	ApprovalGrantID           string                 `json:"approvalGrantId,omitempty"`
 	DecisionEvidence          *decisionEvidenceInput `json:"decisionEvidence,omitempty"`
 }
 type decisionEvidenceInput struct {

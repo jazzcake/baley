@@ -131,7 +131,7 @@ not require a new thread or schema reload.
 The Agent scope is the intersection of the member's Workspace role and the
 Agent-safe capability catalog. Owner/Operator receive normal operation scopes;
 Viewer/Approver receive read-only scope. Human-only capabilities are never added
-to the Agent token: ordinary Task confirmation instead derives and revalidates the
+to the Agent token: ordinary Task confirmation and discard instead derive and revalidate the
 linked human's explicit conversational decision, while Gate passage and policy
 changes retain their applicable human boundary. Raw
 tokens never enter chat, `config.toml`, command JSON, Task Records, browser
@@ -144,8 +144,10 @@ storage, Git, or logs. Use the loopback Gateway installer and redacted
 2. The Agent presents an outcome-first decision brief in chat. Transport fields such
    as revision, command hash, and capability remain internal unless a mismatch needs
    explanation.
-3. For ordinary `task.confirm`, the human states the exact Task or all-awaiting
-   decision explicitly in the current conversation. The Agent creates a fresh MCP
+3. For ordinary `task.confirm` or `task.discard`, the human states the decision
+   explicitly in the current conversation. Confirmation may use the exact Task or
+   all-awaiting scope; discard uses exact-Task context and also accepts a direct
+   action-only reply such as `삭제합시다`. The Agent creates a fresh MCP
    preview and transmits typed, target-bound decision evidence without a Viewer click.
 4. The server derives the human Actor from the authenticated Gateway's linked
    Account, rechecks current membership and `task:approve`, records the Agent as

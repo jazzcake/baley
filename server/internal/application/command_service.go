@@ -1933,15 +1933,15 @@ func (s *Service) evaluate(ctx context.Context, request CommandRequest, typed an
 		result.Errors = append(result.Errors, Diagnostic{Code: domain.CodeHumanApprovalRequired, EntityID: plan.EntityID})
 	} else if executing && requiresHumanApproval && request.Envelope.HumanApprovalAttestation == nil && request.Envelope.ApprovalGrantID == "" && request.Envelope.DecisionEvidence == nil {
 		code := domain.CodeHumanApprovalRequired
-		if request.Name == "task.confirm" {
+		if supportsConversationalTaskDecision(request.Name) {
 			code = domain.CodeDecisionEvidenceRequired
 		}
 		result.Errors = append(result.Errors, Diagnostic{Code: code, EntityID: plan.EntityID})
 	}
 	if executing && requiresHumanApproval && request.Envelope.DecisionEvidence != nil {
 		reason := "command"
-		if request.Name == "task.confirm" {
-			reason = conversationalDecisionMismatchReason(*request.Envelope.DecisionEvidence, typed, result)
+		if supportsConversationalTaskDecision(request.Name) {
+			reason = conversationalDecisionMismatchReason(request.Name, *request.Envelope.DecisionEvidence, typed, result)
 		}
 		if reason != "" {
 			result.Errors = removeDiagnostic(result.Errors, domain.CodeHumanApprovalRequired)
@@ -1985,9 +1985,17 @@ func decisionEvidenceFingerprint(evidence *ConversationalDecisionEvidence) strin
 	return hex.EncodeToString(digest[:])
 }
 
-func conversationalDecisionMismatchReason(evidence ConversationalDecisionEvidence, typed any, result PreviewResult) string {
-	args, ok := typed.(taskConfirmArgs)
-	if !ok {
+func conversationalDecisionMismatchReason(command string, evidence ConversationalDecisionEvidence, typed any, result PreviewResult) string {
+	taskID := 0
+	switch args := typed.(type) {
+	case taskConfirmArgs:
+		taskID = args.TaskID
+	case taskMutationArgs:
+		taskID = args.TaskID
+	default:
+		return "command"
+	}
+	if !supportsConversationalTaskDecision(command) {
 		return "command"
 	}
 	if !validUUIDText(evidence.DecisionID) {
@@ -2002,13 +2010,13 @@ func conversationalDecisionMismatchReason(evidence ConversationalDecisionEvidenc
 	if strings.TrimSpace(evidence.Statement) == "" {
 		return "statement"
 	}
-	if evidence.Scope != "task" && evidence.Scope != "all_awaiting_confirmation" {
+	if evidence.Scope != "task" && (command != "task.confirm" || evidence.Scope != "all_awaiting_confirmation") {
 		return "scope"
 	}
-	if evidence.Action != "task.confirm" {
+	if evidence.Action != command {
 		return "action"
 	}
-	if evidence.TaskID != args.TaskID {
+	if evidence.TaskID != taskID {
 		return "task_id"
 	}
 	if evidence.WorkspaceRevision != result.ExpectedWorkspaceRevision {
@@ -2017,19 +2025,26 @@ func conversationalDecisionMismatchReason(evidence ConversationalDecisionEvidenc
 	if evidence.CommandHash != result.CommandHash {
 		return "command_hash"
 	}
-	if !statementSupportsConversationalDecision(evidence.Statement, evidence.Scope, evidence.TaskID) {
+	if !statementSupportsConversationalTaskAction(evidence.Statement, evidence.Scope, evidence.Action, evidence.TaskID) {
 		return "statement_scope"
 	}
 	return ""
 }
 
 func statementSupportsConversationalDecision(statement, scope string, taskID int) bool {
+	return statementSupportsConversationalTaskAction(statement, scope, "task.confirm", taskID)
+}
+
+func statementSupportsConversationalTaskAction(statement, scope, action string, taskID int) bool {
 	normalized := strings.ToLower(strings.Join(strings.Fields(statement), " "))
 	if normalized == "" || strings.ContainsAny(normalized, "?？") {
 		return false
 	}
 	normalized = strings.TrimSpace(strings.TrimRight(normalized, ".!。！"))
 	if scope == "all_awaiting_confirmation" {
+		if action != "task.confirm" {
+			return false
+		}
 		if regexp.MustCompile(`#[0-9]+`).MatchString(normalized) {
 			return false
 		}
@@ -2046,15 +2061,31 @@ func statementSupportsConversationalDecision(statement, scope string, taskID int
 		return false
 	}
 	target := regexp.QuoteMeta(strconv.Itoa(taskID))
-	if matchesDecisionGrammar(normalized,
-		`(?:confirm|complete) (?:task )?#?`+target,
-		`#?`+target+`(?:번)?(?: 작업)?(?:을|를)? (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
-		`작업 #?`+target+`(?:번)?(?:을|를)? (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
-	) {
-		return true
+	switch action {
+	case "task.confirm":
+		if matchesDecisionGrammar(normalized,
+			`(?:confirm|complete) (?:task )?#?`+target,
+			`#?`+target+`(?:번)?(?: 작업)?(?:을|를)? (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
+			`작업 #?`+target+`(?:번)?(?:을|를)? (?:확인|완료)(?:해 ?주세요|해 ?주십시오)?`,
+		) {
+			return true
+		}
+	case "task.discard":
+		if matchesDecisionGrammar(normalized,
+			`(?:discard|delete|remove)`,
+			`(?:폐기|삭제)(?:합시다|해 ?주세요|해 ?주십시오)?`,
+			`discard (?:task )?#?`+target,
+			`(?:delete|remove) (?:task )?#?`+target,
+			`#?`+target+`(?:번)?(?: 작업| 태스크)?(?:을|를)? (?:폐기|삭제)(?:합시다|해 ?주세요|해 ?주십시오)?`,
+			`(?:task|작업|태스크) #?`+target+`(?:번)?(?:을|를)? (?:폐기|삭제)(?:합시다|해 ?주세요|해 ?주십시오)?`,
+		) {
+			return true
+		}
+	default:
+		return false
 	}
 	decisions, ok := parseCompoundTaskDecisions(normalized)
-	return ok && decisions[taskID] == "task.confirm"
+	return ok && decisions[taskID] == action
 }
 
 func parseCompoundTaskDecisions(statement string) (map[int]string, bool) {
@@ -2062,7 +2093,7 @@ func parseCompoundTaskDecisions(statement string) (map[int]string, bool) {
 		return nil, false
 	}
 	parts := regexp.MustCompile(`[,，]`).Split(statement, -1)
-	clausePattern := regexp.MustCompile(`^#([1-9][0-9]*)(?:번)?(?:도)?(?:\s+(confirm|complete|확인|완료|discard|폐기))?$`)
+	clausePattern := regexp.MustCompile(`^#([1-9][0-9]*)(?:번)?(?:도)?(?:\s+(confirm|complete|확인|완료|discard|delete|remove|폐기|삭제))?$`)
 	pending := []int{}
 	decisions := map[int]string{}
 	for _, rawPart := range parts {
@@ -2097,7 +2128,7 @@ func compoundDecisionAction(value string) string {
 	switch value {
 	case "confirm", "complete", "확인", "완료":
 		return "task.confirm"
-	case "discard", "폐기":
+	case "discard", "delete", "remove", "폐기", "삭제":
 		return "task.discard"
 	default:
 		return ""
@@ -2590,6 +2621,10 @@ func requiresHumanApproval(name string) bool {
 	default:
 		return false
 	}
+}
+
+func supportsConversationalTaskDecision(name string) bool {
+	return name == "task.confirm" || name == "task.discard"
 }
 
 func terminalStatusForCommand(name string) domain.RunStatus {

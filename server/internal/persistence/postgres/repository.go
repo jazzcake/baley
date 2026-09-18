@@ -866,7 +866,7 @@ func (r *Repository) Execute(ctx context.Context, wid string, req application.Co
 		humanOnly := plan.ForceHumanApproval || commandRequiresHumanApproval(req.Name)
 		if humanOnly {
 			var approverActorID string
-			if req.Envelope.DecisionEvidence != nil || req.Name == "task.confirm" && req.Envelope.ApprovalGrantID == "" {
+			if req.Envelope.DecisionEvidence != nil || supportsConversationalTaskDecision(req.Name) && req.Envelope.ApprovalGrantID == "" {
 				decisionEvidenceID, approverActorID, err = validateConversationalDecision(ctx, tx, wid, req, preview, plan, required)
 			} else {
 				grantID, approverActorID, err = validateApprovalGrant(ctx, tx, wid, req, preview, plan, required)
@@ -1689,16 +1689,20 @@ func validateApprovalGrant(ctx context.Context, tx pgx.Tx, workspaceID string, r
 	return grantID, approverActorID, nil
 }
 
+func supportsConversationalTaskDecision(name string) bool {
+	return name == "task.confirm" || name == "task.discard"
+}
+
 func validateConversationalDecision(ctx context.Context, tx pgx.Tx, workspaceID string, req application.CommandRequest, preview application.PreviewResult, plan application.MutationPlan, required authz.Capability) (string, string, error) {
 	evidence := req.Envelope.DecisionEvidence
 	if evidence == nil || req.Principal == nil || req.Principal.Subject.Kind != authz.ActorAgent {
 		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceRequired, Message: "an explicit conversational decision from the linked human member is required"}
 	}
-	if req.Name != "task.confirm" || strings.TrimSpace(evidence.DecisionID) == "" || evidence.Source != "conversation" ||
+	if !supportsConversationalTaskDecision(req.Name) || strings.TrimSpace(evidence.DecisionID) == "" || evidence.Source != "conversation" ||
 		strings.TrimSpace(evidence.ConversationRef) == "" || strings.TrimSpace(evidence.Statement) == "" ||
-		(evidence.Scope != "task" && evidence.Scope != "all_awaiting_confirmation") || evidence.Action != req.Name ||
+		(evidence.Scope != "task" && (req.Name != "task.confirm" || evidence.Scope != "all_awaiting_confirmation")) || evidence.Action != req.Name ||
 		evidence.TaskID <= 0 || evidence.WorkspaceRevision != preview.ExpectedWorkspaceRevision || evidence.CommandHash != preview.CommandHash {
-		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceMismatch, Message: "conversational decision evidence does not match the locked Task confirmation"}
+		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceMismatch, Message: "conversational decision evidence does not match the locked Task decision"}
 	}
 	if strings.TrimSpace(req.Principal.LinkedAccountID) == "" || strings.TrimSpace(req.Principal.LinkedHumanActorID) == "" || strings.TrimSpace(req.Principal.GatewayRegistrationID) == "" {
 		return "", "", &application.CommandError{Code: domain.CodeDecisionEvidenceInvalid, Message: "Agent credential is not linked to a human Workspace member"}

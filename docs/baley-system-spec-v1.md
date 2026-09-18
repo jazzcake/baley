@@ -137,7 +137,7 @@ V1에는 회원가입, 로그인 UI와 다중 사용자 인증을 구현하지 �
 - 외부 서버는 Tailscale, VPN, reverse proxy 인증 또는 동등한 배포 계층으로 보호한다.
 - 인증 token과 secret은 repository의 `baley.yaml`에 저장하지 않는다.
 
-제품 인증과 Workspace membership enforcement를 적용한다. 로컬 MCP Gateway는 로그인한 Account에 연결되며 Workspace별 연결 결정이나 추가 절차를 만들지 않는다. 최초 기기 연결은 loopback 시작 URL과 명시적 `Connect local Gateway` 클릭을 사용하며, 서버는 2분 browser code와 해당 PC에만 남은 pending connection secret을 한 transaction에서 검증한 뒤 membership을 다시 확인한다. Agent token scope는 해당 Account의 Workspace 역할과 Agent-safe capability의 교집합으로 계산하고, 사람 전용 capability는 절대 포함하지 않는다. ordinary `task.confirm`은 현재 대화의 명시적 결정을 typed evidence로 전달하고 서버가 gateway에 링크된 human Actor와 현재 capability를 파생·검증한다. MCP body는 승인 Actor를 지정할 수 없다. 다른 사람 전용 경계와 호환 경로에는 fresh browser-session grant를 유지한다.
+제품 인증과 Workspace membership enforcement를 적용한다. 로컬 MCP Gateway는 로그인한 Account에 연결되며 Workspace별 연결 결정이나 추가 절차를 만들지 않는다. 최초 기기 연결은 loopback 시작 URL과 명시적 `Connect local Gateway` 클릭을 사용하며, 서버는 2분 browser code와 해당 PC에만 남은 pending connection secret을 한 transaction에서 검증한 뒤 membership을 다시 확인한다. Agent token scope는 해당 Account의 Workspace 역할과 Agent-safe capability의 교집합으로 계산하고, 사람 전용 capability는 절대 포함하지 않는다. ordinary `task.confirm`과 `task.discard`는 현재 대화의 명시적 결정을 typed evidence로 전달하고 서버가 gateway에 링크된 human Actor와 현재 capability를 파생·검증한다. MCP body는 승인 Actor를 지정할 수 없다. 다른 사람 전용 경계와 호환 경로에는 fresh browser-session grant를 유지한다.
 
 ## 5. 프로젝트 통합
 
@@ -931,13 +931,13 @@ executed_command_id UNIQUE
 
 - 승인 진술은 action, 대상 entity, canonical command payload hash와 Workspace revision에 결속된다. Gate 통과처럼 조건 snapshot이 있는 action은 snapshot hash에도 결속된다.
 - `task_confirm/task_discard`는 Task ID, `lane_close_out/lane_discard`는 Lane ID, `gate_attach_task/gate_pass`는 Gate ID, `gate_pass_task/gate_revoke_task_pass`는 `gate_tasks.id`, `workspace_close`는 Workspace ID를 대상으로 사용한다.
-- ordinary `task.confirm`은 공통 mutation envelope에 `decisionEvidence`를 포함한다. required field는 target별 caller-generated unique UUID decision ID, source=`conversation`, opaque non-secret conversation reference, verbatim statement, scope, action, Task public ID, Workspace revision, canonical command hash다. decision ID는 외부 provider의 thread/turn/message ID가 아니며 conversation reference는 외부 provider와 대조하는 인증값이 아니다.
+- ordinary `task.confirm`과 `task.discard`는 공통 mutation envelope에 `decisionEvidence`를 포함한다. required field는 target별 caller-generated unique UUID decision ID, source=`conversation`, opaque non-secret conversation reference, verbatim statement, scope, action, Task public ID, Workspace revision, canonical command hash다. decision ID는 외부 provider의 thread/turn/message ID가 아니며 conversation reference는 외부 provider와 대조하는 인증값이 아니다.
 - 서버는 authenticated MCP gateway registration에서 linked Account와 human Actor를 파생하고 실행 transaction에서 Account 상태, membership과 `task:approve` capability를 다시 확인한다. caller는 approver Actor ID를 제공하지 않는다.
 - grant는 Workspace/account/actor/session/action/entity/revision/command hash/decision snapshot/warnings/proceed reason/expiry에 결속된 5분 single-use reference이며 CSRF, membership, capability와 Owner-only close 검사를 거친다.
 - 서버는 mutation transaction 안에서 grant 소비, command별 attestation audit와 실행 command를 1:1로 기록한다. session 또는 membership 철회는 미사용 grant를 revoke한다.
 - 같은 idempotency key와 request fingerprint의 재시도는 같은 결과를 반환할 수 있지만, grant를 다른 command·action·entity·revision에 재사용할 수 없다.
 - decision evidence 하나는 exact Task command 하나에만 소비된다. `all_awaiting_confirmation` scope도 batch mutation이 아니며 다음 Task는 revision 변화 뒤 다시 preview하고 새 target-bound decision ID를 사용한다.
-- 쉼표로 구분된 복합 결정문은 모든 `#<id>`가 뒤따르는 명시적 action에 배정될 때만 exact-Task `task` scope에서 사용할 수 있다. 서버는 confirm group에 포함된 target만 `task.confirm` evidence로 인정하며, discard group이나 미배정·중복·알 수 없는 action은 fail closed한다.
+- 쉼표로 구분된 복합 결정문은 모든 `#<id>`가 뒤따르는 명시적 action에 배정될 때만 exact-Task `task` scope에서 사용할 수 있다. 서버는 confirm group의 target만 `task.confirm`, discard/delete group의 target만 `task.discard` evidence로 인정하며, 미배정·중복·알 수 없는 action은 fail closed한다.
 - grant ID는 secret이 아니고 Viewer는 plaintext secret, custom header, 환경 변수나 copy/paste token을 만들거나 노출하지 않는다.
 - enforced transport는 legacy `humanApprovalAttestation`, `approvedByActorId`, statement/conversation body authority를 거부한다.
 
@@ -958,7 +958,7 @@ Gate ready
 
 `task.get`, `gate.status`, `workspace.get`과 `decision.list`는 대상 action, 대상 ID, expected Workspace revision, 관련 criteria/condition snapshot hash와 warning을 반환한다. Viewer는 각각 “완료확인 대기”, “Gate 통과 승인 대기”, “Workspace 종료 가능”으로 표시한다.
 
-Operator는 사람 전용 action을 추론하지 않는다. 사람이 현재 대화에서 exact Task 확인 또는 모든 awaiting confirmation을 명시하면 Agent는 outcome/evidence를 확인하고 fresh preview 뒤 typed conversational evidence로 `task.confirm`을 MCP 실행한다. Viewer Task Inspector는 read-first inspection만 제공하고 TaskConfirmation mutation UI를 갖지 않는다. 모호한 긍정, 침묵, implemented 상태 자체는 authority가 아니다.
+Operator는 사람 전용 action을 추론하지 않는다. 사람이 현재 대화에서 exact Task 확인·폐기 또는 모든 awaiting confirmation을 명시하면 Agent는 outcome/evidence를 확인하고 fresh preview 뒤 typed conversational evidence로 `task.confirm` 또는 `task.discard`를 MCP 실행한다. 두 Task 결정 모두 Viewer grant나 별도 UI를 요구하지 않는다. Viewer Task Inspector는 read-first inspection만 제공한다. 모호한 긍정, 침묵, implemented 상태 자체는 authority가 아니다.
 
 명시적 `all_awaiting_confirmation` 결정은 여러 eligible Task를 순차 처리할 수 있지만 atomic batch mutation은 아니다. 각 `task.confirm`은 MCP에서 현재 revision을 fresh preview하고 exact target과 command hash에 결속된 새 single-use decision ID를 사용한다. 앞 command가 revision을 바꾸면 다음 command는 다시 preview한다.
 
@@ -1017,7 +1017,7 @@ executedByActorId
 acknowledgedWarningCodes []
 proceedReason nullable
 approvalGrantId nullable
-decisionEvidence nullable; ordinary task.confirm에서 required
+decisionEvidence nullable; ordinary task.confirm/task.discard에서 required
 ```
 
 Warning acknowledgement와 진행 사유는 개별 command payload가 아니라 공통 envelope에 둔다. 각 command는 자신이 평가한 warning code만 수락하며 Event payload에 평가 결과를 기록한다.

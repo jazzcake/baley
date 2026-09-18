@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -23,6 +24,9 @@ func TestLinkedAccountConversationalTaskConfirmationTrustBoundary(t *testing.T) 
 	requireDisposableDatabase(t, url)
 	ctx := context.Background()
 	t.Setenv("BALEY_LEASE_TOKEN_SECRET", "conversational-decision-test-secret")
+	if err := postgres.Migrate(url, filepath.Join("..", "migrations"), "up"); err != nil {
+		t.Fatal(err)
+	}
 	repo, err := postgres.Open(ctx, url)
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +48,7 @@ func TestLinkedAccountConversationalTaskConfirmationTrustBoundary(t *testing.T) 
 		"conversation-owner", "conversation-owner", "Conversation Owner", "test-password-phc"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = repo.Pool.Exec(ctx, "UPDATE tasks SET status='implemented' WHERE workspace_id=$1 AND public_id IN (101,110)", postgres.DemoWorkspaceID); err != nil {
+	if _, err = repo.Pool.Exec(ctx, "UPDATE tasks SET status='implemented' WHERE workspace_id=$1 AND public_id IN (101,104,110)", postgres.DemoWorkspaceID); err != nil {
 		t.Fatal(err)
 	}
 	principal := linkedConversationalPrincipal(t, ctx, repo, postgres.DemoWorkspaceID,
@@ -101,7 +105,40 @@ func TestLinkedAccountConversationalTaskConfirmationTrustBoundary(t *testing.T) 
 		t.Fatalf("Task Journal provenance=%+v err=%v", journal, err)
 	}
 
-	second := newRequest(101, result.WorkspaceRevision, "conversation-confirm-101")
+	discardRaw, _ := json.Marshal(map[string]any{
+		"workspaceId": postgres.DemoWorkspaceID, "taskId": 104, "reason": "superseded by the accepted implementation",
+	})
+	discard := application.CommandRequest{Name: "task.discard", Arguments: discardRaw, Principal: &principal, Envelope: application.CommandEnvelope{
+		ExpectedWorkspaceRevision: result.WorkspaceRevision, IdempotencyKey: "conversation-discard-104", ExecutedByActorID: postgres.DemoAgentActorID,
+	}}
+	discardPreview, err := service.Preview(ctx, discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Execute(ctx, discard); commandErrorCode(err) != domain.CodeDecisionEvidenceRequired {
+		t.Fatalf("discard missing evidence error=%v", err)
+	}
+	discard.Envelope.DecisionEvidence = &application.ConversationalDecisionEvidence{
+		DecisionID: "33333333-3333-4333-8333-333333333333", Source: "conversation", ConversationRef: "pm-session:compound-decision",
+		Statement: "#101 confirm, #104 삭제", Scope: "task", Action: "task.discard", TaskID: 104,
+		WorkspaceRevision: discardPreview.ExpectedWorkspaceRevision, CommandHash: discardPreview.CommandHash,
+	}
+	discardResult, err := service.Execute(ctx, discard)
+	if err != nil {
+		t.Fatalf("conversational discard result=%+v err=%v", discardResult, err)
+	}
+	var discardStatus, discardAction string
+	if err = repo.Pool.QueryRow(ctx, `SELECT task.status,evidence.action
+		FROM tasks task JOIN conversational_decision_evidence evidence
+		  ON evidence.workspace_id=task.workspace_id AND evidence.task_public_id=task.public_id
+		WHERE task.workspace_id=$1 AND task.public_id=104`, postgres.DemoWorkspaceID).Scan(&discardStatus, &discardAction); err != nil {
+		t.Fatal(err)
+	}
+	if discardStatus != "discarded" || discardAction != "task.discard" {
+		t.Fatalf("discard status=%s action=%s", discardStatus, discardAction)
+	}
+
+	second := newRequest(101, discardResult.WorkspaceRevision, "conversation-confirm-101")
 	secondPreview, err := service.Preview(ctx, second)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +146,7 @@ func TestLinkedAccountConversationalTaskConfirmationTrustBoundary(t *testing.T) 
 	second.Envelope.DecisionEvidence = &application.ConversationalDecisionEvidence{
 		DecisionID: request.Envelope.DecisionEvidence.DecisionID, Source: "conversation", ConversationRef: "pm-session:task-186:turn-approval",
 		Statement: "complete all awaiting confirmation", Scope: "all_awaiting_confirmation", Action: "task.confirm", TaskID: 101,
-		WorkspaceRevision: result.WorkspaceRevision, CommandHash: secondPreview.CommandHash,
+		WorkspaceRevision: discardResult.WorkspaceRevision, CommandHash: secondPreview.CommandHash,
 	}
 	if _, err = service.Execute(ctx, second); commandErrorCode(err) != domain.CodeDecisionEvidenceReplayed {
 		t.Fatalf("cross-target replay error=%v", err)
@@ -119,7 +156,7 @@ func TestLinkedAccountConversationalTaskConfirmationTrustBoundary(t *testing.T) 
 	if _, err = service.Execute(ctx, second); commandErrorCode(err) != domain.CodeDecisionEvidenceMismatch {
 		t.Fatalf("stale evidence binding error=%v", err)
 	}
-	second.Envelope.DecisionEvidence.WorkspaceRevision = result.WorkspaceRevision
+	second.Envelope.DecisionEvidence.WorkspaceRevision = discardResult.WorkspaceRevision
 	if _, err = repo.CreateMember(ctx, postgres.DemoWorkspaceID, postgres.DemoHumanActorID,
 		"conversation-backup-owner", "conversation-backup-owner", "Conversation Backup Owner",
 		"test-password-phc", authz.RoleOwner); err != nil {
